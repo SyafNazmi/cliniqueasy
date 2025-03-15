@@ -13,5 +13,5 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
-  ]
+, "constants/Colors.jsx", "app/_layout.jsx", "app/login/index.jsx", "app/(tabs)/Profile.jsx", "app/(tabs)/index.jsx", "app/(tabs)/AddNew.jsx", "app/(tabs)/_layout.jsx"  ]
 }
