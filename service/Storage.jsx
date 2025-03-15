@@ -18,3 +18,7 @@ export const getLocalStorage = async(key) => {
         return null;
     }
 }
+
+export const RemoveLocalStorage=async()=>{
+    await AsyncStorage.clear();
+}
