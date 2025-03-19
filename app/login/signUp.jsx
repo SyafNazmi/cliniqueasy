@@ -15,54 +15,55 @@ export default function SignUp() {
     const [password,setPassword]=useState();
     const [userName, setUserName]=useState();
 
-    const onCreateAccount=()=> {
-
-        if (!email||!password) {
+    const onCreateAccount = () => {
+        if (!email || !password || !userName) {
             Toast.show({
                 type: 'error',
                 text1: 'Error',
                 text2: 'Please fill all the details',
             });
-            return; // Add return to prevent further execution
+            return;
         }
-        
+    
         createUserWithEmailAndPassword(auth, email, password)
-        .then(async(userCredential) => {
-            // Signed up 
-            const user = userCredential.user;
-            
-            await updateProfile(user,{
-                displayName:userName
+            .then(async (userCredential) => {
+                const user = userCredential.user;
+    
+                // Update the user profile with display name
+                await updateProfile(user, { displayName: userName });
+    
+                // Reload user to get updated profile info
+                await auth.currentUser.reload();
+                const updatedUser = auth.currentUser;
+    
+                // Save updated user to AsyncStorage
+                const userData = {
+                    uid: updatedUser.uid,
+                    email: updatedUser.email,
+                    displayName: updatedUser.displayName,
+                };
+                await setLocalStorage('userDetail', userData);
+    
+                console.log("Saved user:", userData); // Debugging log
+    
+                Toast.show({
+                    type: 'success',
+                    text1: 'Success',
+                    text2: 'Account created successfully!',
+                });
+    
+                router.push('(tabs)');
             })
-
-            await setLocalStorage('userDetail', user);
-
-            Toast.show({
-                type: 'success',
-                text1: 'Success',
-                text2: 'Account created successfully!',
+            .catch((error) => {
+                console.log(error.code);
+                Toast.show({
+                    type: 'error',
+                    text1: 'Error',
+                    text2: error.message,
+                });
             });
-            router.push('(tabs)')
-        })
-        .catch((error) => {
-            const errorCode = error.code;
-            const errorMessage = error.message;
-            console.log(errorCode);
-            if (errorCode=='auth/email-already-in-use') {
-                Toast.show({
-                    type: 'error',
-                    text1: 'Error',
-                    text2: 'Email already exists!',
-                });
-            } else {
-                Toast.show({
-                    type: 'error',
-                    text1: 'Error',
-                    text2: 'An error occurred. Please try again.',
-                });
-            }
-        });
-    }
+    };
+    
   return (
     <View style={{ padding:25, marginTop:50}}>
           <Text style={styles.textHeader}>Create New Account</Text>

@@ -3,8 +3,8 @@ import React from 'react'
 
 export default function AddNew() {
   return (
-    <View>
-      <Text>AddNew</Text>
+    <View style={{ padding: 25, marginTop: 50 }}>
+      <Text>Book Appointment</Text>
     </View>
   )
 }

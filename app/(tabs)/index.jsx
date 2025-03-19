@@ -1,46 +1,54 @@
-import { View, Text, Button } from 'react-native'
+import { View, Text, ScrollView, TouchableOpacity, Image } from 'react-native'
 import React from 'react'
-import { useRouter } from 'expo-router'
-import { signOut } from 'firebase/auth'
-import { auth } from '@/configs/FirebaseConfig'
-import { RemoveLocalStorage } from '@/service/Storage'
-import Toast from 'react-native-toast-message'
+import Header from "../../components/Header";
+import SearchBar from '../../components/SearchBar';
+import AppointmentCard from '../../components/AppointmentCard';
+import DoctorSpeciality from '../../components/DoctorSpeciality';
+import NearbyHospitals from '../../components/NearbyHospitals';
+import { router } from 'expo-router';
 
 export default function HomeScreen() {
-  const router = useRouter();
-
-  const handleLogout = async () => {
-    try {
-      // Sign out from Firebase
-      await signOut(auth);
-      
-      // Clear local storage
-      await RemoveLocalStorage();
-      
-      // Show success message
-      Toast.show({
-        type: 'success',
-        text1: 'Logged Out',
-        text2: 'You have been successfully logged out',
-      });
-      
-      // Redirect to login screen
-      router.replace('/login');
-    } catch (error) {
-      console.error("Logout error:", error);
-      
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to log out. Please try again.',
-      });
-    }
-  }
-
   return (
-    <View style={{ padding: 25, marginTop: 50 }}>
-      <Text style={{ fontSize: 24, marginBottom: 20 }}>HomeScreen</Text>
-      <Button title='Logout' onPress={handleLogout} color="#0AD476"/>
-    </View>
+    <ScrollView style={{ flex: 1, backgroundColor: 'white' }}>
+      <View style={{ padding: 16, paddingTop: 50 }}>
+        <Header />
+        <SearchBar setSearchText={(value) => console.log(value)} />
+        
+        <View style={{ marginTop: 25 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ fontSize: 20, fontWeight: 'bold' }}>Upcoming Schedule</Text>
+              <View style={{ backgroundColor: '#2563eb', borderRadius: 15, marginLeft: 10, width: 24, height: 24, justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ color: 'white', fontWeight: 'bold' }}>8</Text>
+              </View>
+            </View>
+            <TouchableOpacity>
+              <Text style={{ color: '#2563eb' }}>See All</Text>
+            </TouchableOpacity>
+          </View>
+          <AppointmentCard />
+        </View>
+
+        <View style={{ marginTop: 25 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+            <Text style={{ fontSize: 20, fontWeight: 'bold' }}>Doctor Speciality</Text>
+            <TouchableOpacity>
+              <Text style={{ color: '#2563eb' }}>See All</Text>
+            </TouchableOpacity>
+          </View>
+          <DoctorSpeciality />
+        </View>
+        
+        <View style={{ marginTop: 25, marginBottom: 20 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+            <Text style={{ fontSize: 20, fontWeight: 'bold' }}>Nearby Hospitals</Text>
+            <TouchableOpacity onPress={()=>router.push('/hospitals-list')}>
+              <Text style={{ color: '#2563eb' }}>See All</Text>
+            </TouchableOpacity>
+          </View>
+          <NearbyHospitals />
+        </View>
+      </View>
+    </ScrollView>
   )
 }
