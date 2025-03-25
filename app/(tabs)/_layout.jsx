@@ -1,46 +1,28 @@
 import { View, Text } from 'react-native'
-import React, { useEffect, useState } from 'react'
+import React, { useEffect } from 'react'
 import { Tabs, useRouter } from 'expo-router'
 import { FontAwesome } from '@expo/vector-icons'
 import { getLocalStorage } from "../../service/Storage";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "../../configs/FirebaseConfig";
+import { account } from "../../configs/AppwriteConfig";
 
 export default function TabLayout() {
-  
-    const router=useRouter();
-    // const [authenticated,setAuthenticated]=useState();
-    // //verify the user login or not
-    // onAuthStateChanged(auth, (user) => {
-    //     if (user) {
-    //       // User is signed in, see docs for a list of available properties
-    //       // https://firebase.google.com/docs/reference/js/auth.user
-    //       const uid = user.uid;
-    //       console.log(uid);
-    //       setAuthenticated(true);
-    //       // ...
-    //     } else {
-    //       // User is signed out
-    //       setAuthenticated(false);
-    //     }
-    //   })
+    const router = useRouter();
 
-    // useEffect(()=>{
-    //     if (authenticated==false) {
-    //         router.push('/login')
-    //     }
-    // },[authenticated])
+    useEffect(() => {
+        CheckUserAuthentication();
+    }, [])
 
-    useEffect(()=>{
-        GetUserDetail();
-    },[])
-
-    const GetUserDetail=async()=> {
-        const userInfo = await getLocalStorage('userDetail');
-        if(!userInfo){
+    const CheckUserAuthentication = async () => {
+        try {
+            // Check if user is authenticated in Appwrite
+            const user = await account.get();
+            // User is logged in, do nothing
+        } catch (error) {
+            // No active session, redirect to login
             router.replace('/login')
         }
     }
+    
     return (
     <Tabs screenOptions={{
         headerShown:false

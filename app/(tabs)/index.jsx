@@ -10,7 +10,7 @@ import { router } from 'expo-router';
 export default function HomeScreen() {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: 'white' }}>
-      <View style={{ padding: 16, paddingTop: 50 }}>
+      <View style={{ padding: 16, marginTop: 50 }}>
         <Header />
         <SearchBar setSearchText={(value) => console.log(value)} />
         
