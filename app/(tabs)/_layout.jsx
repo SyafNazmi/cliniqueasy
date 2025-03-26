@@ -3,22 +3,19 @@ import React, { useEffect } from 'react'
 import { Tabs, useRouter } from 'expo-router'
 import { FontAwesome } from '@expo/vector-icons'
 import { getLocalStorage } from "../../service/Storage";
-import { account } from "../../configs/AppwriteConfig";
+
 
 export default function TabLayout() {
-    const router = useRouter();
+  
+    const router=useRouter();
 
-    useEffect(() => {
-        CheckUserAuthentication();
-    }, [])
+    useEffect(()=>{
+        GetUserDetail();
+    },[])
 
-    const CheckUserAuthentication = async () => {
-        try {
-            // Check if user is authenticated in Appwrite
-            const user = await account.get();
-            // User is logged in, do nothing
-        } catch (error) {
-            // No active session, redirect to login
+    const GetUserDetail=async()=> {
+        const userInfo = await getLocalStorage('userDetail');
+        if(!userInfo){
             router.replace('/login')
         }
     }
