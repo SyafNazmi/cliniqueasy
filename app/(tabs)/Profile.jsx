@@ -39,7 +39,7 @@ export default function HomeScreen() {
 
   return (
     <View style={{ padding: 25, marginTop: 50 }}>
-      <Text style={{ fontSize: 24, marginBottom: 20 }}>Profile</Text>
+      <Text style={{ fontSize: 24, marginBottom: 40 }}>Profile</Text>
       <Button title='Logout' onPress={handleLogout} color="#0AD476"/>
     </View>
   )

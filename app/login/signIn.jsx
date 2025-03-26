@@ -1,68 +1,102 @@
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert } from 'react-native'
+import { View, Text, StyleSheet, TextInput, TouchableOpacity } from 'react-native'
 import React, { useState } from 'react'
-import { Colors } from './../../constants/Colors'
 import { useRouter } from 'expo-router'
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from "../../configs/FirebaseConfig";
-import { setLocalStorage } from '../../service/Storage';
+import { account } from '../../configs/AppwriteConfig';
+import { setLocalStorage, RemoveLocalStorage, removeSpecificStorageKey } from '../../service/Storage';
+import Toast from 'react-native-toast-message';
 
 export default function SignIn() {
-
-    const router=useRouter();
+    const router = useRouter();
     
-    const [email,setEmail]=useState();
-    const [password,setPassword]=useState();
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
 
-    const OnSignInClick=()=> {
-
-     if (!email||!password) {
-        Alert.alert('Please Enter email & password');
-        return; // Add return to prevent further execution
-             }
-     signInWithEmailAndPassword(auth, email, password)
-     .then(async(userCredential) => {
-     // Signed in 
-     const user = userCredential.user;
-     console.log(user);
-     await setLocalStorage('userDetail', user);
-     router.replace('(tabs)')
-    })
-    .catch((error) => {
-        const errorCode = error.code;
-        const errorMessage = error.message;
-
-        if (errorCode == 'auth/invalid-credential') {
-            
-            Alert.alert('Invalid Email or Password');
+    const OnSignInClick = async () => {
+        if (!email || !password) {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Please enter email & password',
+            });
+            return;
         }
-    });
+        try {
+            // Clear all local storage first
+            await RemoveLocalStorage();
+
+            // Attempt to delete existing sessions with error handling
+            try {
+                await account.deleteSessions();
+            } catch (deleteError) {
+                console.log('Session deletion error:', deleteError);
+                // Continue even if session deletion fails
+            }
+
+            // Create new email session
+            const session = await account.createEmailPasswordSession(email, password);
+            
+            // Get current user account details
+            const user = await account.get();
+
+            // Save user details to local storage
+            await setLocalStorage('userDetail', {
+                uid: user.$id,
+                email: user.email,
+                displayName: user.name
+            });
+
+            Toast.show({
+                type: 'success',
+                text1: 'Success',
+                text2: 'Signed in successfully!',
+            });
+
+            router.replace('(tabs)');
+        } catch (error) {
+            console.error('Signin Error:', error);
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: error.message || 'Failed to sign in',
+            });
+        }
     }
-  return (
-    <View style={{ padding:25, marginTop:50}}>
-      <Text style={styles.textHeader}>Let's Sign You In</Text>
-      <Text style={styles.subText}>Welcome Back</Text>
-      <Text style={styles.subText}>You've been Missed!</Text>
-
-      <View style={{ marginTop:25}}> 
-        <Text>Email</Text>
-        <TextInput placeholder='Email' style={styles.textInput}
-            onChangeText={(value)=>setEmail(value)}/>
-      </View>
-      <View style={{ marginTop:25}}> 
-        <Text>Password</Text>
-        <TextInput placeholder='Password' secureTextEntry={true} style={styles.textInput}
-            onChangeText={(value)=>setPassword(value)}/>
-      </View>
-
-      <TouchableOpacity style={styles.button} onPress={OnSignInClick}>
-        <Text style={{ fontSize:17, color:'white', textAlign:'center'}}>Login</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.buttonCreate}
-      onPress={()=>router.push('login/signUp')}>
-        <Text style={{ fontSize:17, color:'#0AD476', textAlign:'center'}}>Create Account</Text>
-      </TouchableOpacity>
-    </View>
-  )
+    
+    return (
+        <View style={{ padding:25, marginTop:50}}>
+            <Text style={styles.textHeader}>Let's Sign You In</Text>
+            <Text style={styles.subText}>Welcome Back</Text>
+            <Text style={styles.subText}>You've been Missed!</Text>
+            <View style={{ marginTop:25}}> 
+                <Text>Email</Text>
+                <TextInput 
+                    placeholder='Email' 
+                    style={styles.textInput}
+                    onChangeText={(value)=>setEmail(value)}
+                    autoCapitalize='none'
+                />
+            </View>
+            <View style={{ marginTop:25}}> 
+                <Text>Password</Text>
+                <TextInput 
+                    placeholder='Password' 
+                    secureTextEntry={true} 
+                    style={styles.textInput}
+                    onChangeText={(value)=>setPassword(value)}
+                />
+            </View>
+            <TouchableOpacity style={styles.button} onPress={OnSignInClick}>
+                <Text style={{ fontSize:17, color:'white', textAlign:'center'}}>Login</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+                style={styles.buttonCreate}
+                onPress={()=>router.push('login/signUp')}
+            >
+                <Text style={{ fontSize:17, color:'#0AD476', textAlign:'center'}}>Create Account</Text>
+            </TouchableOpacity>
+            <Toast />
+        </View>
+    )
 }
 
 const styles = StyleSheet.create ({
