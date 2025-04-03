@@ -3,7 +3,7 @@ import React from 'react'
 import { useRouter } from 'expo-router'
 import { signOut } from 'firebase/auth'
 import { auth } from '@/configs/FirebaseConfig'
-import { RemoveLocalStorage } from '@/service/Storage'
+import { removeSpecificStorageKey } from '@/service/Storage'
 import Toast from 'react-native-toast-message'
 
 export default function HomeScreen() {
@@ -14,8 +14,10 @@ export default function HomeScreen() {
       // Sign out from Firebase
       await signOut(auth);
       
-      // Clear local storage
-      await RemoveLocalStorage();
+      // Clear only necessary auth-related keys instead of all storage
+      await removeSpecificStorageKey("@user_token"); // Adjust key names based on your app
+      await removeSpecificStorageKey("@user_profile");
+      // Add any other auth-related keys you need to clear
       
       // Show success message
       Toast.show({
@@ -39,7 +41,7 @@ export default function HomeScreen() {
 
   return (
     <View style={{ padding: 25, marginTop: 50 }}>
-      <Text style={{ fontSize: 24, marginBottom: 40 }}>Profile</Text>
+      <Text style={{ fontSize: 24, marginBottom: 20 }}>Profile</Text>
       <Button title='Logout' onPress={handleLogout} color="#0AD476"/>
     </View>
   )

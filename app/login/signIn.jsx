@@ -2,7 +2,7 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity } from 'react-nativ
 import React, { useState } from 'react'
 import { useRouter } from 'expo-router'
 import { account } from '../../configs/AppwriteConfig';
-import { setLocalStorage, RemoveLocalStorage, removeSpecificStorageKey } from '../../service/Storage';
+import { setLocalStorage, removeSpecificStorageKey, removeLocalStorage } from '../../service/Storage';
 import Toast from 'react-native-toast-message';
 
 export default function SignIn() {
@@ -22,7 +22,7 @@ export default function SignIn() {
         }
         try {
             // Clear all local storage first
-            await RemoveLocalStorage();
+            await removeLocalStorage();
 
             // Attempt to delete existing sessions with error handling
             try {
