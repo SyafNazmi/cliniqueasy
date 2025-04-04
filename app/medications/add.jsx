@@ -5,6 +5,8 @@ import PageHeader from '../../components/PageHeader'
 import { Ionicons } from '@expo/vector-icons'
 import DateTimePicker from '@react-native-community/datetimepicker'
 import { router } from 'expo-router'
+import { addMedication } from '../../service/Storage'
+import { scheduleMedicationReminder } from '../../service/Notification'
 
 const {width} = Dimensions.get("window");
 
@@ -78,7 +80,10 @@ export default function AddMedicationScreen() {
                     <TouchableOpacity 
                     key={freq.id}
                     style={[styles.optionCard, selectedFrequency === freq.label && styles.selectedOptionCard]}
-                    onPress={() => setSelectedFrequency(freq.label)}
+                    onPress={() => {
+                        setSelectedFrequency(freq.label);
+                        setForm({ ...form, frequencies: freq.label });
+                    }}
                   >
                     <View 
                       style={[styles.optionIcon, selectedFrequency === freq.label && styles.selectedOptionIcon]}
@@ -106,7 +111,10 @@ export default function AddMedicationScreen() {
                 {DURATIONS.map((dur)=> (
                     <TouchableOpacity key={dur.id}
                     style={[styles.optionCard, selectedDuration === dur.label && styles.selectedOptionCard]}
-                    onPress={() => setSelectedDuration(dur.label)}
+                    onPress={() => {
+                        setSelectedDuration(dur.label);
+                        setForm({ ...form, duration: dur.label });
+                    }}
                     >
                         <Text
                          style={[styles.durationNumber, selectedDuration === dur.label && styles.selectedDurationNumber]}
@@ -122,8 +130,7 @@ export default function AddMedicationScreen() {
     };
 
   const validateForm = () => {
-    const newErrors: {[key:string] : string} = {};
-
+    const newErrors = {}; 
     if (!form.name.trim()) {
         newErrors.name = "Medication name is required";
     }
@@ -136,10 +143,9 @@ export default function AddMedicationScreen() {
     if (!form.duration.trim()) {
         newErrors.duration = "Duration is required";
     }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  }
+}
 
   const handleSave = async() => {
     try {
@@ -184,7 +190,24 @@ export default function AddMedicationScreen() {
         await addMedication(medicationData);
         // Schedule reminders if enabled
         if (medicationData.reminderEnabled) {
-            await scheduleMedicationReminder(medicationData);
+            console.log("Scheduling reminders with data:", {
+                reminderEnabled: medicationData.reminderEnabled,
+                times: medicationData.times,
+              });
+              
+              // Ensure reminderEnabled is properly set
+              medicationData.reminderEnabled = form.reminderEnabled === true;
+              
+              // Make sure times array is properly formatted before scheduling
+              if (!Array.isArray(medicationData.times) || medicationData.times.length === 0) {
+                console.error("No medication times found!");
+                // Add default times if needed or show error
+                Alert.alert("Error", "Please add at least one medication time");
+                return;
+              }
+              
+              // Then schedule the notification
+              await scheduleMedicationReminder(medicationData);
         }
 
         Alert.alert(
@@ -390,14 +413,14 @@ export default function AddMedicationScreen() {
         <View style={styles.footer}>
             <TouchableOpacity style={[styles.saveButton,
                 isSubmitting && styles.saveButtonDisabled,
-            ]}>
+            ]} onPress={() => handleSave()}>
                 <LinearGradient
                  colors={["#1a8e2d", "#146922"]}
                  style={styles.saveButtonGradient}
                  start={{ x: 0, y: 0 }}
                  end={{ x: 1, y: 1 }}
                 >
-                <Text style={styles.saveButtonText}>Add Medications { isSubmitting ? "Adding..." : "Add Medication"}</Text>
+                <Text style={styles.saveButtonText}>{ isSubmitting ? "Adding..." : "Add Medication"}</Text>
                 </LinearGradient>
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelButton}
