@@ -4,8 +4,7 @@ import React, { act, useCallback, useEffect, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Circle } from 'react-native-svg';
-import { Link, useFocusEffect } from 'expo-router';
-import { useRoute } from '@react-navigation/native';
+import { Link, useFocusEffect, useRouter } from 'expo-router';
 import { getMedications, getTodaysDoses, recordDose } from '../../service/Storage';
 import { registerForPushnotificationsAsync, resetAllMedicationReminders, scheduleMedicationReminder } from '../../service/Notification';
 
@@ -112,7 +111,7 @@ function CircularProgress({
 
 export default function Medications() {
 
-    const router = useRoute();
+    const router = useRouter();
     const [todaysMedications, setTodaysMedications] = useState([]);
     const [completedDoses, setCompletedDoses] = useState(0);
     const [doseHistory, setDoseHistory] = useState([]);
