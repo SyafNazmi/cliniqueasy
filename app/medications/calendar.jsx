@@ -15,19 +15,18 @@ export default function CalendarScreen() {
     const [doseHistory, setDoseHistory] = useState([]);
 
     const loadData = useCallback(async () => {
-        try {
-            const [meds, history] = await Promise.all([
-                getMedications(),
-                getDoseHistory()
-            ])
-
-            setMedications(meds);
-            setDoseHistory(history);
-
-        } catch (error) {
-            console.error("Error loading calendar data:", error);
-        }
-    }, [selectedDate]);
+      try {
+        const [meds, history] = await Promise.all([
+          getMedications(),
+          getDoseHistory()
+        ]);
+    
+        setMedications(meds);
+        setDoseHistory(history);
+      } catch (error) {
+        console.error("Error loading calendar data:", error);
+      }
+    }, []); // Remove selectedDate dependency
 
     useFocusEffect(
         useCallback(() => {
@@ -46,127 +45,177 @@ export default function CalendarScreen() {
     const { days, firstDay } = getDaysInMonth(selectedDate)
 
     const renderCalendar = () => {
-        const calendar: JSX.Element[] = [];
+      const calendar: JSX.Element[] = [];
+      
+      // Get the first day of the month (0-6 for Sunday-Saturday)
+      const firstDayOfMonth = new Date(
+          selectedDate.getFullYear(),
+          selectedDate.getMonth(),
+          1
+      ).getDay();
+      
+      // Calculate number of days in the month
+      const daysInMonth = new Date(
+          selectedDate.getFullYear(),
+          selectedDate.getMonth() + 1,
+          0
+      ).getDate();
+      
+      // Generate each week row
+      for (let weekIndex = 0; weekIndex < 6; weekIndex++) {
+        const week: JSX.Element[] = [];
         
-        // Get the first day of the month (0-6 for Sunday-Saturday)
-        const firstDayOfMonth = new Date(
-            selectedDate.getFullYear(),
-            selectedDate.getMonth(),
-            1
-        ).getDay();
-        
-        // Calculate number of days in the month
-        const daysInMonth = new Date(
-            selectedDate.getFullYear(),
-            selectedDate.getMonth() + 1,
-            0
-        ).getDate();
-        
-        // Generate each week row
-        for (let weekIndex = 0; weekIndex < 6; weekIndex++) {
-            const week: JSX.Element[] = [];
+        for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+          const dayNumber = weekIndex * 7 + dayIndex + 1 - firstDayOfMonth;
+          
+          if (dayNumber < 1 || dayNumber > daysInMonth) {
+            // Empty cell for days outside current month
+            week.push(<View style={styles.calendarDay} key={`empty-${weekIndex}-${dayIndex}`} />);
+          } else {
+            const date = new Date(
+              selectedDate.getFullYear(),
+              selectedDate.getMonth(),
+              dayNumber
+            );
             
-            for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
-                const dayNumber = weekIndex * 7 + dayIndex + 1 - firstDayOfMonth;
-                
-                if (dayNumber < 1 || dayNumber > daysInMonth) {
-                    // Empty cell for days outside current month
-                    week.push(<View style={styles.calendarDay} key={`empty-${weekIndex}-${dayIndex}`} />);
-                } else {
-                    const date = new Date(
-                        selectedDate.getFullYear(),
-                        selectedDate.getMonth(),
-                        dayNumber
-                    );
-                    
-                    const isToday = new Date().toDateString() === date.toDateString();
-                    const isSelected = dayNumber === selectedDate.getDate();
-                    
-                    const hasDoses = doseHistory.some((dose) => 
-                        new Date(dose.timestamp).toDateString() === date.toDateString());
-                    
-                    week.push(
-                        <TouchableOpacity 
-                            key={`day-${dayNumber}`}
-                            style={[
-                                styles.calendarDay,
-                                isToday && styles.today,
-                                isSelected && styles.selected,
-                                hasDoses && styles.hasEvents,
-                            ]}
-                            onPress={() => setSelectedDate(new Date(
-                                selectedDate.getFullYear(),
-                                selectedDate.getMonth(),
-                                dayNumber
-                            ))}
-                        >
-                            <Text style={[styles.dayText, isToday && styles.todayText]}>
-                                {dayNumber}
-                            </Text>
-                            {hasDoses && <View style={styles.eventDot} />}
-                        </TouchableOpacity>
-                    );
-                }
-            }
+            const isToday = new Date().toDateString() === date.toDateString();
+            const isSelected = dayNumber === selectedDate.getDate();
             
-            // Only add weeks that have at least one valid day
-            if (week.some(element => element.props.children)) {
-                calendar.push(
-                    <View key={`week-${weekIndex}`} style={styles.calendarWeek}>{week}</View>
-                );
-            }
+            // Check for dose history events
+            const hasDoses = doseHistory.some((dose) => 
+              new Date(dose.timestamp).toDateString() === date.toDateString());
+              
+            // Check for scheduled medications on this date
+            const hasScheduledMeds = medications.some(medication => {
+              const startDate = new Date(medication.startDate);
+              const durationDays = parseInt(medication.duration.split(" ")[0]);
+              
+              // For indefinite duration
+              if (durationDays === -1) {
+                return date >= startDate;
+              }
+              
+              // For specific duration
+              const endDate = new Date(startDate);
+              endDate.setDate(startDate.getDate() + durationDays - 1);
+              
+              return date >= startDate && date <= endDate;
+            });
+            
+            week.push(
+              <TouchableOpacity 
+                key={`day-${dayNumber}`}
+                style={[
+                  styles.calendarDay,
+                  isToday && styles.today,
+                  isSelected && styles.selected,
+                  (hasDoses || hasScheduledMeds) && styles.hasEvents,
+                ]}
+                onPress={() => setSelectedDate(new Date(
+                  selectedDate.getFullYear(),
+                  selectedDate.getMonth(),
+                  dayNumber
+                ))}
+              >
+                <Text style={[
+                  styles.dayText, 
+                  isToday && styles.todayText,
+                  isSelected && styles.selectedText
+                ]}>
+                  {dayNumber}
+                </Text>
+                {hasScheduledMeds && <View style={[styles.eventDot, {backgroundColor: '#4CAF50'}]} />}
+                {hasDoses && <View style={[styles.eventDot, {backgroundColor: '#2196F3', marginTop: 2}]} />}
+              </TouchableOpacity>
+            );
+          }
         }
         
-        return calendar;
+        // Only add weeks that have at least one valid day
+        if (week.some(element => element.props.children)) {
+          calendar.push(
+            <View key={`week-${weekIndex}`} style={styles.calendarWeek}>{week}</View>
+          );
+        }
+      }
+      
+      return calendar;
     };
 
     const renderMedicationsForDate = () => {
-        const dateStr = selectedDate.toDateString();
-        const dayDoses = doseHistory.filter(
-          (dose) => new Date(dose.timestamp).toDateString() === dateStr
+      const dateStr = selectedDate.toDateString();
+      const selectedDateObj = new Date(dateStr);
+      const dayDoses = doseHistory.filter(
+        (dose) => new Date(dose.timestamp).toDateString() === dateStr
+      );
+    
+      // Filter medications based on whether they should be active on the selected date
+      const activeMedications = medications.filter((medication) => {
+        const startDate = new Date(medication.startDate);
+        const durationDays = parseInt(medication.duration.split(" ")[0]);
+        
+        // For indefinite duration (represented as -1)
+        if (durationDays === -1) {
+          return selectedDateObj >= startDate;
+        }
+        
+        // For specific duration
+        const endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + durationDays - 1); // -1 because the start date is inclusive
+        
+        return selectedDateObj >= startDate && selectedDateObj <= endDate;
+      });
+    
+      // No medications for this date
+      if (activeMedications.length === 0) {
+        return (
+          <View style={styles.emptyMedicationState}>
+            <Text style={styles.emptyStateText}>No medications scheduled for this date</Text>
+          </View>
+        );
+      }
+    
+      return activeMedications.map((medication) => {
+        const taken = dayDoses.some(
+          (dose) => dose.medicationId === medication.id && dose.taken
         );
     
-        return medications.map((medication) => {
-          const taken = dayDoses.some(
-            (dose) => dose.medicationId === medication.id && dose.taken
-          );
-    
-          return (
-            <View key={medication.id} style={styles.medicationCard}>
-              <View
+        return (
+          <View key={medication.id} style={styles.medicationCard}>
+            <View
+              style={[
+                styles.medicationColor,
+                { backgroundColor: medication.color },
+              ]}
+            />
+            <View style={styles.medicationInfo}>
+              <Text style={styles.medicationName}>{medication.name}</Text>
+              <Text style={styles.medicationDosage}>{medication.dosage}</Text>
+              <Text style={styles.medicationTime}>{medication.times[0]}</Text>
+            </View>
+            {taken ? (
+              <View style={styles.takenBadge}>
+                <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
+                <Text style={styles.takenText}>Taken</Text>
+              </View>
+            ) : (
+              <TouchableOpacity
                 style={[
-                  styles.medicationColor,
+                  styles.takeDoseButton,
                   { backgroundColor: medication.color },
                 ]}
-              />
-              <View style={styles.medicationInfo}>
-                <Text style={styles.medicationName}>{medication.name}</Text>
-                <Text style={styles.medicationDosage}>{medication.dosage}</Text>
-                <Text style={styles.medicationTime}>{medication.times[0]}</Text>
-              </View>
-              {taken ? (
-                <View style={styles.takenBadge}>
-                  <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
-                  <Text style={styles.takenText}>Taken</Text>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={[
-                    styles.takeDoseButton,
-                    { backgroundColor: medication.color },
-                  ]}
-                  onPress={async () => {
-                    await recordDose(medication.id, true, new Date().toISOString());
-                    loadData();
-                  }}
-                >
-                  <Text style={styles.takeDoseText}>Take</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          );
-        });
-      };
+                onPress={async () => {
+                  await recordDose(medication.id, true, selectedDate.toISOString());
+                  loadData();
+                }}
+              >
+                <Text style={styles.takeDoseText}>Take</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        );
+      });
+    };
 
     return (
         <View style={styles.container}>
@@ -435,5 +484,23 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: "600",
         color: "white",
+    },
+    emptyMedicationState: {
+      padding: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    emptyStateText: {
+      fontSize: 16,
+      color: '#666',
+      textAlign: 'center',
+    },
+    selected: {
+      backgroundColor: '#1a8e2d',
+      borderRadius: 20,
+    },
+    selectedText: {
+      color: '#fff',
+      fontWeight: 'bold',
     },
 });
