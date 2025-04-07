@@ -5,7 +5,11 @@ import PageHeader from '../../components/PageHeader';
 
 const DateSelection = () => {
   const router = useRouter();
-  const { doctorId, doctorName } = useLocalSearchParams();
+
+  const { doctorId, doctorName, serviceName } = useLocalSearchParams();
+
+  
+
 
   const dates = Array.from({ length: 7 }).map((_, i) => {
     const date = new Date();
@@ -16,7 +20,15 @@ const DateSelection = () => {
   const handleDateSelect = (date) => {
     router.push({
       pathname: '/appointment/TimeSlotSelection',
-      params: { doctorId, doctorName, date },
+
+      params: {
+        doctorId,
+        doctorName,
+        serviceName, // ✅ must be included
+        date,
+      },
+      
+
     });
   };
 
