@@ -4,6 +4,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { doctorImages } from '../constants';
 
 export default function AppointmentCard({ appointment }) {
+  
+  // Debug the appointment data
+  console.log("Appointment data:", appointment);
+  
   // If no appointment is passed, return null or a placeholder
   if (!appointment) return null;
 
@@ -31,15 +35,21 @@ export default function AppointmentCard({ appointment }) {
     const endTime = `${endHour.toString().padStart(2, '0')}:${minute}`;
     
     return `${startTime} - ${endTime}`;
+  };
 
-    const getImageSource = () => {
-      // If the appointment has a doctor_image that matches a key in doctorImages
-      if (appointment.doctor_image && doctorImages[appointment.doctor_image]) {
-        return doctorImages[appointment.doctor_image];
+  const getImageSource = () => {
+    
+    if (appointment.doctor_name) {
+      if (appointment.doctor_name === "John Green") {
+        return doctorImages["doctor1.png"];
+      } else if (appointment.doctor_name === "Leila Cameron") {
+        return doctorImages["doctor2.png"];
+      } else if (appointment.doctor_name === "David Livingston") {
+        return doctorImages["doctor3.png"];
       }
-      // Default fallback image
-      return require('../assets/images/doctor1.png');
-    };
+    }
+    // Fallback to default image
+    return require('../assets/images/doctor1.png');
   };
 
   return (
@@ -57,7 +67,7 @@ export default function AppointmentCard({ appointment }) {
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Image 
             // Use doctor image from your constants if available, otherwise use placeholder
-            source={doctorImages[appointment.doctor_image] || require('../assets/images/doctor1.png')} 
+            source={getImageSource()} 
             style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: 'white' }} 
           />
 
