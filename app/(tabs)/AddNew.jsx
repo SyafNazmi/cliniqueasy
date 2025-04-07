@@ -1,9 +1,12 @@
 import React from 'react';
+
 import { View, Text, TouchableOpacity, StyleSheet, Image, ScrollView, SafeAreaView } from 'react-native';
+
 import { useRouter } from 'expo-router';
 
 const AddNew = () => {
   const router = useRouter();
+
 
   const services = [
     { id: '1', name: 'In-clinic consultation' },

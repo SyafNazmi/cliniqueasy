@@ -29,6 +29,7 @@ const DatabaseService = {
     },
 
     // List documents in a collection with optional queries
+
     async listDocuments(collectionId, queries = [], limit = 25) {
         try {
           return await databases.listDocuments(
@@ -42,6 +43,8 @@ const DatabaseService = {
           throw error;
         }
       },
+
+ 
 
     // Get a specific document by its ID
     async getDocument(collectionId, documentId) {

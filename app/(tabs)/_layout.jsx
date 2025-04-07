@@ -2,6 +2,7 @@ import { View, Text } from 'react-native'
 import React, { useEffect } from 'react'
 import { Tabs, useRouter } from 'expo-router'
 import { FontAwesome } from '@expo/vector-icons'
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { getLocalStorage } from "../../service/Storage";
 
 
@@ -36,6 +37,13 @@ export default function TabLayout() {
                 tabBarLabel:'Book',
                 tabBarIcon:({color,size}) =>(
                     <FontAwesome name="calendar" size={24} color="black" />
+                )
+            }}/>
+        <Tabs.Screen name = 'Medications' 
+            options={{
+                tabBarLabel:'Medications',
+                tabBarIcon:({color,size}) =>(
+                    <Ionicons name="medical-outline" size={24} color="black" />
                 )
             }}/>
         <Tabs.Screen name = 'Profile' 

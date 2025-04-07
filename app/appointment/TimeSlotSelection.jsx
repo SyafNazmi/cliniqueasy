@@ -6,7 +6,9 @@ import PageHeader from '../../components/PageHeader';
 
 const TimeSlotSelection = () => {
   const router = useRouter();
+
   const { doctorId, doctorName, date, serviceName } = useLocalSearchParams();
+
 
   const timeSlots = ['09:00 AM', '10:00 AM', '11:00 AM', '02:00 PM', '03:00 PM', '04:00 PM'];
 
@@ -19,13 +21,17 @@ const TimeSlotSelection = () => {
         doctor_name: doctorName,
         date,
         time_slot: timeSlot,
+
         service_name: serviceName,
+
         status: 'Booked',
       };
       await DatabaseService.createDocument('67e0332c0001131d71ec', appointment);
 
+
       console.log('Booking Details:', { serviceName, doctorName, date, timeSlot });
       Alert.alert('Success', `Appointment booked for ${serviceName} with Dr. ${doctorName} on ${date} at ${timeSlot}`);
+
       router.back(); // You can also route back to home if you want
     } catch (err) {
       Alert.alert('Booking Failed', err.message);
