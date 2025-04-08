@@ -160,46 +160,58 @@ export async function getDoseHistory() {
 }
 
 
-export async function getTodaysDoses() {
+export const getTodaysDoses = async () => {
   try {
-    const history = await getDoseHistory();
-    const today = new Date().toDateString();
-    return history.filter(
-      (dose) => new Date(dose.timestamp).toDateString() === today
-    );
+      const doses = await AsyncStorage.getItem('doses');
+      if (!doses) return [];
+      
+      const allDoses = JSON.parse(doses);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      return allDoses.filter(dose => {
+          const doseDate = new Date(dose.timestamp);
+          doseDate.setHours(0, 0, 0, 0);
+          return doseDate.getTime() === today.getTime();
+      });
   } catch (error) {
-    console.error("Error getting today's doses:", error);
-    return [];
+      console.error("Error getting today's doses:", error);
+      return [];
   }
-}
+};
 
-export async function recordDose(medicationId, taken, timestamp) {
+export const recordDose = async (doseId, taken, timestamp, medicationId, time) => {
   try {
-    const userDetail = await getLocalStorage('userDetail');
-    const userId = userDetail?.uid || 'anonymous';
-    
-    const userDoseHistoryKey = `${USER_PREFIX}${userId}_${DOSE_HISTORY_KEY}`;
-    const history = await getDoseHistory();
-    const newDose = {
-      id: Math.random().toString(36).substr(2, 9),
-      medicationId,
-      timestamp,
-      taken,
-    };
-    history.push(newDose);
-    await setLocalStorage(userDoseHistoryKey, history);
-    
-    // Update medication supply if taken
-    if (taken) {
-      const medications = await getMedications();
-      const medication = medications.find((med) => med.id === medicationId);
-      if (medication && medication.currentSupply > 0) {
-        medication.currentSupply -= 1;
-        await updateMedication(medication);
+      // Get current doses
+      const existingDoses = await AsyncStorage.getItem('doses');
+      const doses = existingDoses ? JSON.parse(existingDoses) : [];
+      
+      // Check if this specific dose already exists
+      const existingDoseIndex = doses.findIndex(d => d.doseId === doseId);
+      
+      if (existingDoseIndex >= 0) {
+          // Update existing dose
+          doses[existingDoseIndex] = {
+              ...doses[existingDoseIndex],
+              taken,
+              timestamp
+          };
+      } else {
+          // Add new dose
+          doses.push({
+              doseId,
+              medicationId,
+              time,
+              taken,
+              timestamp
+          });
       }
-    }
+      
+      // Save updated doses
+      await AsyncStorage.setItem('doses', JSON.stringify(doses));
+      return true;
   } catch (error) {
-    console.error("Error recording dose:", error);
-    throw error;
+      console.error("Error recording dose:", error);
+      throw error;
   }
-}
+};

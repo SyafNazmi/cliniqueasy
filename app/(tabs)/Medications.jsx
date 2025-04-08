@@ -162,7 +162,6 @@ export default function Medications() {
         }
     }, []);
 
-    // In Medications.jsx, modify the setupNotifications function:
 
     const setupNotifications = async () => {
         try {
@@ -219,20 +218,31 @@ export default function Medications() {
         }, [loadMedications])
     );
 
-    const handleTakeDose = async (medication) => {
-        try {
-            await recordDose(medication.id, true, new Date().toISOString());
-            await loadMedications();
-
-        } catch (error) {
-            console.error("Error recording dose:", error);
-            Alert.alert("Error", "Failed to record dose. Please try again");
-        }
-    };
-
-    const isDoseTaken = (medicationId: string) => {
+    const handleTakeDose = async (medication, timeIndex = 0) => {
+      try {
+          // Create a dose ID that includes the time index
+          const doseId = `${medication.id}-${timeIndex}`;
+          
+          // Pass the specific time that was taken
+          await recordDose(
+              doseId, 
+              true, 
+              new Date().toISOString(), 
+              medication.id,
+              medication.times[timeIndex]
+          );
+          
+          await loadMedications();
+      } catch (error) {
+          console.error("Error recording dose:", error);
+          Alert.alert("Error", "Failed to record dose. Please try again");
+      }
+  };
+  
+    // Update isDoseTaken to check for specific time doses
+    const isDoseTaken = (doseId) => {
         return doseHistory.some(
-            (dose) => dose.medicationId === medicationId && dose.taken
+            (dose) => dose.doseId === doseId && dose.taken
         );
     };
 
@@ -291,57 +301,67 @@ export default function Medications() {
         </View>
 
         {/* Today Medicine Section */}
-        <View style={ {paddingHorizontal: 20 }}> 
+        <View style={{paddingHorizontal: 20}}> 
             <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Today's Schedule</Text>
-                <Link  href="/calendar" asChild/>
-                <TouchableOpacity>
-                    <Text style={styles.seeAllButton}>See All</Text>
-                </TouchableOpacity>
+                <Link href="/medications/calendar" asChild>
+                    <TouchableOpacity>
+                        <Text style={styles.seeAllButton}>See All</Text>
+                    </TouchableOpacity>
+                </Link>
             </View>
             {todaysMedications.length === 0 ? (
                 <View style={styles.emptyState}>
                     <Ionicons name="medical-outline" size={48} color="#ccc" />
                     <Text style={styles.emptyStateText}>No Medications Scheduled for Today</Text>
-                    <Link href="/medications/add"/>
+                    <Link href="/medications/add" asChild>
                         <TouchableOpacity style={styles.addMedicationButton}>
                             <Text style={styles.addMedicationButtonText}>Add Medication</Text>
                         </TouchableOpacity>
+                    </Link>
                 </View>
             ) : (
-                todaysMedications.map ((medication)=> {
-                    const taken = isDoseTaken(medication.id)
-                    return (
-                        <View key={medication.id} style={styles.doseCard}>
-                            <View style={[styles.doseBadge,
-                                { backgroundColor: `${medication.color}15` }
-                            ]}>
-                                <Ionicons name="medical" size={24}/>
+                todaysMedications.map((medication) => {
+                    // Create an entry for each time in the medication times array
+                    return medication.times.map((time, timeIndex) => {
+                        const doseId = `${medication.id}-${timeIndex}`; // Create unique ID for each dose time
+                        const taken = isDoseTaken(doseId); // You'll need to update your dose recording system
+                        
+                        return (
+                            <View key={doseId} style={styles.doseCard}>
+                                <View style={[styles.doseBadge, { backgroundColor: `${medication.color}15` }]}>
+                                    <Ionicons name="medical" size={24} />
+                                </View>
+                                <View style={styles.doseInfo}>
+                                    <View>
+                                        <Text style={styles.medicineName}>{medication.name}</Text>
+                                        <Text style={styles.dosageInfo}>
+                                            {medication.dosage} 
+                                            {medication.type ? ` · ${medication.type}` : ''}
+                                            {medication.times.length > 1 ? ` · Dose ${timeIndex + 1}/${medication.times.length}` : ''}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.doseTime}>
+                                        <Ionicons name="time-outline" size={14} color="#ccc" />
+                                        <Text style={styles.timeText}>{time}</Text>
+                                    </View>
+                                </View>
+                                {taken ? (
+                                    <View style={styles.takeDoseButton}>
+                                        <Ionicons name="checkmark-circle" size={24} />
+                                        <Text style={styles.takeDoseText}>Taken</Text>
+                                    </View>
+                                ) : (
+                                    <TouchableOpacity 
+                                        style={[styles.takeDoseButton, { backgroundColor: medication.color }]} 
+                                        onPress={() => handleTakeDose(medication, timeIndex)}
+                                    >
+                                        <Text style={styles.takeDoseText}>Take</Text>
+                                    </TouchableOpacity>
+                                )}
                             </View>
-                            <View style={styles.doseInfo}>
-                                <View>
-                                    <Text style={styles.medicineName}>{medication.name}</Text>
-                                    <Text style={styles.dosageInfo}>{medication.dosage}</Text>
-                                </View>
-                                <View style={styles.doseTime}>
-                                    <Ionicons name="time-outline" size={14} color="#ccc"/>
-                                    <Text style={styles.timeText}>{medication.times[0]}</Text>
-                                </View>
-                            </View>
-                            {taken ? (
-                                <View style={styles.takeDoseButton}>
-                                <Ionicons name="checkmark-circle" size={24}/>
-                                <Text style={styles.takeDoseText}>Taken</Text>
-                                </View>
-                            ) : (
-                                <TouchableOpacity style={[styles.takeDoseButton,
-                                    { backgroundColor: medication.color },
-                                ]} onPress={() => handleTakeDose(medication)}>
-                                    <Text style={styles.takeDoseText}>Take</Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
-                    );
+                        );
+                    });
                 })
             )}
         </View>
@@ -370,7 +390,8 @@ export default function Medications() {
                             <Text style={styles.notificationTime}>{medication.times[0]}</Text>
                         </View>
                     </View>
-                ))}
+                ))
+                }
             </View>
         </Modal>
     </ScrollView>

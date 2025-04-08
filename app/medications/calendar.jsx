@@ -197,47 +197,54 @@ export default function CalendarScreen() {
       }
     
       return activeMedications.map((medication) => {
-        const taken = dayDoses.some(
-          (dose) => dose.medicationId === medication.id && dose.taken
-        );
-    
-        return (
-          <View key={medication.id} style={styles.medicationCard}>
-            <View
-              style={[
-                styles.medicationColor,
-                { backgroundColor: medication.color },
-              ]}
-            />
-            <View style={styles.medicationInfo}>
-              <Text style={styles.medicationName}>{medication.name}</Text>
-              <Text style={styles.medicationDosage}>{medication.dosage}</Text>
-              <Text style={styles.medicationTime}>{medication.times[0]}</Text>
-            </View>
-            {taken ? (
-              <View style={styles.takenBadge}>
-                <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
-                <Text style={styles.takenText}>Taken</Text>
-              </View>
-            ) : (
-              <TouchableOpacity
+        // Create an entry for each time in the medication times array
+        return medication.times.map((time, timeIndex) => {
+          const doseId = `${medication.id}-${timeIndex}`; // Create unique ID for each dose time
+          const taken = dayDoses.some(
+            (dose) => dose.doseId === doseId && dose.taken
+          );          
+          
+          return (
+            <View key={doseId} style={styles.medicationCard}>
+              <View
                 style={[
-                  styles.takeDoseButton,
+                  styles.medicationColor,
                   { backgroundColor: medication.color },
                 ]}
-                onPress={async () => {
-                  await recordDose(medication.id, true, selectedDate.toISOString());
-                  loadData();
-                }}
-              >
-                <Text style={styles.takeDoseText}>Take</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        );
+              />
+              <View style={styles.medicationInfo}>
+                <Text style={styles.medicationName}>{medication.name}</Text>
+                <Text style={styles.medicationDosage}>
+                  {medication.dosage}
+                  {medication.type ? ` · ${medication.type}` : ''}
+                  {medication.times.length > 1 ? ` · Dose ${timeIndex + 1}/${medication.times.length}` : ''}
+                </Text>
+                <Text style={styles.medicationTime}>{time}</Text>
+              </View>
+              {taken ? (
+                <View style={styles.takenBadge}>
+                  <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
+                  <Text style={styles.takenText}>Taken</Text>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={[
+                    styles.takeDoseButton,
+                    { backgroundColor: medication.color },
+                  ]}
+                  onPress={async () => {
+                    await recordDose(doseId, true, selectedDate.toISOString());
+                    loadData();
+                  }}
+                >
+                  <Text style={styles.takeDoseText}>Take</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        });
       });
     };
-
 
     return (
         <View style={styles.container}>
