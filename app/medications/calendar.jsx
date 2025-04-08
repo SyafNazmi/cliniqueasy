@@ -15,6 +15,7 @@ export default function CalendarScreen() {
     const [doseHistory, setDoseHistory] = useState([]);
 
     const loadData = useCallback(async () => {
+
       try {
         const [meds, history] = await Promise.all([
           getMedications(),
@@ -27,6 +28,7 @@ export default function CalendarScreen() {
         console.error("Error loading calendar data:", error);
       }
     }, []); // Remove selectedDate dependency
+
 
     useFocusEffect(
         useCallback(() => {
@@ -216,6 +218,7 @@ export default function CalendarScreen() {
         );
       });
     };
+
 
     return (
         <View style={styles.container}>
@@ -485,6 +488,7 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         color: "white",
     },
+
     emptyMedicationState: {
       padding: 20,
       alignItems: 'center',
@@ -503,4 +507,5 @@ const styles = StyleSheet.create({
       color: '#fff',
       fontWeight: 'bold',
     },
+
 });

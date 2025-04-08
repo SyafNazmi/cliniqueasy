@@ -86,6 +86,7 @@ export default function HospitalsDetails() {
         ))}
         
         <TouchableOpacity 
+          onPress={() => router.push('/AddNew')}
           style={{ 
             backgroundColor: '#0066cc',
             paddingVertical: 14,

@@ -29,19 +29,22 @@ const DatabaseService = {
     },
 
     // List documents in a collection with optional queries
-    async listDocuments(collectionId, queries = [], limit = 100) {
+
+    async listDocuments(collectionId, queries = [], limit = 25) {
         try {
-            return await databases.listDocuments(
-                process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID,
-                collectionId,
-                queries,
-                limit
-            );
+          return await databases.listDocuments(
+            process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID, // Access the environment variable
+            collectionId,
+            queries,
+            limit
+          );
         } catch (error) {
-            console.error('Error listing documents:', error);
-            throw error;
+          console.error('Error listing documents:', error);
+          throw error;
         }
-    },
+      },
+
+ 
 
     // Get a specific document by its ID
     async getDocument(collectionId, documentId) {

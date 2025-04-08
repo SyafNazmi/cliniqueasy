@@ -312,7 +312,7 @@ export default function Medications() {
                 todaysMedications.map ((medication)=> {
                     const taken = isDoseTaken(medication.id)
                     return (
-                        <View style={styles.doseCard}>
+                        <View key={medication.id} style={styles.doseCard}>
                             <View style={[styles.doseBadge,
                                 { backgroundColor: `${medication.color}15` }
                             ]}>
@@ -360,7 +360,7 @@ export default function Medications() {
                 </TouchableOpacity>
                 </View>
                 {todaysMedications.map((medication)=> (
-                    <View style={styles.notificationItem}>
+                    <View key={medication.id} style={styles.notificationItem}>
                         <View style={styles.notificationIcon}>
                             <Ionicons name='medical' size={24}/>
                         </View>
