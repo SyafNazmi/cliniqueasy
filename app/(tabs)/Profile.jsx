@@ -1,23 +1,29 @@
-import { View, Text, Button } from 'react-native'
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
 import React from 'react'
 import { useRouter } from 'expo-router'
-import { signOut } from 'firebase/auth'
-import { auth } from '@/configs/FirebaseConfig'
+import { account } from '@/configs/AppwriteConfig'
 import { removeSpecificStorageKey } from '@/service/Storage'
 import Toast from 'react-native-toast-message'
 
-export default function HomeScreen() {
+export default function Profile() {
   const router = useRouter();
-
+  
   const handleLogout = async () => {
     try {
-      // Sign out from Firebase
-      await signOut(auth);
+      console.log("Starting logout process...");
       
-      // Clear only necessary auth-related keys instead of all storage
-      await removeSpecificStorageKey("@user_token"); // Adjust key names based on your app
-      await removeSpecificStorageKey("@user_profile");
-      // Add any other auth-related keys you need to clear
+      // Sign out from Appwrite by deleting the current session
+      try {
+        await account.deleteSession('current');
+        console.log("Appwrite session deleted successfully");
+      } catch (sessionError) {
+        console.log("Error deleting Appwrite session:", sessionError);
+        // Continue with logout even if session deletion fails
+      }
+      
+      // Only clear authentication-related data
+      await removeSpecificStorageKey('userDetail');
+      console.log("User details removed from storage");
       
       // Show success message
       Toast.show({
@@ -27,6 +33,7 @@ export default function HomeScreen() {
       });
       
       // Redirect to login screen
+      console.log("Redirecting to login screen...");
       router.replace('/login');
     } catch (error) {
       console.error("Logout error:", error);
@@ -38,11 +45,23 @@ export default function HomeScreen() {
       });
     }
   }
-
+  
   return (
     <View style={{ padding: 25, marginTop: 50 }}>
       <Text style={{ fontSize: 24, marginBottom: 20 }}>Profile</Text>
-      <Button title='Logout' onPress={handleLogout} color="#0AD476"/>
+      <TouchableOpacity style={styles.button} onPress={handleLogout}>
+        <Text style={{ fontSize: 17, color: 'white', textAlign: 'center' }}>Logout</Text>
+      </TouchableOpacity>
+      <Toast />
     </View>
   )
 }
+
+const styles = StyleSheet.create({
+  button: {
+    padding: 15,
+    backgroundColor: '#0AD476',
+    borderRadius: 10,
+    marginTop: 15
+  }
+});

@@ -92,16 +92,24 @@ export default function CalendarScreen() {
               const startDate = new Date(medication.startDate);
               const durationDays = parseInt(medication.duration.split(" ")[0]);
               
+              // Set hours to 0 for both dates to compare just the date part
+              const dateWithoutTime = new Date(date);
+              dateWithoutTime.setHours(0,0,0,0);
+              
+              const startDateWithoutTime = new Date(startDate);
+              startDateWithoutTime.setHours(0,0,0,0);
+              
               // For indefinite duration
               if (durationDays === -1) {
-                return date >= startDate;
+                return dateWithoutTime >= startDateWithoutTime;
               }
               
               // For specific duration
               const endDate = new Date(startDate);
               endDate.setDate(startDate.getDate() + durationDays - 1);
+              endDate.setHours(0,0,0,0);
               
-              return date >= startDate && date <= endDate;
+              return dateWithoutTime >= startDateWithoutTime && dateWithoutTime <= endDate;
             });
             
             week.push(
@@ -153,19 +161,30 @@ export default function CalendarScreen() {
     
       // Filter medications based on whether they should be active on the selected date
       const activeMedications = medications.filter((medication) => {
+        // Convert medication.startDate to a proper Date object
+        // The issue was here - we need to properly parse the ISO string
         const startDate = new Date(medication.startDate);
+        
+        // console.log(`Comparing: Selected date ${selectedDateObj.toDateString()} vs Start date ${startDate.toDateString()}`);
+        
         const durationDays = parseInt(medication.duration.split(" ")[0]);
         
         // For indefinite duration (represented as -1)
         if (durationDays === -1) {
-          return selectedDateObj >= startDate;
+          // Compare dates without time component
+          return selectedDateObj.setHours(0,0,0,0) >= startDate.setHours(0,0,0,0);
         }
         
         // For specific duration
         const endDate = new Date(startDate);
         endDate.setDate(startDate.getDate() + durationDays - 1); // -1 because the start date is inclusive
         
-        return selectedDateObj >= startDate && selectedDateObj <= endDate;
+        // Compare dates without time component for accurate date comparison
+        const selectedTime = selectedDateObj.setHours(0,0,0,0);
+        const startTime = startDate.setHours(0,0,0,0);
+        const endTime = endDate.setHours(0,0,0,0);
+        
+        return selectedTime >= startTime && selectedTime <= endTime;
       });
     
       // No medications for this date
