@@ -323,6 +323,9 @@ export default function Medications() {
     
     }, [todaysMedications, doseHistory]);
 
+    // Count of medications to show in the notification badge
+    const medicationCount = todaysMedications.length;
+
     
   return (
     <ScrollView style={styles.container}>
@@ -338,7 +341,7 @@ export default function Medications() {
                         <Ionicons name="notifications-outline" size={24} color="white" />
                         {/* Render the notificationBadge */
                             <View style={styles.notificationBadge}>
-                                <Text style={styles.notificationCount}>1</Text>
+                                <Text style={styles.notificationCount}>{medicationCount}</Text>
                             </View>
                         }
                     </TouchableOpacity>
@@ -448,32 +451,41 @@ export default function Medications() {
         </View>
 
         {/* Display Notification Section */}
-        <Modal visible={false} transparent={true} animationType="slide" onRequestClose={() => setShowNotifications(false)}>
-            <View style={styles.modalOverlay}>
-                <View style={styles.modalContent}>
-                <Text style={styles.modalTitle}>
-                    Notification
-                </Text>
-                <TouchableOpacity style={styles.closeButton}
-                    onPress={() => setShowNotifications(false)}                
+        <Modal 
+          visible={showNotifications} 
+          transparent={true} 
+          animationType="slide" 
+          onRequestClose={() => setShowNotifications(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Notification</Text>
+                <TouchableOpacity
+                  style={styles.closeButton}
+                  onPress={() => setShowNotifications(false)}                
                 >
-                    <Ionicons name='close' size={24} color='#333' />
+                  <Ionicons name='close' size={24} color='#333' />
                 </TouchableOpacity>
-                </View>
-                {todaysMedications.map((medication)=> (
-                    <View key={medication.id} style={styles.notificationItem}>
-                        <View style={styles.notificationIcon}>
-                            <Ionicons name='medical' size={24}/>
-                        </View>
-                        <View style={styles.notificationContent}>
-                            <Text style={styles.notificationTitle}>{medication.name}</Text>
-                            <Text style={styles.notificationMessage}>{medication.dosage}</Text>
-                            <Text style={styles.notificationTime}>{medication.times[0]}</Text>
-                        </View>
+              </View>
+              
+              <ScrollView style={styles.notificationsList}>
+              {todaysMedications.map((medication)=> (
+                <View key={medication.id} style={styles.notificationItem}>
+                    <View style={styles.notificationIcon}>
+                        <Ionicons name='medical' size={24}/>
                     </View>
-                ))
-                }
+                    <View style={styles.notificationContent}>
+                        <Text style={styles.notificationTitle}>{medication.name}</Text>
+                        <Text style={styles.notificationMessage}>{medication.dosage}</Text>
+                        <Text style={styles.notificationTime}>{medication.times[0]}</Text>
+                    </View>
+                </View>
+              ))
+              }
+              </ScrollView>
             </View>
+          </View>
         </Modal>
     </ScrollView>
   );
