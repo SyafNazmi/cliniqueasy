@@ -11,7 +11,7 @@ import {
   ScrollView
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { DatabaseService, AuthService } from '../../configs/AppwriteConfig';
+import { DatabaseService, AuthService, Query } from '../../configs/AppwriteConfig';
 import { doctorImages, COLLECTIONS, initializeDoctors } from '../../constants';
 import PageHeader from '../../components/PageHeader';
 
@@ -53,11 +53,61 @@ const AppointmentBooking = () => {
   const timeSlots = ['8:30 AM', '9:00 AM', '9:30 AM', '10:00 AM', '2:00 PM', '3:00 PM', '4:00 PM'];
 
   useEffect(() => {
+
+    const checkProfileBeforeBooking = async () => {
+      try {
+        const currentUser = await AuthService.getCurrentUser();
+        
+        if (currentUser) {
+          const response = await DatabaseService.listDocuments(
+            COLLECTIONS.PATIENT_PROFILES,
+            [Query.equal('userId', currentUser.$id)],
+            1
+          );
+          
+          if (response.documents.length === 0) {
+            // No profile found - redirect to profile creation
+            Alert.alert(
+              "Profile Required",
+              "Please complete your patient profile before booking an appointment.",
+              [
+                { text: "Create Profile", onPress: () => router.push('/profile') }
+              ]
+            );
+            return;
+          }
+          
+          // Check for required fields (using same fields as in your form validation)
+          const profile = response.documents[0];
+          const requiredFields = ['email', 'phoneNumber', 'fullName', 'gender', 'birthDate', 'address'];
+          const missingFields = requiredFields.filter(field => !profile[field]);
+          
+          if (missingFields.length > 0) {
+            Alert.alert(
+              "Incomplete Profile",
+              "Please complete the required fields in your profile before booking.",
+              [
+                { text: "Update Profile", onPress: () => router.push('/profile') }
+              ]
+            );
+            return;
+          }
+          
+          // Profile is complete, can proceed with booking
+          console.log("Profile complete, proceeding with booking");
+        }
+      } catch (error) {
+        console.error('Error checking profile:', error);
+      }
+    };
+    
+    checkProfileBeforeBooking();
+
     const fetchDoctors = async () => {
       try {
         // First try to initialize doctors to ensure they exist
         await initializeDoctors();
-        
+
         console.log('Fetching doctors for branchId:', branchId);
         
         // DEBUGGING: Log all doctors first to check what exists
@@ -133,29 +183,40 @@ const AppointmentBooking = () => {
       const currentUser = await AuthService.getCurrentUser();
       const formattedDate = formatDate(selectedDate);
       
+      // Make sure all these parameters are available and correctly named
       const appointment = {
         user_id: currentUser.$id,
         doctor_id: selectedDoctor.$id,
         doctor_name: selectedDoctor.name,
-        branch_id: String(branchId),
-        branch_name: branchName,
-        service_id: String(service_id),
         service_name: serviceName,
+        // These fields are missing or null in your database
+        branch_id: branchId, // Make sure this matches your schema naming
+        branch_name: branchName,
+        service_id: service_id, // Make sure this is available
         date: formattedDate,
         time_slot: selectedTimeSlot,
         status: 'Booked',
         created_at: new Date().toISOString()
       };
-      // Create the appointment document
-      await DatabaseService.createDocument(COLLECTIONS.APPOINTMENTS, appointment);
-
-      Alert.alert(
-        'Booking Successful', 
-        `Your ${serviceName} appointment with Dr. ${selectedDoctor.name} at ${branchName} branch on ${formattedDate} at ${selectedTimeSlot} has been booked.`
-      );
       
-      router.push('/');
+      console.log('Creating appointment with data:', appointment);
+      
+      const result = await DatabaseService.createDocument(COLLECTIONS.APPOINTMENTS, appointment);
+      
+      // Navigate to success page
+      router.push({
+        pathname: '/appointment/success',
+        params: {
+          appointmentId: result.$id,
+          doctorName: selectedDoctor.name,
+          serviceName: serviceName,
+          branchName: branchName,
+          date: formattedDate,
+          timeSlot: selectedTimeSlot
+        }
+      });
     } catch (err) {
+      console.error('Booking failed with error:', err);
       Alert.alert('Booking Failed', err.message);
     }
   };

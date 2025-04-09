@@ -4,11 +4,14 @@ export const COLLECTIONS = {
   DOCTORS: '67e033480011d20e04fb',
   BRANCHES: '67f68c760039e7d1a61d',
   SERVICES: '67f68c88002d35ec29fe',
-  APPOINTMENTS: '67e0332c0001131d71ec'
+  APPOINTMENTS: '67e0332c0001131d71ec',
+  PATIENT_PROFILES: '67e032ec0025cf1956ff'
 };
 
 // Database ID
 export const DATABASE_ID = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+
+export { COLORS } from '../constants/Colors';
 
 /**
  * Gender Options
