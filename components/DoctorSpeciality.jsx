@@ -19,11 +19,11 @@ export default function DoctorSpeciality() {
             width: 70, 
             height: 70, 
             borderRadius: 35, 
-            backgroundColor: '#e6efff', 
+            backgroundColor: '#E6FFF3', 
             justifyContent: 'center', 
             alignItems: 'center' 
           }}>
-            <Ionicons name={specialty.icon} size={30} color="#2563eb" />
+            <Ionicons name={specialty.icon} size={30} color="#0AD476" />
           </View>
           <Text style={{ marginTop: 8, textAlign: 'center' }}>{specialty.name}</Text>
         </View>

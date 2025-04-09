@@ -1,16 +1,12 @@
 import React from 'react';
-import { View, Text, Image, TouchableOpacity } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { doctorImages } from '../constants';
 
 export default function AppointmentCard({ appointment }) {
-  
-  // Debug the appointment data
-  console.log("Appointment data:", appointment);
-  
-  // If no appointment is passed, return null or a placeholder
+  // If no appointment is passed, return null
   if (!appointment) return null;
-
+  
   // Format time from timeSlot (e.g., "9:00 AM" -> "09:00 - 10:00")
   const formatTimeRange = (timeSlot) => {
     if (!timeSlot) return "";
@@ -36,9 +32,24 @@ export default function AppointmentCard({ appointment }) {
     
     return `${startTime} - ${endTime}`;
   };
-
-  const getImageSource = () => {
+  
+  // Get day and month from appointment date
+  const extractDayMonth = (dateString) => {
+    if (!dateString) return { day: "", month: "" };
     
+    const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
+    if (!parts) return { day: "", month: "" };
+    
+    return {
+      dayName: parts[1].substring(0, 3), // First 3 letters of day name
+      day: parts[2],
+      month: parts[3],
+    };
+  };
+  
+  const { dayName, day, month } = extractDayMonth(appointment.date);
+  
+  const getImageSource = () => {
     if (appointment.doctor_name) {
       if (appointment.doctor_name === "John Green") {
         return doctorImages["doctor1.png"];
@@ -51,68 +62,210 @@ export default function AppointmentCard({ appointment }) {
     // Fallback to default image
     return require('../assets/images/doctor1.png');
   };
+  
+  // Determine background color based on service
+  const getCardColor = () => {
+    if (!appointment.service_name) return styles.cardDefault;
+    
+    const service = appointment.service_name.toLowerCase();
+    if (service.includes('health check') || service.includes('preventive')) {
+      return styles.cardCheckup;
+    } else if (service.includes('diagnosis') || service.includes('treatment')) {
+      return styles.cardDiagnosis;
+    } else if (service.includes('vaccination') || service.includes('immunization')) {
+      return styles.cardVaccination;
+    }
+    
+    return styles.cardDefault;
+  };
 
   return (
-    <View style={{ 
-      backgroundColor: '#2563eb', 
-      borderRadius: 15, 
-      padding: 15,
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
-      elevation: 3
-    }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+    <View style={[styles.card, getCardColor()]}>
+      {/* Date badge */}
+      <View style={styles.dateBadge}>
+        <Text style={styles.dateMonth}>{month}</Text>
+        <Text style={styles.dateDay}>{day}</Text>
+        <Text style={styles.dateDayName}>{dayName}</Text>
+      </View>
+      
+      <View style={styles.cardContent}>
+        {/* Doctor info */}
+        <View style={styles.doctorRow}>
           <Image 
-            // Use doctor image from your constants if available, otherwise use placeholder
             source={getImageSource()} 
-            style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: 'white' }} 
+            style={styles.doctorImage} 
           />
-
-          <View style={{ marginLeft: 15 }}>
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>
+          <View style={styles.doctorInfo}>
+            <Text style={styles.doctorName}>
               Dr. {appointment.doctor_name || "Unknown"}
             </Text>
-            <Text style={{ color: 'white', opacity: 0.8 }}>
+            <Text style={styles.serviceName}>
               {appointment.service_name || "Consultation"}
             </Text>
           </View>
         </View>
-        <TouchableOpacity style={{ 
-          backgroundColor: 'white', 
-          width: 40, 
-          height: 40, 
-          borderRadius: 20, 
-          justifyContent: 'center', 
-          alignItems: 'center' 
-        }}>
-          <Ionicons name="call" size={20} color="#2563eb" />
-        </TouchableOpacity>
-      </View>
-      
-      <View style={{ 
-        backgroundColor: 'rgba(255,255,255,0.2)', 
-        borderRadius: 10, 
-        padding: 12, 
-        marginTop: 15, 
-        flexDirection: 'row', 
-        justifyContent: 'space-between' 
-      }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Ionicons name="calendar-outline" size={20} color="white" />
-          <Text style={{ color: 'white', marginLeft: 10 }}>
-            {appointment.date || "Not scheduled"}
-          </Text>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Ionicons name="time-outline" size={20} color="white" />
-          <Text style={{ color: 'white', marginLeft: 10 }}>
-            {formatTimeRange(appointment.time_slot)}
-          </Text>
+        
+        {/* Appointment details */}
+        <View style={styles.detailsContainer}>
+          {/* Branch */}
+          {appointment.branch_name && (
+            <View style={styles.detailRow}>
+              <Ionicons name="location-outline" size={18} color="white" />
+              <Text style={styles.detailText}>
+                {appointment.branch_name} Branch
+              </Text>
+            </View>
+          )}
+          
+          {/* Date */}
+          <View style={styles.detailRow}>
+            <Ionicons name="calendar-outline" size={18} color="white" />
+            <Text style={styles.detailText}>
+              {appointment.date || "Not scheduled"}
+            </Text>
+          </View>
+          
+          {/* Time */}
+          <View style={styles.detailRow}>
+            <Ionicons name="time-outline" size={18} color="white" />
+            <Text style={styles.detailText}>
+              {formatTimeRange(appointment.time_slot)}
+            </Text>
+          </View>
+          
+          {/* Status */}
+          <View style={styles.statusContainer}>
+            <View style={styles.statusBadge}>
+              <Text style={styles.statusText}>{appointment.status || "Booked"}</Text>
+            </View>
+            
+            <TouchableOpacity style={styles.callButton}>
+              <Ionicons name="call" size={18} color="#0AD476" />
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  card: {
+    borderRadius: 16,
+    marginBottom: 16,
+    flexDirection: 'row',
+    overflow: 'hidden',
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  cardDefault: {
+    backgroundColor: '#0AD476', // Green color for general appointments
+  },
+  cardCheckup: {
+    backgroundColor: '#3B82F6', // Blue color for health check-ups
+  },
+  cardDiagnosis: {
+    backgroundColor: '#8B5CF6', // Purple color for diagnosis appointments
+  },
+  cardVaccination: {
+    backgroundColor: '#F59E0B', // Orange color for vaccinations
+  },
+  dateBadge: {
+    width: 60,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  dateMonth: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  dateDay: {
+    color: 'white',
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginVertical: 2,
+  },
+  dateDayName: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  cardContent: {
+    flex: 1,
+    padding: 15,
+  },
+  doctorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  doctorImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'white',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
+  },
+  doctorInfo: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  doctorName: {
+    color: 'white',
+    fontSize: 17,
+    fontWeight: 'bold',
+  },
+  serviceName: {
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontSize: 14,
+    marginTop: 2,
+  },
+  detailsContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 12,
+    padding: 12,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  detailText: {
+    color: 'white',
+    fontSize: 14,
+    marginLeft: 8,
+    flex: 1,
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 5,
+  },
+  statusBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+  },
+  statusText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  callButton: {
+    backgroundColor: 'white',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+});
