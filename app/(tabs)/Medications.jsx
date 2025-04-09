@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Circle } from 'react-native-svg';
 import { Link, useFocusEffect, useRouter } from 'expo-router';
-import { getMedications, getTodaysDoses, recordDose } from '../../service/Storage';
+import { getMedications, getDoseHistory, getTodaysDoses, recordDose } from '../../service/Storage';
 import { registerForPushnotificationsAsync, resetAllMedicationReminders, scheduleMedicationReminder } from '../../service/Notification';
 
 const {width} = Dimensions.get("window");
@@ -58,6 +58,8 @@ function CircularProgress({
     const strokeWidth = 15;
     const radius = (size - strokeWidth) / 2;
     const circumference = 2 * Math.PI * radius;
+    const safeProgress = isNaN(progress) || progress < 0 ? 0 : 
+                    progress > 1 ? 1 : progress;
 
     // Convert progress decimal to percentage for display
     const progressPercentage = progress * 100;
@@ -112,12 +114,15 @@ function CircularProgress({
 export default function Medications() {
 
     const router = useRouter();
+    const [progress, setProgress] = useState(0);
+    const [totalDoses, setTotalDoses] = useState(0);
     const [todaysMedications, setTodaysMedications] = useState([]);
     const [completedDoses, setCompletedDoses] = useState(0);
     const [doseHistory, setDoseHistory] = useState([]);
     const [medications, setMedications] = useState([]);
     const [showNotifications, setShowNotifications] = useState(false);
 
+    // Recording Medications and Doses
     const loadMedications = useCallback(async() => {
         try {
             // Fetch data only once using Promise.all
@@ -161,6 +166,53 @@ export default function Medications() {
             console.error("Error loading medications:", error);
         }
     }, []);
+
+    // Retrieving Doses
+    const loadData = useCallback(async () => {
+      try {
+        // Fetch all medications
+        const allMedications = await getMedications();
+        setMedications(allMedications);
+        
+        // Get today's dose history
+        const todayDoses = await getTodaysDoses(allMedications);
+        setDoseHistory(todayDoses);
+        
+        console.log("Medications:", allMedications);
+        console.log("Today's doses:", todayDoses);
+        
+        // Filter for today's medications
+        const today = new Date();
+        const todayMeds = allMedications.filter((med) => {
+          const startDate = new Date(med.startDate);
+          const durationsDays = parseInt(med.duration.split(" ")[0]);
+          
+          return (
+            durationsDays === -1 || 
+            (today >= startDate && 
+             today <= new Date(startDate.getTime() + durationsDays * 24 * 60 * 60 * 1000))
+          );
+        });
+        
+        setTodaysMedications(todayMeds);
+        
+        // Count completed doses
+        const completed = todayDoses.filter((dose) => dose.taken).length;
+        setCompletedDoses(completed);
+        const stats = calculateDoseStats();
+        setTotalDoses(stats.totalDoses);
+        setCompletedDoses(stats.completedDoses);
+        setProgress(stats.progress); // Assuming you have a state variable for progress
+      } catch (error) {
+        console.error("Error loading data:", error);
+      }
+      
+    }, [calculateDoseStats]);
+    
+    // Use this consolidated function in useEffect
+    useEffect(() => {
+      loadData();
+    }, [loadData]);
 
 
     const setupNotifications = async () => {
@@ -218,38 +270,79 @@ export default function Medications() {
         }, [loadMedications])
     );
 
+
     const handleTakeDose = async (medication, timeIndex = 0) => {
       try {
-          // Create a dose ID that includes the time index
-          const doseId = `${medication.id}-${timeIndex}`;
-          
-          // Pass the specific time that was taken
-          await recordDose(
-              doseId, 
-              true, 
-              new Date().toISOString(), 
-              medication.id,
-              medication.times[timeIndex]
-          );
-          
-          await loadMedications();
+        // Create a dose ID that includes the time index
+        const doseId = `${medication.id}-${timeIndex}`;
+        
+        // Record the dose
+        await recordDose(medication.id, doseId, true, new Date().toISOString());
+        
+        // Reload all data
+        await loadData();
       } catch (error) {
-          console.error("Error recording dose:", error);
-          Alert.alert("Error", "Failed to record dose. Please try again");
+        console.error("Error recording dose:", error);
+        Alert.alert("Error", "Failed to record dose. Please try again");
       }
-  };
+    };
   
     // Update isDoseTaken to check for specific time doses
-    const isDoseTaken = (doseId) => {
-        return doseHistory.some(
-            (dose) => dose.doseId === doseId && dose.taken
-        );
+    const isDoseTaken = useCallback((doseId) => {
+      // Check if this specific dose ID exists in today's dose history
+      return doseHistory.some(dose => 
+        dose.doseId === doseId && 
+        dose.taken &&
+        isSameDay(new Date(dose.timestamp), new Date())
+      );
+    }, [doseHistory]);
+
+    function isSameDay(date1, date2) {
+      return (
+        date1.getFullYear() === date2.getFullYear() &&
+        date1.getMonth() === date2.getMonth() &&
+        date1.getDate() === date2.getDate()
+      );
+    }
+
+    const calculateDoseStats = useCallback(() => {
+    const today = new Date();
+
+    // Total scheduled doses for today
+    const calculatedTotalDoses = todaysMedications.reduce((total, med) => {
+      return total + med.times.length;
+    }, 0);
+
+    // Get only unique taken doses (prevent overcounting)
+    const uniqueTakenDoses = new Set();
+    doseHistory.forEach(dose => {
+      if (dose.taken && isSameDay(new Date(dose.timestamp), today)) {
+        uniqueTakenDoses.add(dose.doseId);
+      }
+    });
+
+    const calculatedCompletedDoses = uniqueTakenDoses.size;
+
+    // Cap progress at 100%
+    const calculatedProgress = calculatedTotalDoses > 0 
+      ? Math.min(calculatedCompletedDoses / calculatedTotalDoses, 1)
+      : 0;
+
+      console.log("DEBUG dose stats", {
+        totalDoses: calculatedTotalDoses,
+        completedDoses: calculatedCompletedDoses,
+        progress: calculatedProgress
+      });
+
+    return {
+      totalDoses: calculatedTotalDoses,
+      completedDoses: calculatedCompletedDoses,
+      progress: calculatedProgress
+    
     };
 
-    const progress = todaysMedications.length > 0 ? completedDoses / (todaysMedications.length * 2) : 0;
-  
-    // Calculate total doses for display
-    const totalDoses = todaysMedications.length * 2;
+  }, [todaysMedications, doseHistory]);
+
     
   return (
     <ScrollView style={styles.container}>

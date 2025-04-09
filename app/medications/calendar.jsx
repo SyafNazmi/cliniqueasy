@@ -199,10 +199,11 @@ export default function CalendarScreen() {
       return activeMedications.map((medication) => {
         // Create an entry for each time in the medication times array
         return medication.times.map((time, timeIndex) => {
-          const doseId = `${medication.id}-${timeIndex}`; // Create unique ID for each dose time
-          const taken = dayDoses.some(
-            (dose) => dose.doseId === doseId && dose.taken
-          );          
+          const doseId = `${medication.id}-${timeIndex}`;
+          const isTaken = dayDoses.some((dose) =>
+            (dose.doseId === doseId || (!dose.doseId && dose.medicationId === medication.id))
+            && dose.taken
+          );
           
           return (
             <View key={doseId} style={styles.medicationCard}>
@@ -221,7 +222,7 @@ export default function CalendarScreen() {
                 </Text>
                 <Text style={styles.medicationTime}>{time}</Text>
               </View>
-              {taken ? (
+              {isTaken ? (
                 <View style={styles.takenBadge}>
                   <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
                   <Text style={styles.takenText}>Taken</Text>
@@ -233,7 +234,7 @@ export default function CalendarScreen() {
                     { backgroundColor: medication.color },
                   ]}
                   onPress={async () => {
-                    await recordDose(doseId, true, selectedDate.toISOString());
+                    await recordDose(medication.id, doseId, true, selectedDate.toISOString());
                     loadData();
                   }}
                 >
