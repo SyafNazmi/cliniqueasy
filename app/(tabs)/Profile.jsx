@@ -6,32 +6,54 @@ import { removeSpecificStorageKey } from '@/service/Storage'
 import Toast from 'react-native-toast-message'
 import { Ionicons } from '@expo/vector-icons'
 import { COLLECTIONS } from '@/constants'
+import QRCode from 'react-native-qrcode-svg'
 
 export default function Profile() {
   const router = useRouter();
   const [profile, setProfile] = useState(null);
+  const [appointments, setAppointments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingAppointments, setLoadingAppointments] = useState(true);
   
   useEffect(() => {
-    const loadProfile = async () => {
+    const loadProfileAndAppointments = async () => {
       try {
         setIsLoading(true);
+        setLoadingAppointments(true);
         const currentUser = await account.get();
         
         if (currentUser) {
-          // Check if profile exists
+          // Load profile
           try {
-            const response = await DatabaseService.listDocuments(
+            const profileResponse = await DatabaseService.listDocuments(
               COLLECTIONS.PATIENT_PROFILES,
               [Query.equal('userId', currentUser.$id)],
               1
             );
             
-            if (response.documents.length > 0) {
-              setProfile(response.documents[0]);
+            if (profileResponse.documents.length > 0) {
+              setProfile(profileResponse.documents[0]);
             }
+            
+            // Load appointments
+            const appointmentsResponse = await DatabaseService.listDocuments(
+              COLLECTIONS.APPOINTMENTS,
+              [Query.equal('user_id', currentUser.$id)],
+              100
+            );
+            
+            // Sort by date, most recent first
+            const sortedAppointments = appointmentsResponse.documents.sort((a, b) => {
+              const dateA = new Date(a.date.split(', ')[1]);
+              const dateB = new Date(b.date.split(', ')[1]);
+              return dateB - dateA;
+            });
+            
+            setAppointments(sortedAppointments);
+            setLoadingAppointments(false);
           } catch (error) {
-            console.error('Error loading profile:', error);
+            console.error('Error loading data:', error);
+            setLoadingAppointments(false);
           }
         }
       } catch (error) {
@@ -41,7 +63,7 @@ export default function Profile() {
       }
     };
     
-    loadProfile();
+    loadProfileAndAppointments();
   }, []);
   
   const handleLogout = async () => {
@@ -104,6 +126,29 @@ export default function Profile() {
     
     return Math.round((requiredCompletion + optionalCompletion) * 100);
   };
+  
+  // Check if a date is in the past
+  const isDatePast = (dateString) => {
+    const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
+    if (!parts) return false;
+    
+    const months = {
+      'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+      'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+    };
+    
+    const appointmentDate = new Date(
+      parseInt(parts[4]), // year
+      months[parts[3]], // month
+      parseInt(parts[2]) // day
+    );
+    
+    return appointmentDate < new Date();
+  };
+  
+  // Filter appointments
+  const upcomingAppointments = appointments.filter(app => !isDatePast(app.date));
+  const pastAppointments = appointments.filter(app => isDatePast(app.date));
   
   return (
     <ScrollView style={styles.container}>
@@ -225,6 +270,111 @@ export default function Profile() {
               <Text style={styles.detailLabel}>Phone:</Text>
               <Text style={styles.detailValue}>{profile.emergencyContactNumber || 'Not provided'}</Text>
             </View>
+          </View>
+          
+          {/* Appointment History */}
+          <View style={[styles.detailsContainer, { marginTop: 15 }]}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
+            </View>
+            
+            {loadingAppointments ? (
+              <View style={styles.appointmentLoadingContainer}>
+                <ActivityIndicator size="small" color="#0AD476" />
+                <Text style={styles.loadingText}>Loading appointments...</Text>
+              </View>
+            ) : upcomingAppointments.length > 0 ? (
+              upcomingAppointments.map((appointment) => (
+                <View key={appointment.$id} style={styles.appointmentCard}>
+                  <View style={styles.appointmentHeader}>
+                    <Text style={styles.appointmentTitle}>
+                      {appointment.service_name}
+                    </Text>
+                    <View style={styles.statusBadge}>
+                      <Text style={styles.statusText}>{appointment.status}</Text>
+                    </View>
+                  </View>
+                  
+                  <View style={styles.appointmentDetail}>
+                    <Ionicons name="person" size={18} color="#0AD476" />
+                    <Text style={styles.appointmentLabel}>Doctor:</Text>
+                    <Text style={styles.appointmentValue}>Dr. {appointment.doctor_name}</Text>
+                  </View>
+                  
+                  <View style={styles.appointmentDetail}>
+                    <Ionicons name="calendar" size={18} color="#0AD476" />
+                    <Text style={styles.appointmentLabel}>Date:</Text>
+                    <Text style={styles.appointmentValue}>{appointment.date}</Text>
+                  </View>
+                  
+                  <View style={styles.appointmentDetail}>
+                    <Ionicons name="time" size={18} color="#0AD476" />
+                    <Text style={styles.appointmentLabel}>Time:</Text>
+                    <Text style={styles.appointmentValue}>{appointment.time_slot}</Text>
+                  </View>
+                  
+                  <View style={styles.qrContainer}>
+                    <QRCode
+                      value={`APPT:${appointment.$id}`}
+                      size={120}
+                      color="#000000"
+                      backgroundColor="#FFFFFF"
+                    />
+                    <Text style={styles.qrText}>Scan this code at the clinic</Text>
+                  </View>
+                </View>
+              ))
+            ) : (
+              <View style={styles.noAppointmentsContainer}>
+                <Text style={styles.noAppointmentsText}>No upcoming appointments</Text>
+              </View>
+            )}
+            
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Past Appointments</Text>
+            </View>
+            
+            {loadingAppointments ? (
+              <View style={styles.appointmentLoadingContainer}>
+                <ActivityIndicator size="small" color="#0AD476" />
+                <Text style={styles.loadingText}>Loading appointments...</Text>
+              </View>
+            ) : pastAppointments.length > 0 ? (
+              pastAppointments.map((appointment) => (
+                <View key={appointment.$id} style={[styles.appointmentCard, styles.pastAppointmentCard]}>
+                  <View style={styles.appointmentHeader}>
+                    <Text style={styles.appointmentTitle}>
+                      {appointment.service_name}
+                    </Text>
+                    <View style={[styles.statusBadge, styles.pastStatusBadge]}>
+                      <Text style={styles.statusText}>Completed</Text>
+                    </View>
+                  </View>
+                  
+                  <View style={styles.appointmentDetail}>
+                    <Ionicons name="person" size={18} color="#6b7280" />
+                    <Text style={styles.appointmentLabel}>Doctor:</Text>
+                    <Text style={styles.appointmentValue}>Dr. {appointment.doctor_name}</Text>
+                  </View>
+                  
+                  <View style={styles.appointmentDetail}>
+                    <Ionicons name="calendar" size={18} color="#6b7280" />
+                    <Text style={styles.appointmentLabel}>Date:</Text>
+                    <Text style={styles.appointmentValue}>{appointment.date}</Text>
+                  </View>
+                  
+                  <View style={styles.appointmentDetail}>
+                    <Ionicons name="time" size={18} color="#6b7280" />
+                    <Text style={styles.appointmentLabel}>Time:</Text>
+                    <Text style={styles.appointmentValue}>{appointment.time_slot}</Text>
+                  </View>
+                </View>
+              ))
+            ) : (
+              <View style={styles.noAppointmentsContainer}>
+                <Text style={styles.noAppointmentsText}>No past appointments</Text>
+              </View>
+            )}
           </View>
           
           {/* Actions */}
@@ -437,5 +587,91 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
+  },
+  // Appointment styles
+  appointmentLoadingContainer: {
+    alignItems: 'center',
+    padding: 20,
+  },
+  appointmentCard: {
+    margin: 15,
+    marginTop: 10,
+    marginBottom: 15,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+    borderLeftWidth: 4,
+    borderLeftColor: '#0AD476',
+  },
+  pastAppointmentCard: {
+    borderLeftColor: '#9ca3af',
+  },
+  appointmentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  appointmentTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#111827',
+    flex: 1,
+  },
+  statusBadge: {
+    backgroundColor: '#0AD476',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  pastStatusBadge: {
+    backgroundColor: '#9ca3af',
+  },
+  statusText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  appointmentDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  appointmentLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6b7280',
+    marginLeft: 8,
+    width: 60,
+  },
+  appointmentValue: {
+    fontSize: 14,
+    color: '#111827',
+    flex: 1,
+  },
+  qrContainer: {
+    alignItems: 'center',
+    marginTop: 15,
+    padding: 10,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+  },
+  qrText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  noAppointmentsContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  noAppointmentsText: {
+    color: '#6b7280',
+    fontSize: 14,
   },
 });
