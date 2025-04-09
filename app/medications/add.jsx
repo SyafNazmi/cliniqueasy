@@ -10,6 +10,50 @@ import { scheduleMedicationReminder } from '../../service/Notification'
 
 const {width} = Dimensions.get("window");
 
+// Add medication types array
+const MEDICATION_TYPES = [
+    {
+        id: "1",
+        label: "Tablet",
+        icon: "tablet-portrait-outline",
+    },
+    {
+        id: "2",
+        label: "Capsule",
+        icon: "ellipse-outline",
+    },
+    {
+        id: "3",
+        label: "Liquid",
+        icon: "water-outline",
+    },
+    {
+        id: "4",
+        label: "Injection",
+        icon: "medical-outline",
+    },
+    {
+        id: "5",
+        label: "Topical",
+        icon: "hand-left-outline",
+    },
+    {
+        id: "6",
+        label: "Inhaler",
+        icon: "cloud-outline",
+    },
+    {
+        id: "7",
+        label: "Patch",
+        icon: "bandage-outline",
+    },
+    {
+        id: "8",
+        label: "Drops",
+        icon: "eyedrop-outline",
+    },
+];
+
 const FREQUENCIES = [
     {
         id: "1",
@@ -37,6 +81,48 @@ const FREQUENCIES = [
     },
     {
         id: "5",
+        label: "Every Morning",
+        icon: "partly-sunny-outline",
+        times: ["08:00"],
+    },
+    {
+        id: "6",
+        label: "Every Evening",
+        icon: "moon-outline",
+        times: ["20:00"],
+    },
+    {
+        id: "7",
+        label: "Every 4 Hours",
+        icon: "timer-outline",
+        times: ["08:00", "12:00", "16:00", "20:00", "00:00", "04:00"],
+    },
+    {
+        id: "8",
+        label: "Every 6 Hours",
+        icon: "timer-outline",
+        times: ["06:00", "12:00", "18:00", "00:00"],
+    },
+    {
+        id: "9",
+        label: "Every 8 Hours",
+        icon: "timer-outline",
+        times: ["08:00", "16:00", "00:00"],
+    },
+    {
+        id: "10",
+        label: "Every 12 Hours",
+        icon: "hourglass-outline",
+        times: ["08:00", "20:00"],
+    },
+    {
+        id: "11",
+        label: "Weekly",
+        icon: "calendar-outline",
+        times: ["09:00"],
+    },
+    {
+        id: "12",
         label: "As Needed",
         icon: "calendar-outline",
         times: [],
@@ -54,6 +140,7 @@ export default function AddMedicationScreen() {
 
     const [form, setForm] = useState({
         name: "",
+        type: "", // Added medication type
         dosage: "",
         frequencies: "",
         duration: "",
@@ -67,11 +154,49 @@ export default function AddMedicationScreen() {
     });
 
     const [errors, setErrors] = useState({});
+    const [selectedType, setSelectedType] = useState(""); // Added for medication type
     const [selectedFrequency, setSelectedFrequency] = useState("");
     const [selectedDuration, setSelectedDuration] = useState("");
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [currentTimeIndex, setCurrentTimeIndex] = useState(0); // Added to track which time is being edited
+
+    // Render medication type options
+    const renderMedicationTypes = () => {
+        return (
+            <View style={styles.optionGrid}>
+                {MEDICATION_TYPES.map((type) => (
+                    <TouchableOpacity 
+                        key={type.id}
+                        style={[styles.optionCard, selectedType === type.label && styles.selectedOptionCard]}
+                        onPress={() => {
+                            setSelectedType(type.label);
+                            setForm({ ...form, type: type.label });
+                            if(errors.type) {
+                                setErrors({...errors, type: ""});
+                            }
+                        }}
+                    >
+                        <View 
+                            style={[styles.optionIcon, selectedType === type.label && styles.selectedOptionIcon]}
+                        >
+                            <Ionicons 
+                                name={type.icon}
+                                size={24}
+                                color={selectedType === type.label ? "white" : "#666"}
+                            />
+                        </View>
+                        <Text 
+                            style={[styles.optionLabel, selectedType === type.label && styles.selectedOptionLabel]}
+                        >
+                            {type.label}
+                        </Text>
+                    </TouchableOpacity>
+                ))}
+            </View>
+        )
+    }
 
     const renderFrequencyOptions = () => {
         return (
@@ -82,7 +207,10 @@ export default function AddMedicationScreen() {
                     style={[styles.optionCard, selectedFrequency === freq.label && styles.selectedOptionCard]}
                     onPress={() => {
                         setSelectedFrequency(freq.label);
-                        setForm({ ...form, frequencies: freq.label });
+                        setForm({ ...form, frequencies: freq.label, times: freq.times });
+                        if(errors.frequencies) {
+                            setErrors({...errors, frequencies: ""});
+                        }
                     }}
                   >
                     <View 
@@ -114,6 +242,9 @@ export default function AddMedicationScreen() {
                     onPress={() => {
                         setSelectedDuration(dur.label);
                         setForm({ ...form, duration: dur.label });
+                        if(errors.duration) {
+                            setErrors({...errors, duration: ""});
+                        }
                     }}
                     >
                         <Text
@@ -133,6 +264,9 @@ export default function AddMedicationScreen() {
     const newErrors = {}; 
     if (!form.name.trim()) {
         newErrors.name = "Medication name is required";
+    }
+    if (!form.type.trim()) {
+        newErrors.type = "Medication type is required";
     }
     if (!form.dosage.trim()) {
         newErrors.dosage = "Dosage is required";
@@ -269,6 +403,16 @@ export default function AddMedicationScreen() {
                         <Text style={styles.errorText}>{errors.name}</Text>
                      )}
                 </View>
+                
+                {/* Type selection section */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Medication Type</Text>
+                    {errors.type && (
+                        <Text style={styles.errorText}>{errors.type}</Text>
+                    )}
+                    {renderMedicationTypes()}
+                </View>
+                
                 <View style={styles.inputContainer}>
                     <TextInput style={[styles.mainInput, errors.dosage && styles.inputError]}
                     placeholder='Dosage e.g(500mg)' placeholderTextColor={'#999'}
@@ -326,6 +470,7 @@ export default function AddMedicationScreen() {
                                     key={index}
                                     style={styles.timeButton}
                                     onPress={() => {
+                                        setCurrentTimeIndex(index);
                                         setShowTimePicker(true);
                                     }}
                                 >
@@ -347,7 +492,7 @@ export default function AddMedicationScreen() {
 
                     {showTimePicker && (
                     <DateTimePicker mode='time' value={(()=>{
-                        const [hours, minutes] = form.times[0].split(":").map(Number);
+                        const [hours, minutes] = form.times[currentTimeIndex].split(":").map(Number);
                         const date = new Date();
                         date.setHours(hours, minutes, 0,0);
                         return date;
@@ -362,7 +507,7 @@ export default function AddMedicationScreen() {
                                 });
                                 setForm((prev) => ({
                                     ...prev,
-                                    times: prev.times.map((t,i)=>(i===0 ? newTime : t))
+                                    times: prev.times.map((t,i)=>(i===currentTimeIndex ? newTime : t))
                                 }))
                             }
                         }}
@@ -437,293 +582,250 @@ export default function AddMedicationScreen() {
 
 const styles = StyleSheet.create({
     container: {
-        flex: 1,
-        backgroundColor: "#f8f9fa",
+      flex: 1,
+      backgroundColor: '#fff',
     },
     headerGradient: {
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        height: Platform.OS === 'ios'? 140 : 120,
+      height: Platform.OS === 'ios' ? 120 : 100,
+      width: '100%',
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
     },
     content: {
-        flex: 1,
-        paddingTop: Platform.OS === 'ios'? 50 : 30,
+      flex: 1,
+      paddingTop: Platform.OS === 'ios' ? 50 : 30,
     },
     header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-        paddingBottom: 20,
-        zIndex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      marginBottom: 20,
     },
     headerTitle: {
-        fontSize: 24,
-        fontWeight: "700",
-        color: "white",
-        marginLeft: 15,
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: 'white',
+      marginLeft: 15,
     },
     formContentContainer: {
-        padding: 20,
+      paddingHorizontal: 20,
+      paddingBottom: 150,
     },
     section: {
-        marginBottom: 25,
+      marginBottom: 20,
     },
     sectionTitle: {
-        fontSize: 18,
-        fontWeight: "700",
-        color: "#1a1a1a",
-        marginBottom: 15,
-        marginTop: 10,
+      fontSize: 18,
+      fontWeight: 'bold',
+      marginBottom: 15,
+      color: '#333',
     },
     inputContainer: {
-        backgroundColor: "white",
-        borderRadius: 16,
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: "#e0e0e0",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+      marginBottom: 15,
     },
     mainInput: {
-        fontSize: 20,
-        color: "#333",
-        padding: 15,
+      backgroundColor: '#f5f5f5',
+      borderRadius: 10,
+      padding: 12,
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
     },
     inputError: {
-        borderColor: "#ff5252",
+      borderColor: 'red',
     },
     errorText: {
-        color: "#FF5252",
-        fontSize: 12,
-        marginTop: 4,
-        marginLeft: 12,
+      color: 'red',
+      fontSize: 12,
+      marginTop: 5,
     },
-
     optionGrid: {
-        flexDirection: "row",
-        flexWrap: "wrap",
-        marginHorizontal: -5,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginBottom: 20,
+      justifyContent: 'space-between',
     },
     optionCard: {
-        width: (width - 60) / 2,
-        backgroundColor: "white",
-        borderRadius: 16,
-        padding: 15,
-        margin: 5,
-        alignItems: "center",
-        borderWidth: 1,
-        borderColor: "#e0e0e0",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+      width: width / 4 - 15,
+      height: 90,
+      backgroundColor: '#f5f5f5',
+      borderRadius: 10,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 10,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
     },
     selectedOptionCard: {
-        backgroundColor: "#1a8e2d",
-        borderColor: "#1a8e2d",
+      borderColor: '#1a8e2d',
+      backgroundColor: '#e6f7e9',
     },
     optionIcon: {
-        width: 50,
-        height: 50,
-        borderRadius: 25,
-        backgroundColor: "#f5f5f5",
-        justifyContent: "center",
-        alignItems: "center",
-        marginBottom: 10,
+      width: 40,
+      height: 40,
+      backgroundColor: '#e5e5e5',
+      borderRadius: 20,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 5,
     },
     selectedOptionIcon: {
-        backgroundColor: "rgba(255, 255, 255, 0.2)",
-    },
-    optionLabel: {
-        fontSize: 14,
-        fontWeight: "600",
-        color: "#333",
-        textAlign: "center",
-    },
-    selectedOptionLabel: {
-        color: "white",
+      backgroundColor: '#1a8e2d',
     },
     durationNumber: {
-        fontSize: 24,
-        fontWeight: "700",
-        color: "#1a8e2d",
-        marginBottom: 5,
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: '#666',
+      marginBottom: 5,
     },
     selectedDurationNumber: {
-        color: "white",
+      color: '#1a8e2d',
+    },
+    optionLabel: {
+      fontSize: 12,
+      textAlign: 'center',
+      color: '#666',
+    },
+    selectedOptionLabel: {
+      color: '#1a8e2d',
+      fontWeight: 'bold',
     },
     dateButton: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "white",
-        borderRadius: 16,
-        padding: 15,
-        marginTop: 15,
-        borderWidth: 1,
-        borderColor: "#e0e0e0",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
-
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#f5f5f5',
+      borderRadius: 10,
+      padding: 12,
+      marginBottom: 15,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
     },
-    dateIconContainer : {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: "#f5f5f5",
-        justifyContent: "center",
-        alignItems: "center",
-        marginRight: 10,
+    dateIconContainer: {
+      marginRight: 10,
     },
-    dateButtonText : {
-        flex: 1,
-        fontSize: 16,
-        color: "#333",
+    dateButtonText: {
+      flex: 1,
+      fontSize: 16,
+      color: '#333',
     },
-    timesContainer : {
-        marginTop: 20,
+    timesContainer: {
+      marginTop: 10,
     },
-    timesTitle : {
-        fontSize: 16,
-        fontWeight: "600",
-        color: "#333",
-        marginBottom: 10,
+    timesTitle: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      marginBottom: 10,
+      color: '#333',
     },
-    timesIconContainer : {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: "#f5f5f5",
-        justifyContent: "center",
-        alignItems: "center",
-        marginRight: 10,
+    timeButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#f5f5f5',
+      borderRadius: 10,
+      padding: 12,
+      marginBottom: 10,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
     },
-    timeButton : {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "white",
-        borderRadius: 16,
-        padding: 15,
-        marginTop: 15,
-        borderWidth: 1,
-        borderColor: "#e0e0e0",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+    timesIconContainer: {
+      marginRight: 10,
     },
-    timeButtonText : {
-        flex: 1,
-        fontSize: 16,
-        color: "#333",
+    timeButtonText: {
+      flex: 1,
+      fontSize: 16,
+      color: '#333',
     },
-    card : {
-        backgroundColor: "white",
-        borderRadius: 16,
-        padding: 20,
-        borderWidth: 1,
-        borderColor: "#e0e0e0",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+    card: {
+      backgroundColor: '#f5f5f5',
+      borderRadius: 10,
+      padding: 15,
+      marginBottom: 15,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
     },
     switchRow: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
     },
     switchLabelContainer: {
-        flex: 1,
-        flexDirection: "row",
-        alignItems: "center",
-        marginRight: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
     },
     iconContainer: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: "#f5f5f5",
-        justifyContent: "center",
-        alignItems: "center",
-        marginRight: 15,
+      width: 36,
+      height: 36,
+      backgroundColor: '#e5e5e5',
+      borderRadius: 18,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 10,
     },
     switchTextContainer: {
-        flex: 1,
+      flex: 1,
     },
     switchLabel: {
-        fontSize: 16,
-        fontWeight: "600",
-        color: "#333",
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: '#333',
     },
     switchSubLabel: {
-        fontSize: 14,
-        color: "#666",
-        marginTop: 2,
+      fontSize: 12,
+      color: '#666',
+      marginTop: 3,
     },
-    textAreaContainer : {
-        backgroundColor: "white",
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: "#e0e0e0",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
+    textAreaContainer: {
+      backgroundColor: '#f5f5f5',
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
+      marginBottom: 20,
     },
-    textArea : {
-        height: 100,
-        padding: 15,
-        fontSize: 16,
-        color: "#333"
+    textArea: {
+      padding: 12,
+      height: 100,
+      fontSize: 16,
     },
-    saveButton : {
-        borderRadius: 16,
-        overflow: "hidden",
-        marginBottom: 12,
+    footer: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      backgroundColor: 'white',
+      paddingHorizontal: 20,
+      paddingVertical: 15,
+      borderTopWidth: 1,
+      borderTopColor: '#e5e5e5',
     },
-    saveButtonDisabled : {
-        opacity: 0.7,
+    saveButton: {
+      borderRadius: 10,
+      marginBottom: 10,
+      overflow: 'hidden',
     },
-    saveButtonGradient : {
-        paddingVertical: 15,
-        justifyContent: "center",
-        alignItems: "center",
+    saveButtonDisabled: {
+      opacity: 0.7,
     },
-    saveButtonText : {
-        color: "white",
-        fontSize: 16,
-        fontWeight: "700",
+    saveButtonGradient: {
+      paddingVertical: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
-    cancelButton : {
-        paddingVertical: 15,
-        justifyContent: "center",
-        alignItems: "center",
-        backgroundColor: "white",
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: "#e0e0e0",
+    saveButtonText: {
+      color: 'white',
+      fontSize: 16,
+      fontWeight: 'bold',
     },
-    cancelButtonText : {
-        fontSize: 16,
-        fontWeight: "600",
-        color: "#666",
+    cancelButton: {
+      paddingVertical: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
-    footer : {
-        padding: 20,
-        backgroundColor: "white",
-        borderTopWidth: 1,
-        borderColor: "#e0e0e0",
+    cancelButtonText: {
+      color: '#666',
+      fontSize: 16,
     },
-});
+  });

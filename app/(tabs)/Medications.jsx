@@ -5,8 +5,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Circle } from 'react-native-svg';
 import { Link, useFocusEffect, useRouter } from 'expo-router';
-import { getMedications, getTodaysDoses, recordDose } from '../../service/Storage';
+import { getMedications, getDoseHistory, getTodaysDoses, recordDose } from '../../service/Storage';
 import { registerForPushnotificationsAsync, resetAllMedicationReminders, scheduleMedicationReminder } from '../../service/Notification';
+
 
 const {width} = Dimensions.get("window");
 
@@ -58,6 +59,8 @@ function CircularProgress({
     const strokeWidth = 15;
     const radius = (size - strokeWidth) / 2;
     const circumference = 2 * Math.PI * radius;
+    const safeProgress = isNaN(progress) || progress < 0 ? 0 : 
+                    progress > 1 ? 1 : progress;
 
     // Convert progress decimal to percentage for display
     const progressPercentage = progress * 100;
@@ -112,134 +115,217 @@ function CircularProgress({
 export default function Medications() {
 
     const router = useRouter();
+    const [progress, setProgress] = useState(0);
+    const [totalDoses, setTotalDoses] = useState(0);
     const [todaysMedications, setTodaysMedications] = useState([]);
     const [completedDoses, setCompletedDoses] = useState(0);
     const [doseHistory, setDoseHistory] = useState([]);
     const [medications, setMedications] = useState([]);
     const [showNotifications, setShowNotifications] = useState(false);
 
-    const loadMedications = useCallback(async() => {
-        try {
-            // Fetch data only once using Promise.all
-            const [allMedications, todayDoses] = await Promise.all([
-                getMedications(),
-                getTodaysDoses(),
-            ]);
-            
-            console.log("Medications:", allMedications);
-            console.log("Today's doses:", todayDoses);
-            
-            // Verify we have arrays
-            if (!Array.isArray(allMedications) || !Array.isArray(todayDoses)) {
-                console.error("Expected arrays but got:", { allMedications, todayDoses });
-                return;
-            }
-    
-            setDoseHistory(todayDoses);
-            
-            const today = new Date();
-    
-            const todayMeds = allMedications.filter((med) => {
-                const startDate = new Date(med.startDate);
-                const durationsDays = parseInt(med.duration.split(" ")[0]);
-    
-                return (
-                    durationsDays === -1 || 
-                    (today >= startDate && 
-                     today <= new Date(startDate.getTime() + durationsDays * 24 * 60 * 60 * 1000))
-                );
-            });
-            
-            // Set all medications
-            setMedications(allMedications);
-            // Set today's medications
-            setTodaysMedications(todayMeds);
-    
-            const completed = todayDoses.filter((dose) => dose.taken).length;
-            setCompletedDoses(completed);
-        } catch (error) {
-            console.error("Error loading medications:", error);
-        }
-    }, []);
-
-    // In Medications.jsx, modify the setupNotifications function:
-
-    const setupNotifications = async () => {
-        try {
-            console.log("Setting up notifications...");
-            
-            let token;
-            try {
-                token = await registerForPushnotificationsAsync();
-            } catch (error) {
-                console.log("Error getting push token:", error);
-            }
-
-            // Get the medications and reset all notifications
-            const medications = await getMedications();
-            console.log(`Setting up reminders for ${medications.length} medications`);
-            
-            // Use the new resetAllMedicationReminders function
-            await resetAllMedicationReminders(medications);
-            
-            console.log("Notification setup complete");
-        } catch (error) {
-            console.error("Error setting up notifications:", error);
-        }
-    };
-
-    // Keep only one place where setupNotifications is called
-    useEffect(() => {
-        loadMedications();
+    // Recording Medications and Doses
+    const loadMedicationData = useCallback(async () => {
+      try {
+        // Fetch data with Promise.all
+        const [allMedications, todayDoses] = await Promise.all([
+          getMedications(),
+          getTodaysDoses(),
+        ]);
         
-        // Only set up notifications once when component mounts
-        setupNotifications();
-
-        const subscription = AppState.addEventListener('change', (nextAppState) => {
-            if (nextAppState === 'active') {
-                // Only reload medication data when app becomes active
-                loadMedications();
-            }
+        console.log("Medications:", allMedications);
+        console.log("Today's doses:", todayDoses);
+        
+        // Verify arrays
+        if (!Array.isArray(allMedications) || !Array.isArray(todayDoses)) {
+          console.error("Expected arrays but got:", { allMedications, todayDoses });
+          return;
+        }
+    
+        // Set all medications
+        setMedications(allMedications);
+        setDoseHistory(todayDoses);
+        
+        // Filter today's medications
+        const today = new Date();
+        const todayMeds = allMedications.filter((med) => {
+          const startDate = new Date(med.startDate);
+          const durationsDays = parseInt(med.duration.split(" ")[0]);
+          
+          return (
+            durationsDays === -1 || 
+            (today >= startDate && 
+             today <= new Date(startDate.getTime() + durationsDays * 24 * 60 * 60 * 1000))
+          );
         });
-
-        return () => {
-            subscription.remove();
-        };
+        
+        setTodaysMedications(todayMeds);
+        
+        // Calculate and update stats atomically
+        const totalScheduledDoses = todayMeds.reduce((total, med) => {
+          return total + med.times.length;
+        }, 0);
+        
+        // Get unique taken doses
+        const uniqueTakenDoses = new Set();
+        todayDoses.forEach(dose => {
+          if (dose.taken && isSameDay(new Date(dose.timestamp), today)) {
+            uniqueTakenDoses.add(dose.doseId);
+          }
+        });
+        
+        const completedDosesCount = uniqueTakenDoses.size;
+        const progressValue = totalScheduledDoses > 0 
+          ? Math.min(completedDosesCount / totalScheduledDoses, 1)
+          : 0;
+        
+        // Important: Update all three states together
+        setTotalDoses(totalScheduledDoses);
+        setCompletedDoses(completedDosesCount);
+        setProgress(progressValue);
+        
+        console.log("Stats updated:", {
+          totalDoses: totalScheduledDoses,
+          completedDoses: completedDosesCount,
+          progress: progressValue
+        });
+        
+      } catch (error) {
+        console.error("Error loading medication data:", error);
+      }
     }, []);
+ 
+    const setupNotificationsOnce = async () => {
+      // Prevent multiple setups
+      if (notificationsSetUp) return; 
+      
+      try {
+        console.log("Setting up notifications...");
+  
+        let token;
+        try {
+          token = await registerForPushnotificationsAsync();
+        } catch (error) {
+          console.log("Error getting push token:", error);
+        }
+  
+        // Get medications and reset all notifications
+        const medications = await getMedications();
+        console.log(`Setting up reminders for ${medications.length} medications`);
+  
+        // Use resetAllMedicationReminders to handle reminder setup
+        await resetAllMedicationReminders(medications);
+  
+        console.log("Notification setup complete");
 
-    // Remove setupNotifications from useFocusEffect - it should only run once on mount
+        // Set flag to prevent future setups
+        // setNotificationsSetUp(true); 
+      } catch (error) {
+        console.error("Error setting up notifications:", error);
+      }
+    };
+  
+    // Ensure setupNotificationsOnce is called only once
+    // Initial load on component mount
+    useEffect(() => {
+      loadMedicationData();
+      
+      // Setup notifications once
+      setupNotificationsOnce();
+      
+      const subscription = AppState.addEventListener('change', (nextAppState) => {
+        if (nextAppState === 'active') {
+          // Reload medication data when app becomes active
+          loadMedicationData();
+        }
+      });
+      
+      return () => {
+        subscription.remove();
+      };
+    }, [loadMedicationData]);
+
+    // Update on focus
     useFocusEffect(
-        useCallback(() => {
-            const unsubscribe = () => {
-                // cleanup if needed
-            };
-
-            loadMedications();
-            return () => unsubscribe();
-        }, [loadMedications])
+      useCallback(() => {
+        loadMedicationData();
+        return () => {}; // cleanup
+      }, [loadMedicationData])
     );
 
-    const handleTakeDose = async (medication) => {
-        try {
-            await recordDose(medication.id, true, new Date().toISOString());
-            await loadMedications();
 
-        } catch (error) {
-            console.error("Error recording dose:", error);
-            Alert.alert("Error", "Failed to record dose. Please try again");
-        }
+    const handleTakeDose = async (medication, timeIndex = 0) => {
+      try {
+        // Create a dose ID that includes the time index
+        const doseId = `${medication.id}-${timeIndex}`;
+        
+        // Check if the dose has already been taken
+        if (isDoseTaken(doseId)) return;
+        
+        // Record the dose
+        await recordDose(medication.id, doseId, true, new Date().toISOString());
+        
+        // Reload all data
+        await loadMedicationData();
+      } catch (error) {
+        console.error("Error recording dose:", error);
+        Alert.alert("Error", "Failed to record dose. Please try again");
+      }
     };
-
-    const isDoseTaken = (medicationId: string) => {
-        return doseHistory.some(
-            (dose) => dose.medicationId === medicationId && dose.taken
-        );
-    };
-
-    const progress = todaysMedications.length > 0 ? completedDoses / (todaysMedications.length * 2) : 0;
   
-    // Calculate total doses for display
-    const totalDoses = todaysMedications.length * 2;
+    // Update isDoseTaken to check for specific time doses
+    const isDoseTaken = useCallback((doseId) => {
+      // Check if this specific dose ID exists in today's dose history
+      return doseHistory.some(dose => 
+        dose.doseId === doseId && 
+        dose.taken &&
+        isSameDay(new Date(dose.timestamp), new Date())
+      );
+    }, [doseHistory]);
+
+    function isSameDay(date1, date2) {
+      return (
+        date1.getFullYear() === date2.getFullYear() &&
+        date1.getMonth() === date2.getMonth() &&
+        date1.getDate() === date2.getDate()
+      );
+    }
+
+    const calculateDoseStats = useCallback(() => {
+      const today = new Date();
+    
+      // Log the incoming data for debugging
+      console.log("Calculating dose stats with", {
+        todaysMedications,
+        doseHistory
+      });
+    
+      const calculatedTotalDoses = todaysMedications.reduce((total, med) => {
+        return total + med.times.length;
+      }, 0);
+    
+      const uniqueTakenDoses = new Set();
+      doseHistory.forEach(dose => {
+        if (dose.taken && isSameDay(new Date(dose.timestamp), today)) {
+          uniqueTakenDoses.add(dose.doseId);
+        }
+      });
+    
+      const calculatedCompletedDoses = uniqueTakenDoses.size;
+      const calculatedProgress = calculatedTotalDoses > 0 
+        ? Math.min(calculatedCompletedDoses / calculatedTotalDoses, 1)
+        : 0;
+    
+      return {
+        totalDoses: calculatedTotalDoses,
+        completedDoses: calculatedCompletedDoses,
+        progress: calculatedProgress
+      };
+    
+    }, [todaysMedications, doseHistory]);
+
+    // Count of medications to show in the notification badge
+    const medicationCount = todaysMedications.length;
+
     
   return (
     <ScrollView style={styles.container}>
@@ -255,7 +341,7 @@ export default function Medications() {
                         <Ionicons name="notifications-outline" size={24} color="white" />
                         {/* Render the notificationBadge */
                             <View style={styles.notificationBadge}>
-                                <Text style={styles.notificationCount}>1</Text>
+                                <Text style={styles.notificationCount}>{medicationCount}</Text>
                             </View>
                         }
                     </TouchableOpacity>
@@ -266,7 +352,7 @@ export default function Medications() {
                     completeDoses={completedDoses}/>
             </View>
         </LinearGradient>
-
+ 
         {/* Quick Action Section */}
         <View style={styles.content}>
             <View style={styles.quickActionsContainer}>
@@ -291,87 +377,115 @@ export default function Medications() {
         </View>
 
         {/* Today Medicine Section */}
-        <View style={ {paddingHorizontal: 20 }}> 
+        <View style={{paddingHorizontal: 20}}> 
             <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Today's Schedule</Text>
-                <Link  href="/calendar" asChild/>
-                <TouchableOpacity>
-                    <Text style={styles.seeAllButton}>See All</Text>
-                </TouchableOpacity>
+                <Link href="/medications/calendar" asChild>
+                    <TouchableOpacity>
+                        <Text style={styles.seeAllButton}>See All</Text>
+                    </TouchableOpacity>
+                </Link>
             </View>
             {todaysMedications.length === 0 ? (
                 <View style={styles.emptyState}>
                     <Ionicons name="medical-outline" size={48} color="#ccc" />
                     <Text style={styles.emptyStateText}>No Medications Scheduled for Today</Text>
-                    <Link href="/medications/add"/>
+                    <Link href="/medications/add" asChild>
                         <TouchableOpacity style={styles.addMedicationButton}>
                             <Text style={styles.addMedicationButtonText}>Add Medication</Text>
                         </TouchableOpacity>
+                    </Link>
                 </View>
             ) : (
-                todaysMedications.map ((medication)=> {
-                    const taken = isDoseTaken(medication.id)
-                    return (
-                        <View key={medication.id} style={styles.doseCard}>
-                            <View style={[styles.doseBadge,
-                                { backgroundColor: `${medication.color}15` }
-                            ]}>
-                                <Ionicons name="medical" size={24}/>
+                todaysMedications.map((medication) => {
+                    // Create an entry for each time in the medication times array
+                    return medication.times.map((time, timeIndex) => {
+                        const doseId = `${medication.id}-${timeIndex}`; // Create unique ID for each dose time
+                        const taken = isDoseTaken(doseId); // You'll need to update your dose recording system
+                        
+                        return (
+                            <View key={doseId} style={styles.doseCard}>
+                                <View style={[styles.doseBadge, { backgroundColor: `${medication.color}15` }]}>
+                                    <Ionicons name="medical" size={24} />
+                                </View>
+                                <View style={styles.doseInfo}>
+                                    <View>
+                                        <Text style={styles.medicineName}>{medication.name}</Text>
+                                        <Text style={styles.dosageInfo}>
+                                            {medication.dosage} 
+                                            {medication.type ? ` · ${medication.type}` : ''}
+                                            {medication.times.length > 1 ? ` · Dose ${timeIndex + 1}/${medication.times.length}` : ''}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.doseTime}>
+                                        <Ionicons name="time-outline" size={14} color="#ccc" />
+                                        <Text style={styles.timeText}>{time}</Text>
+                                    </View>
+                                </View>
+                                {taken ? (
+                                    <View style={styles.takeDoseButton}>
+                                        <Ionicons name="checkmark-circle" size={24} />
+                                        <Text style={styles.takeDoseText}>Taken</Text>
+                                    </View>
+                                ) : (
+                                    <TouchableOpacity 
+                                        style={[styles.takeDoseButton, { backgroundColor: medication.color }]} 
+                                        onPress={() => handleTakeDose(medication, timeIndex)}
+                                    >
+                                        <Text style={styles.takeDoseText}>Take</Text>
+                                    </TouchableOpacity>
+                                )}
                             </View>
-                            <View style={styles.doseInfo}>
-                                <View>
-                                    <Text style={styles.medicineName}>{medication.name}</Text>
-                                    <Text style={styles.dosageInfo}>{medication.dosage}</Text>
-                                </View>
-                                <View style={styles.doseTime}>
-                                    <Ionicons name="time-outline" size={14} color="#ccc"/>
-                                    <Text style={styles.timeText}>{medication.times[0]}</Text>
-                                </View>
-                            </View>
-                            {taken ? (
-                                <View style={styles.takeDoseButton}>
-                                <Ionicons name="checkmark-circle" size={24}/>
-                                <Text style={styles.takeDoseText}>Taken</Text>
-                                </View>
-                            ) : (
-                                <TouchableOpacity style={[styles.takeDoseButton,
-                                    { backgroundColor: medication.color },
-                                ]} onPress={() => handleTakeDose(medication)}>
-                                    <Text style={styles.takeDoseText}>Take</Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
-                    );
+                        );
+                    });
                 })
             )}
+
+            <TouchableOpacity 
+              style={styles.reminderButton}
+              onPress={() => router.push('/medications/reminders')}
+            >
+              <Ionicons name="notifications" size={20} color="white" />
+              <Text style={styles.reminderButtonText}>Manage Reminders</Text>
+            </TouchableOpacity>
         </View>
 
         {/* Display Notification Section */}
-        <Modal visible={false} transparent={true} animationType="slide" onRequestClose={() => setShowNotifications(false)}>
-            <View style={styles.modalOverlay}>
-                <View style={styles.modalContent}>
-                <Text style={styles.modalTitle}>
-                    Notification
-                </Text>
-                <TouchableOpacity style={styles.closeButton}
-                    onPress={() => setShowNotifications(false)}                
+        <Modal 
+          visible={showNotifications} 
+          transparent={true} 
+          animationType="slide" 
+          onRequestClose={() => setShowNotifications(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Notification</Text>
+                <TouchableOpacity
+                  style={styles.closeButton}
+                  onPress={() => setShowNotifications(false)}                
                 >
-                    <Ionicons name='close' size={24} color='#333' />
+                  <Ionicons name='close' size={24} color='#333' />
                 </TouchableOpacity>
-                </View>
-                {todaysMedications.map((medication)=> (
-                    <View key={medication.id} style={styles.notificationItem}>
-                        <View style={styles.notificationIcon}>
-                            <Ionicons name='medical' size={24}/>
-                        </View>
-                        <View style={styles.notificationContent}>
-                            <Text style={styles.notificationTitle}>{medication.name}</Text>
-                            <Text style={styles.notificationMessage}>{medication.dosage}</Text>
-                            <Text style={styles.notificationTime}>{medication.times[0]}</Text>
-                        </View>
+              </View>
+              
+              <ScrollView style={styles.notificationsList}>
+              {todaysMedications.map((medication)=> (
+                <View key={medication.id} style={styles.notificationItem}>
+                    <View style={[styles.notificationIcon, { backgroundColor: `${medication.color}15` }]}>
+                        <Ionicons name='medical' size={24}/>
                     </View>
-                ))}
+                    <View style={styles.notificationContent}>
+                        <Text style={styles.notificationTitle}>{medication.name}</Text>
+                        <Text style={styles.notificationMessage}>{medication.dosage}</Text>
+                        <Text style={styles.notificationTime}>{medication.times[0]}</Text>
+                    </View>
+                </View>
+              ))
+              }
+              </ScrollView>
             </View>
+          </View>
         </Modal>
     </ScrollView>
   );
@@ -632,7 +746,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#E8F5E9",
+    // backgroundColor: "#E8F5E9",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 15,
@@ -654,5 +768,19 @@ const styles = StyleSheet.create({
   notificationTime: {
     fontSize: 12,
     color: "#999",
+  },
+  reminderButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a8e2d',
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 10,
+  },
+  reminderButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    marginLeft: 8,
   },
 });
