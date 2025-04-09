@@ -472,7 +472,7 @@ export default function Medications() {
               <ScrollView style={styles.notificationsList}>
               {todaysMedications.map((medication)=> (
                 <View key={medication.id} style={styles.notificationItem}>
-                    <View style={styles.notificationIcon}>
+                    <View style={[styles.notificationIcon, { backgroundColor: `${medication.color}15` }]}>
                         <Ionicons name='medical' size={24}/>
                     </View>
                     <View style={styles.notificationContent}>
@@ -746,7 +746,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#E8F5E9",
+    // backgroundColor: "#E8F5E9",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 15,
