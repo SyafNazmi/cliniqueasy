@@ -3,7 +3,6 @@ import {
   View, 
   Text, 
   TouchableOpacity, 
-  FlatList, 
   SafeAreaView, 
   ActivityIndicator, 
   Alert, 
@@ -13,38 +12,33 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { DatabaseService, AuthService } from '../../configs/AppwriteConfig';
-import { initializeDoctors } from '../../constants';
-import { doctorImages } from '../../constants';
+import { doctorImages, COLLECTIONS, initializeDoctors } from '../../constants';
 import PageHeader from '../../components/PageHeader';
 
 const AppointmentBooking = () => {
   const router = useRouter();
-  const { serviceId, serviceName } = useLocalSearchParams();
+  const { branchId, branchName, service_id, serviceName } = useLocalSearchParams();
   
-  const DOCTOR_COLLECTION_ID = '67e033480011d20e04fb';
   const [doctors, setDoctors] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
+  const [error, setError] = useState(null); // Add this for debugging
   
   // Service details based on service ID
   const serviceDetails = {
-    '3': { // Prenatal Care
+    '1': { // Health Check-ups and Preventive Care
       duration: 'Approximately 45 minutes',
-      fee: 'RM 100, Non-refundable'
+      fee: 'RM 120, Non-refundable'
     },
-    '1': { // In-clinic consultation
+    '2': { // Diagnosis and Treatment of Common Illnesses
       duration: 'Approximately 30 minutes',
       fee: 'RM 80, Non-refundable'
     },
-    '2': { // Online consultation
+    '3': { // Vaccinations and Immunizations
       duration: 'Approximately 20 minutes',
       fee: 'RM 60, Non-refundable'
-    },
-    '4': { // 5D Scan
-      duration: 'Approximately 60 minutes',
-      fee: 'RM 250, Non-refundable'
     }
   };
 
@@ -61,17 +55,57 @@ const AppointmentBooking = () => {
   useEffect(() => {
     const fetchDoctors = async () => {
       try {
+        // First try to initialize doctors to ensure they exist
         await initializeDoctors();
-        const response = await DatabaseService.listDocuments(DOCTOR_COLLECTION_ID, [], 100);
-        setDoctors(response.documents);
+        
+        console.log('Fetching doctors for branchId:', branchId);
+        
+        // DEBUGGING: Log all doctors first to check what exists
+        const allDoctors = await DatabaseService.listDocuments(COLLECTIONS.DOCTORS, [], 100);
+        console.log('All available doctors:', allDoctors.documents);
+        
+        // Create a query to filter doctors by branch - note we are converting branchId to string
+        // since URL parameters may come as string but database may store them differently
+        const queries = [
+          DatabaseService.createQuery('equal', 'branchId', String(branchId))
+        ];
+        
+        // Execute the filtered query
+        const response = await DatabaseService.listDocuments(COLLECTIONS.DOCTORS, queries, 100);
+        console.log('Doctors filtered by branchId:', response.documents);
+        
+        // If using the DoctorsData from constants as a fallback
+        if (response.documents.length === 0) {
+          console.log('No doctors found in database, checking constants data');
+          // Filter DoctorsData manually (import this from constants)
+          const { DoctorsData } = require('../../constants');
+          const filteredDoctors = DoctorsData.filter(doc => doc.branchId === String(branchId));
+          
+          if (filteredDoctors.length > 0) {
+            // Add $id field to match database format
+            const formattedDoctors = filteredDoctors.map((doc, index) => ({
+              ...doc,
+              $id: `temp_${index}`
+            }));
+            console.log('Using constant data doctors:', formattedDoctors);
+            setDoctors(formattedDoctors);
+          } else {
+            console.log('No doctors found in constants data either');
+            setDoctors([]);
+          }
+        } else {
+          setDoctors(response.documents);
+        }
       } catch (err) {
-        Alert.alert('Error', err.message);
+        console.error('Error fetching doctors:', err);
+        setError(err.message);
+        Alert.alert('Error', `Failed to fetch doctors: ${err.message}`);
       } finally {
         setIsLoading(false);
       }
     };
     fetchDoctors();
-  }, []);
+  }, [branchId]);
 
   const formatDate = (date) => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -103,18 +137,21 @@ const AppointmentBooking = () => {
         user_id: currentUser.$id,
         doctor_id: selectedDoctor.$id,
         doctor_name: selectedDoctor.name,
-        service_name: serviceName, 
+        branch_id: String(branchId),
+        branch_name: branchName,
+        service_id: String(service_id),
+        service_name: serviceName,
         date: formattedDate,
         time_slot: selectedTimeSlot,
         status: 'Booked',
+        created_at: new Date().toISOString()
       };
-      
-      
-      await DatabaseService.createDocument('67e0332c0001131d71ec', appointment);
+      // Create the appointment document
+      await DatabaseService.createDocument(COLLECTIONS.APPOINTMENTS, appointment);
 
       Alert.alert(
         'Booking Successful', 
-        `Your ${serviceName} appointment with Dr. ${selectedDoctor.name} on ${formattedDate} at ${selectedTimeSlot} has been booked.`
+        `Your ${serviceName} appointment with Dr. ${selectedDoctor.name} at ${branchName} branch on ${formattedDate} at ${selectedTimeSlot} has been booked.`
       );
       
       router.push('/');
@@ -132,6 +169,27 @@ const AppointmentBooking = () => {
     );
   }
 
+  // Debug view to help troubleshoot
+  if (error) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <PageHeader onPress={() => router.back()} />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorTitle}>Debug Information</Text>
+          <Text style={styles.errorText}>Branch ID: {branchId}</Text>
+          <Text style={styles.errorText}>Service ID: {service_id}</Text>
+          <Text style={styles.errorText}>Error: {error}</Text>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <PageHeader onPress={() => router.back()} />
@@ -143,125 +201,145 @@ const AppointmentBooking = () => {
             style={styles.logo} 
           />
           <Text style={styles.title}>PolyClinic</Text>
+          <Text style={styles.branchName}>{branchName} Branch</Text>
         </View>
         
         <View style={styles.serviceInfo}>
           <Text style={styles.serviceName}>{serviceName}</Text>
           
-          {serviceDetails[serviceId] && (
+          {serviceDetails[service_id] && (
             <>
               <Text style={styles.sectionTitle}>DURATION</Text>
-              <Text style={styles.detailText}>{serviceDetails[serviceId].duration}</Text>
+              <Text style={styles.detailText}>{serviceDetails[service_id].duration}</Text>
               
               <Text style={styles.sectionTitle}>BOOKING FEE</Text>
-              <Text style={styles.detailText}>{serviceDetails[serviceId].fee}</Text>
+              <Text style={styles.detailText}>{serviceDetails[service_id].fee}</Text>
             </>
           )}
         </View>
 
-        {/* Date Selection */}
-        <View style={styles.dateContainer}>
-          <View style={styles.dateNavigator}>
-            <Text>‹</Text>
-            <Text style={styles.dateText}>
-              {selectedDate ? formatDate(selectedDate) : 'Select a date'}
-            </Text>
-            <Text>›</Text>
+        {doctors.length === 0 ? (
+          <View style={styles.noDoctorsContainer}>
+            <Text style={styles.noDoctorsText}>No doctors available at this branch for this service.</Text>
+            <Text style={styles.debugText}>Branch ID: {branchId}</Text>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => router.back()}
+            >
+              <Text style={styles.backButtonText}>Go Back</Text>
+            </TouchableOpacity>
           </View>
-          
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateScroll}>
-            {dates.map((date, index) => (
-              <TouchableOpacity
-                key={index}
+        ) : (
+          <>
+            {/* Date Selection */}
+            <View style={styles.dateContainer}>
+              <Text style={styles.sectionTitle}>SELECT DATE</Text>
+              <View style={styles.dateNavigator}>
+                <Text style={styles.dateText}>
+                  {selectedDate ? formatDate(selectedDate) : 'Select a date'}
+                </Text>
+              </View>
+              
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateScroll}>
+                {dates.map((date, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={[
+                      styles.dateButton,
+                      selectedDate && selectedDate.toDateString() === date.toDateString() && styles.selectedDate
+                    ]}
+                    onPress={() => handleDateSelect(date)}
+                  >
+                    <Text style={[
+                      styles.dateButtonText,
+                      selectedDate && selectedDate.toDateString() === date.toDateString() && styles.selectedDateText
+                    ]}>
+                      {date.getDate()}
+                    </Text>
+                    <Text style={[
+                      styles.dateButtonSubtext,
+                      selectedDate && selectedDate.toDateString() === date.toDateString() && styles.selectedDateText
+                    ]}>
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            {/* Doctor Selection */}
+            <Text style={styles.sectionTitle}>SELECT DOCTOR</Text>
+            {doctors.map((doctor) => (
+              <TouchableOpacity 
+                key={doctor.$id}
                 style={[
-                  styles.dateButton,
-                  selectedDate && selectedDate.toDateString() === date.toDateString() && styles.selectedDate
+                  styles.doctorItem,
+                  selectedDoctor && selectedDoctor.$id === doctor.$id && styles.selectedDoctor
                 ]}
-                onPress={() => handleDateSelect(date)}
+                onPress={() => setSelectedDoctor(doctor)}
               >
-                <Text style={[
-                  styles.dateButtonText,
-                  selectedDate && selectedDate.toDateString() === date.toDateString() && styles.selectedDateText
-                ]}>
-                  {date.getDate()}
-                </Text>
-                <Text style={[
-                  styles.dateButtonSubtext,
-                  selectedDate && selectedDate.toDateString() === date.toDateString() && styles.selectedDateText
-                ]}>
-                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()]}
-                </Text>
+                {doctorImages[doctor.image] ? (
+                  <Image 
+                    source={doctorImages[doctor.image]} 
+                    style={styles.doctorImage} 
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.doctorImagePlaceholder}>
+                    <Text>No Image</Text>
+                  </View>
+                )}
+                <View style={styles.doctorInfo}>
+                  <Text style={styles.doctorName}>Dr. {doctor.name}</Text>
+                  <Text style={styles.doctorSpecialty}>{doctor.specialty}</Text>
+                  
+                  {/* Time slots only appear for selected doctor and date */}
+                  {selectedDoctor && selectedDoctor.$id === doctor.$id && selectedDate && (
+                    <View style={styles.timeSlotSection}>
+                      <Text style={styles.timeSlotTitle}>Available Time Slots</Text>
+                      <View style={styles.timeSlotContainer}>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                          {timeSlots.map((time, index) => (
+                            <TouchableOpacity
+                              key={index}
+                              style={[
+                                styles.timeSlot,
+                                selectedTimeSlot === time && styles.selectedTimeSlot
+                              ]}
+                              onPress={() => handleTimeSlotSelect(time)}
+                            >
+                              <Text style={[
+                                styles.timeSlotText,
+                                selectedTimeSlot === time && styles.selectedTimeSlotText
+                              ]}>
+                                {time}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    </View>
+                  )}
+                </View>
               </TouchableOpacity>
             ))}
-          </ScrollView>
-        </View>
-
-        {/* Doctor Selection */}
-        <Text style={styles.sectionTitle}>DOCTOR</Text>
-        {doctors.map((doctor) => (
-          <TouchableOpacity 
-            key={doctor.$id}
-            style={[
-              styles.doctorItem,
-              selectedDoctor && selectedDoctor.$id === doctor.$id && styles.selectedDoctor
-            ]}
-            onPress={() => setSelectedDoctor(doctor)}
-          >
-            {doctorImages[doctor.image] ? (
-              <Image 
-                source={doctorImages[doctor.image]} 
-                style={styles.doctorImage} 
-                resizeMode="cover"
-              />
-            ) : (
-              <View style={styles.doctorImagePlaceholder}>
-                <Text>No Image</Text>
-              </View>
-            )}
-            <View style={styles.doctorInfo}>
-              <Text style={styles.doctorName}>Dr {doctor.name}</Text>
-              <Text style={styles.doctorSpecialty}>{doctor.specialty}</Text>
-              
-              {/* Time slots only appear for selected doctor */}
-              {selectedDoctor && selectedDoctor.$id === doctor.$id && selectedDate && (
-                <View style={styles.timeSlotContainer}>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    {timeSlots.map((time, index) => (
-                      <TouchableOpacity
-                        key={index}
-                        style={[
-                          styles.timeSlot,
-                          selectedTimeSlot === time && styles.selectedTimeSlot
-                        ]}
-                        onPress={() => handleTimeSlotSelect(time)}
-                      >
-                        <Text style={[
-                          styles.timeSlotText,
-                          selectedTimeSlot === time && styles.selectedTimeSlotText
-                        ]}>
-                          {time}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-              )}
-            </View>
-          </TouchableOpacity>
-        ))}
+          </>
+        )}
       </ScrollView>
 
-      {/* Continue Button */}
-      <TouchableOpacity 
-        style={[
-          styles.continueButton,
-          (!selectedDoctor || !selectedDate || !selectedTimeSlot) && styles.disabledButton
-        ]}
-        onPress={handleBooking}
-        disabled={!selectedDoctor || !selectedDate || !selectedTimeSlot}
-      >
-        <Text style={styles.continueButtonText}>Continue</Text>
-      </TouchableOpacity>
+      {/* Continue Button - Only show if doctors are available */}
+      {doctors.length > 0 && (
+        <TouchableOpacity 
+          style={[
+            styles.continueButton,
+            (!selectedDoctor || !selectedDate || !selectedTimeSlot) && styles.disabledButton
+          ]}
+          onPress={handleBooking}
+          disabled={!selectedDoctor || !selectedDate || !selectedTimeSlot}
+        >
+          <Text style={styles.continueButtonText}>Book Appointment</Text>
+        </TouchableOpacity>
+      )}
     </SafeAreaView>
   );
 };
@@ -275,6 +353,27 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  errorContainer: {
+    flex: 1,
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: 'red',
+  },
+  errorText: {
+    fontSize: 14,
+    marginBottom: 5,
+  },
+  debugText: {
+    fontSize: 14,
+    color: '#888',
+    marginVertical: 10,
   },
   header: {
     alignItems: 'center',
@@ -291,6 +390,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginTop: 10,
   },
+  branchName: {
+    fontSize: 18,
+    color: '#555',
+    marginTop: 5,
+  },
   serviceInfo: {
     padding: 15,
     borderBottomWidth: 1,
@@ -302,7 +406,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   sectionTitle: {
-    fontSize: 12,
+    fontSize: 14,
+    fontWeight: 'bold',
     color: '#888',
     marginTop: 10,
     marginBottom: 5,
@@ -313,15 +418,37 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     marginHorizontal: 15,
   },
+  noDoctorsContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  noDoctorsText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  backButton: {
+    backgroundColor: '#0AD476',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  backButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
   dateContainer: {
     marginVertical: 15,
     padding: 10,
   },
   dateNavigator: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 10,
+    marginBottom: 10,
   },
   dateText: {
     fontSize: 16,
@@ -387,8 +514,17 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 5,
   },
+  timeSlotSection: {
+    marginTop: 15,
+  },
+  timeSlotTitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#666',
+    marginBottom: 8,
+  },
   timeSlotContainer: {
-    marginTop: 10,
+    marginTop: 5,
   },
   timeSlot: {
     paddingHorizontal: 15,

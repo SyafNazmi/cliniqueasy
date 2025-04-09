@@ -15,18 +15,24 @@ const DatabaseService = {
     // Create a new document in a specific collection
     async createDocument(collectionId, documentData, permissions = []) {
         try {
-            return await databases.createDocument(
-                process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID, // Your database ID
-                collectionId,
-                ID.unique(),
-                documentData,
-                permissions
-            );
+          // Ensure the database ID is correctly accessed
+          const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+          if (!databaseId) {
+            throw new Error('Database ID is not defined in environment variables');
+          }
+          
+          return await databases.createDocument(
+            databaseId,
+            collectionId,
+            ID.unique(),
+            documentData,
+            permissions
+          );
         } catch (error) {
-            console.error('Error creating document:', error);
-            throw error;
+          console.error('Error creating document:', error);
+          throw error;
         }
-    },
+      },
 
     // List documents in a collection with optional queries
 

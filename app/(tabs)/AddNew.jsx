@@ -1,26 +1,56 @@
-import React from 'react';
-
-import { View, Text, TouchableOpacity, StyleSheet, Image, ScrollView, SafeAreaView } from 'react-native';
-
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Image, ScrollView, SafeAreaView, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
+import { BranchesData, initializeBranches, COLLECTIONS } from '../../constants';
+import { DatabaseService } from '../../configs/AppwriteConfig';
 
 const AddNew = () => {
   const router = useRouter();
+  const [branches, setBranches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  
+  useEffect(() => {
+    async function loadBranches() {
+      try {
+        // Initialize branch data if needed
+        await initializeBranches();
+        
+        // Try to fetch branches from the database first
+        const response = await DatabaseService.listDocuments(COLLECTIONS.BRANCHES, [], 100);
+        
+        if (response.documents.length > 0) {
+          setBranches(response.documents);
+        } else {
+          // If no branches in database, use local data
+          setBranches(BranchesData);
+        }
+      } catch (error) {
+        console.error("Error loading branches:", error);
+        // Fallback to local data if there's an error
+        setBranches(BranchesData);
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    loadBranches();
+  }, []);
 
-
-  const services = [
-    { id: '1', name: 'In-clinic consultation' },
-    { id: '2', name: 'Online consultation' },
-    { id: '3', name: 'Prenatal Care' },
-    { id: '4', name: '5D Scan' },
-  ];
-
-  const handleServiceSelect = (service) => {
+  const handleBranchSelect = (branch) => {
     router.push({
-      pathname: '/appointment',
-      params: { serviceId: service.id, serviceName: service.name }
+      pathname: '/appointment/branch-details',
+      params: { branchId: branch.branch_id, branchName: branch.name }
     });
   };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#0AD476" />
+        <Text>Loading Branches...</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -33,17 +63,17 @@ const AddNew = () => {
       </View>
 
       <Text style={styles.subtitle}>
-        What type of appointment would you like to schedule?
+        Select a branch to continue
       </Text>
 
-      <ScrollView style={styles.serviceList}>
-        {services.map((service) => (
+      <ScrollView style={styles.branchList}>
+        {branches.map((branch) => (
           <TouchableOpacity
-            key={service.id}
-            style={styles.serviceItem}
-            onPress={() => handleServiceSelect(service)}
+            key={branch.branch_id}
+            style={styles.branchItem}
+            onPress={() => handleBranchSelect(branch)}
           >
-            <Text style={styles.serviceText}>{service.name}</Text>
+            <Text style={styles.branchText}>{branch.name}</Text>
             <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
         ))}
@@ -57,6 +87,11 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
     backgroundColor: '#ffffff',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   header: {
     alignItems: 'center',
@@ -79,10 +114,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#333',
   },
-  serviceList: {
+  branchList: {
     marginTop: 10,
   },
-  serviceItem: {
+  branchItem: {
     backgroundColor: '#f5f5f5',
     padding: 16,
     borderRadius: 10,
@@ -91,7 +126,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  serviceText: {
+  branchText: {
     fontSize: 16,
     color: '#333',
   },
