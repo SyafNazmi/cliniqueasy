@@ -119,7 +119,7 @@ export default function HomeScreen() {
             </View>
             
             <TouchableOpacity 
-              onPress={() => router.push('/appointment/upcoming')}
+              onPress={() => router.push('/appointment')}
               style={styles.seeAllButton}
             >
               <Text style={styles.seeAllText}>See All</Text>
@@ -138,7 +138,7 @@ export default function HomeScreen() {
               {/* If there are more appointments, show a message */}
               {sortedUpcomingAppointments.length > 1 && (
                 <TouchableOpacity 
-                  onPress={() => router.push('/appointment/upcoming')}
+                  onPress={() => router.push('/appointment')}
                   style={styles.moreAppointmentsButton}
                 >
                   <Ionicons name="calendar-outline" size={16} color="#0AD476" />

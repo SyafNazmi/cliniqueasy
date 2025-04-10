@@ -14,7 +14,6 @@ import { DatabaseService, AuthService, Query } from '../../configs/AppwriteConfi
 import AppointmentCard from '../../components/AppointmentCard';
 import PageHeader from '../../components/PageHeader';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '../../constants/Colors';
 
 export default function AppointmentsScreen() {
   const router = useRouter();
@@ -134,7 +133,7 @@ export default function AppointmentsScreen() {
     if (activeTab === 'upcoming') {
       return (
         <View style={styles.emptyContainer}>
-          <Ionicons name="calendar-outline" size={70} color={COLORS.gray300} />
+          <Ionicons name="calendar-outline" size={70} color="#d1d5db" />
           <Text style={styles.emptyTitle}>No Upcoming Appointments</Text>
           <Text style={styles.emptyText}>You don't have any scheduled appointments.</Text>
           <TouchableOpacity 
@@ -148,7 +147,7 @@ export default function AppointmentsScreen() {
     } else {
       return (
         <View style={styles.emptyContainer}>
-          <Ionicons name="time-outline" size={70} color={COLORS.gray300} />
+          <Ionicons name="time-outline" size={70} color="#d1d5db" />
           <Text style={styles.emptyTitle}>No Past Appointments</Text>
           <Text style={styles.emptyText}>Your appointment history is empty.</Text>
         </View>
@@ -169,7 +168,7 @@ export default function AppointmentsScreen() {
           <Ionicons 
             name="calendar-outline" 
             size={18} 
-            color={activeTab === 'upcoming' ? COLORS.white : COLORS.gray600} 
+            color={activeTab === 'upcoming' ? "white" : "#4b5563"} 
             style={styles.tabIcon}
           />
           <Text style={[styles.tabText, activeTab === 'upcoming' && styles.activeTabText]}>
@@ -189,7 +188,7 @@ export default function AppointmentsScreen() {
           <Ionicons 
             name="time-outline" 
             size={18} 
-            color={activeTab === 'past' ? COLORS.white : COLORS.gray600}
+            color={activeTab === 'past' ? "white" : "#4b5563"}
             style={styles.tabIcon}
           />
           <Text style={[styles.tabText, activeTab === 'past' && styles.activeTabText]}>
@@ -205,7 +204,7 @@ export default function AppointmentsScreen() {
       
       {isLoading && !refreshing ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
+          <ActivityIndicator size="large" color="#0AD476" />
         </View>
       ) : displayedAppointments.length > 0 ? (
         <FlatList
@@ -221,8 +220,8 @@ export default function AppointmentsScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              colors={[COLORS.primary]}
-              tintColor={COLORS.primary}
+              colors={['#0AD476']}
+              tintColor="#0AD476"
             />
           }
         />
@@ -236,7 +235,7 @@ export default function AppointmentsScreen() {
           style={styles.fab}
           onPress={() => router.push('/')}
         >
-          <Ionicons name="add" size={24} color={COLORS.white} />
+          <Ionicons name="add" size={24} color="white" />
         </TouchableOpacity>
       )}
     </SafeAreaView>
@@ -246,7 +245,7 @@ export default function AppointmentsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: '#f9fafb',
   },
   loadingContainer: {
     flex: 1,
@@ -258,10 +257,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginVertical: 16,
     borderRadius: 12,
-    backgroundColor: COLORS.gray100,
+    backgroundColor: '#f3f4f6',
     overflow: 'hidden',
     elevation: 1,
-    shadowColor: COLORS.black,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
@@ -274,18 +273,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   activeTab: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: '#0AD476',
   },
   tabIcon: {
     marginRight: 6,
   },
   tabText: {
     fontWeight: '600',
-    color: COLORS.gray600,
+    color: '#4b5563',
     fontSize: 15,
   },
   activeTabText: {
-    color: COLORS.white,
+    color: 'white',
     fontWeight: 'bold',
   },
   badgeContainer: {
@@ -298,7 +297,7 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
   badgeText: {
-    color: COLORS.white,
+    color: 'white',
     fontSize: 12,
     fontWeight: 'bold',
   },
@@ -318,25 +317,25 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: COLORS.gray700,
+    color: '#374151',
     marginTop: 16,
   },
   emptyText: {
     fontSize: 15,
-    color: COLORS.gray500,
+    color: '#6b7280',
     marginTop: 8,
     marginBottom: 24,
     textAlign: 'center',
   },
   bookButton: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: '#0AD476',
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 10,
     elevation: 2,
   },
   bookButtonText: {
-    color: COLORS.white,
+    color: 'white',
     fontWeight: 'bold',
     fontSize: 16,
   },
@@ -344,14 +343,14 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 20,
     bottom: 20,
-    backgroundColor: COLORS.primary,
+    backgroundColor: '#0AD476',
     width: 56,
     height: 56,
     borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 5,
-    shadowColor: COLORS.black,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
