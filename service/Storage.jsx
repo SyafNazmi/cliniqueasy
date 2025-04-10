@@ -1,4 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useEffect } from "react";
+
 
 // Constants for storage keys
 const MEDICATIONS_KEY = 'medications';
@@ -50,6 +52,7 @@ export const getLocalStorage = async (key) => {
     console.error("Error retrieving data", error);
     return null;
   }
+
 };
 
 export const removeLocalStorage = async () => {
@@ -67,6 +70,7 @@ export const removeLocalStorage = async () => {
     }
   };
 
+// In service/Storage.jsx
 export const removeSpecificStorageKey = async (key) => {
   try {
     await AsyncStorage.removeItem(key);
@@ -75,7 +79,50 @@ export const removeSpecificStorageKey = async (key) => {
   }
 };
 
+// Add a new function to handle user-related storage cleanup
+export const clearUserData = async (userId) => {
+  try {
+    // Remove user-specific medication and dose history data
+    const userMedicationsKey = `${USER_PREFIX}${userId}_${MEDICATIONS_KEY}`;
+    const userDoseHistoryKey = `${USER_PREFIX}${userId}_${DOSE_HISTORY_KEY}`;
+    
+    await AsyncStorage.removeItem(userMedicationsKey);
+    await AsyncStorage.removeItem(userDoseHistoryKey);
+    // Keep additional user-specific keys here if needed
+    
+    console.log("User-specific data cleared");
+    return true;
+  } catch (error) {
+    console.error("Error clearing user data", error);
+    return false;
+  }
+};
+
 // Medication-specific functions
+
+export async function migrateUserData(oldUserId, newUserId) {
+  try {
+    // Get medication data from old user ID
+    const oldMedicationsKey = `${USER_PREFIX}${oldUserId}_${MEDICATIONS_KEY}`;
+    const oldDoseHistoryKey = `${USER_PREFIX}${oldUserId}_${DOSE_HISTORY_KEY}`;
+    
+    const medications = await getLocalStorage(oldMedicationsKey) || [];
+    const doseHistory = await getLocalStorage(oldDoseHistoryKey) || [];
+    
+    // Store medication data under new user ID
+    const newMedicationsKey = `${USER_PREFIX}${newUserId}_${MEDICATIONS_KEY}`;
+    const newDoseHistoryKey = `${USER_PREFIX}${newUserId}_${DOSE_HISTORY_KEY}`;
+    
+    await setLocalStorage(newMedicationsKey, medications);
+    await setLocalStorage(newDoseHistoryKey, doseHistory);
+    
+    console.log("User data migrated successfully");
+    return true;
+  } catch (error) {
+    console.error("Error migrating user data:", error);
+    return false;
+  }
+}
 
 export async function getMedications() {
   try {
@@ -85,7 +132,20 @@ export async function getMedications() {
     
     // Use user-specific key for medications
     const userMedicationsKey = `${USER_PREFIX}${userId}_${MEDICATIONS_KEY}`;
-    const data = await getLocalStorage(userMedicationsKey);
+    let data = await getLocalStorage(userMedicationsKey);
+    
+    // If no data found with user-specific key, try the anonymous key as fallback
+    if (!data || data.length === 0) {
+      const anonymousKey = `${USER_PREFIX}anonymous_${MEDICATIONS_KEY}`;
+      data = await getLocalStorage(anonymousKey);
+      
+      // If data found in anonymous storage, save it to user-specific storage
+      if (data && data.length > 0 && userId !== 'anonymous') {
+        await setLocalStorage(userMedicationsKey, data);
+        console.log("Migrated medication data from anonymous to user storage");
+      }
+    }
+    
     return data || [];
   } catch (error) {
     console.error("Error getting medications:", error);

@@ -54,6 +54,19 @@ const MEDICATION_TYPES = [
     },
 ];
 
+const ILLNESS_TYPES = [
+    { id: "1", label: "Flu" },
+    { id: "2", label: "Fever" },
+    { id: "3", label: "Cough" },
+    { id: "4", label: "Headache" },
+    { id: "5", label: "Allergies" },
+    { id: "6", label: "Pain" },
+    { id: "7", label: "Infection" },
+    { id: "8", label: "Blood Pressure" },
+    { id: "9", label: "Diabetes" },
+    { id: "10", label: "Other" }
+  ];
+
 const FREQUENCIES = [
     {
         id: "1",
@@ -140,7 +153,8 @@ export default function AddMedicationScreen() {
 
     const [form, setForm] = useState({
         name: "",
-        type: "", // Added medication type
+        type: "",
+        illnessType: "",
         dosage: "",
         frequencies: "",
         duration: "",
@@ -151,10 +165,12 @@ export default function AddMedicationScreen() {
         refillReminder: false,
         currentSupply: "",
         refillAt: "",
-    });
+      });
 
     const [errors, setErrors] = useState({});
     const [selectedType, setSelectedType] = useState(""); // Added for medication type
+    const [selectedIllnessType, setSelectedIllnessType] = useState("");
+    const [showIllnessDropdown, setShowIllnessDropdown] = useState(false);
     const [selectedFrequency, setSelectedFrequency] = useState("");
     const [selectedDuration, setSelectedDuration] = useState("");
     const [showTimePicker, setShowTimePicker] = useState(false);
@@ -197,6 +213,59 @@ export default function AddMedicationScreen() {
             </View>
         )
     }
+
+    const renderIllnessDropdown = () => {
+    return (
+      <View>
+        <TouchableOpacity
+          style={[styles.dropdownButton, errors.illnessType && styles.inputError]}
+          onPress={() => setShowIllnessDropdown(!showIllnessDropdown)}
+        >
+          <Text style={form.illnessType ? styles.dropdownText : styles.dropdownPlaceholder}>
+            {form.illnessType || "Select Illness Type"}
+          </Text>
+          <Ionicons name={showIllnessDropdown ? "chevron-up" : "chevron-down"} size={20} color="#666" />
+        </TouchableOpacity>
+        
+        {errors.illnessType && (
+          <Text style={styles.errorText}>{errors.illnessType}</Text>
+        )}
+        
+        {showIllnessDropdown && (
+          <View style={styles.dropdownMenu}>
+            <ScrollView style={{ maxHeight: 200 }}>
+              {ILLNESS_TYPES.map((illness) => (
+                <TouchableOpacity
+                  key={illness.id}
+                  style={[
+                    styles.dropdownItem,
+                    selectedIllnessType === illness.label && styles.selectedDropdownItem
+                  ]}
+                  onPress={() => {
+                    setSelectedIllnessType(illness.label);
+                    setForm({ ...form, illnessType: illness.label });
+                    setShowIllnessDropdown(false);
+                    if (errors.illnessType) {
+                      setErrors({ ...errors, illnessType: "" });
+                    }
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.dropdownItemText,
+                      selectedIllnessType === illness.label && styles.selectedDropdownItemText
+                    ]}
+                  >
+                    {illness.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+      </View>
+    )
+  }
 
     const renderFrequencyOptions = () => {
         return (
@@ -267,6 +336,9 @@ export default function AddMedicationScreen() {
     }
     if (!form.type.trim()) {
         newErrors.type = "Medication type is required";
+    }
+    if (!form.illnessType.trim()) {
+        newErrors.illnessType = "Illness type is required";
     }
     if (!form.dosage.trim()) {
         newErrors.dosage = "Dosage is required";
@@ -411,6 +483,8 @@ export default function AddMedicationScreen() {
                         <Text style={styles.errorText}>{errors.type}</Text>
                     )}
                     {renderMedicationTypes()}
+                    <Text style={styles.sectionTitle}>Illness Type</Text>
+                    {renderIllnessDropdown()}
                 </View>
                 
                 <View style={styles.inputContainer}>
@@ -693,6 +767,55 @@ const styles = StyleSheet.create({
       color: '#1a8e2d',
       fontWeight: 'bold',
     },
+    // Illness Type
+    dropdownButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: '#f5f5f5',
+        borderRadius: 10,
+        padding: 12,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+        marginBottom: 5,
+      },
+      dropdownText: {
+        fontSize: 16,
+        color: '#333',
+      },
+      dropdownPlaceholder: {
+        fontSize: 16,
+        color: '#999',
+      },
+      dropdownMenu: {
+        backgroundColor: 'white',
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+        marginBottom: 15,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+        zIndex: 10,
+      },
+      dropdownItem: {
+        padding: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f0f0f0',
+      },
+      selectedDropdownItem: {
+        backgroundColor: '#e6f7e9',
+      },
+      dropdownItemText: {
+        fontSize: 16,
+        color: '#333',
+      },
+      selectedDropdownItemText: {
+        color: '#1a8e2d',
+        fontWeight: 'bold',
+      },
     dateButton: {
       flexDirection: 'row',
       alignItems: 'center',

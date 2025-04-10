@@ -404,38 +404,44 @@ export default function Medications() {
                         const taken = isDoseTaken(doseId); // You'll need to update your dose recording system
                         
                         return (
-                            <View key={doseId} style={styles.doseCard}>
-                                <View style={[styles.doseBadge, { backgroundColor: `${medication.color}15` }]}>
-                                    <Ionicons name="medical" size={24} />
+                        <View key={doseId} style={styles.doseCard}>
+                          <View style={[styles.doseBadge, { backgroundColor: `${medication.color}15` }]}>
+                            <Ionicons name="medical" size={24} />
+                          </View>
+                          <View style={styles.doseInfo}>
+                            <View>
+                              <Text style={styles.medicineName}>{medication.name}</Text>
+                              <Text style={styles.dosageInfo}>
+                                {medication.dosage} 
+                                {medication.type ? ` · ${medication.type}` : ''}
+                                {medication.times.length > 1 ? ` · Dose ${timeIndex + 1}/${medication.times.length}` : ''}
+                              </Text>
+                              {medication.illnessType && (
+                                <View style={styles.illnessTypeContainer}>
+                                  <Ionicons name="fitness-outline" size={14} color="#666" />
+                                  <Text style={styles.illnessTypeText}>For: {medication.illnessType}</Text>
                                 </View>
-                                <View style={styles.doseInfo}>
-                                    <View>
-                                        <Text style={styles.medicineName}>{medication.name}</Text>
-                                        <Text style={styles.dosageInfo}>
-                                            {medication.dosage} 
-                                            {medication.type ? ` · ${medication.type}` : ''}
-                                            {medication.times.length > 1 ? ` · Dose ${timeIndex + 1}/${medication.times.length}` : ''}
-                                        </Text>
-                                    </View>
-                                    <View style={styles.doseTime}>
-                                        <Ionicons name="time-outline" size={14} color="#ccc" />
-                                        <Text style={styles.timeText}>{time}</Text>
-                                    </View>
-                                </View>
-                                {taken ? (
-                                    <View style={styles.takeDoseButton}>
-                                        <Ionicons name="checkmark-circle" size={24} />
-                                        <Text style={styles.takeDoseText}>Taken</Text>
-                                    </View>
-                                ) : (
-                                    <TouchableOpacity 
-                                        style={[styles.takeDoseButton, { backgroundColor: medication.color }]} 
-                                        onPress={() => handleTakeDose(medication, timeIndex)}
-                                    >
-                                        <Text style={styles.takeDoseText}>Take</Text>
-                                    </TouchableOpacity>
-                                )}
+                              )}
                             </View>
+                            <View style={styles.doseTime}>
+                              <Ionicons name="time-outline" size={14} color="#ccc" />
+                              <Text style={styles.timeText}>{time}</Text>
+                            </View>
+                          </View>
+                          {taken ? (
+                            <View style={styles.takeDoseButton}>
+                              <Ionicons name="checkmark-circle" size={24} />
+                              <Text style={styles.takeDoseText}>Taken</Text>
+                            </View>
+                          ) : (
+                            <TouchableOpacity 
+                              style={[styles.takeDoseButton, { backgroundColor: medication.color }]} 
+                              onPress={() => handleTakeDose(medication, timeIndex)}
+                            >
+                              <Text style={styles.takeDoseText}>Take</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
                         );
                     });
                 })
@@ -472,15 +478,18 @@ export default function Medications() {
               <ScrollView style={styles.notificationsList}>
               {todaysMedications.map((medication)=> (
                 <View key={medication.id} style={styles.notificationItem}>
-                    <View style={[styles.notificationIcon, { backgroundColor: `${medication.color}15` }]}>
-                        <Ionicons name='medical' size={24}/>
-                    </View>
-                    <View style={styles.notificationContent}>
-                        <Text style={styles.notificationTitle}>{medication.name}</Text>
-                        <Text style={styles.notificationMessage}>{medication.dosage}</Text>
-                        <Text style={styles.notificationTime}>{medication.times[0]}</Text>
-                    </View>
+                <View style={[styles.notificationIcon, { backgroundColor: `${medication.color}15` }]}>
+                  <Ionicons name='medical' size={24}/>
                 </View>
+                <View style={styles.notificationContent}>
+                  <Text style={styles.notificationTitle}>{medication.name}</Text>
+                  <Text style={styles.notificationMessage}>{medication.dosage}</Text>
+                  {medication.illnessType && (
+                    <Text style={styles.notificationIllness}>For: {medication.illnessType}</Text>
+                  )}
+                  <Text style={styles.notificationTime}>{medication.times[0]}</Text>
+                </View>
+              </View>
               ))
               }
               </ScrollView>
@@ -692,6 +701,21 @@ const styles = StyleSheet.create({
   doseTime: {
     flexDirection: "row",
     alignItems: "center",
+  },
+  illnessTypeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  illnessTypeText: {
+    fontSize: 14,
+    color: '#666',
+    marginLeft: 5,
+  },
+  notificationIllness: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 2,
   },
   timeText: {
     marginLeft: 5,

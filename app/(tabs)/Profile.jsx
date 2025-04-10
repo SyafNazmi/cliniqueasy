@@ -2,7 +2,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator
 import React, { useEffect, useState } from 'react'
 import { useRouter } from 'expo-router'
 import { account, DatabaseService, Query } from '@/configs/AppwriteConfig'
-import { removeSpecificStorageKey } from '@/service/Storage'
+import { removeSpecificStorageKey, getLocalStorage, clearUserData } from '@/service/Storage'
 import Toast from 'react-native-toast-message'
 import { Ionicons } from '@expo/vector-icons'
 import { COLLECTIONS } from '@/constants'
@@ -64,11 +64,21 @@ export default function Profile() {
     };
     
     loadProfileAndAppointments();
+
+    const checkUserId = async () => {
+      const userDetail = await getLocalStorage('userDetail');
+      console.log("Current user ID:", userDetail?.uid);
+    };
+    checkUserId();
   }, []);
   
   const handleLogout = async () => {
     try {
       console.log("Starting logout process...");
+      
+      // Get the current user ID before logging out
+      const userDetail = await getLocalStorage('userDetail');
+      const userId = userDetail?.uid || 'anonymous';
       
       // Sign out from Appwrite by deleting the current session
       try {
@@ -79,7 +89,10 @@ export default function Profile() {
         // Continue with logout even if session deletion fails
       }
       
-      // Only clear authentication-related data
+      // Clear user-specific data (medications, dose history)
+      await clearUserData(userId);
+      
+      // Remove user authentication details
       await removeSpecificStorageKey('userDetail');
       console.log("User details removed from storage");
       
