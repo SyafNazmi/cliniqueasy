@@ -1,10 +1,9 @@
-// Create a new file at app/appointment/bookingSuccess.jsx
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+//app/appointment/success.jsx
+import React, { useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { ScrollView } from 'react-native-web';
 
 export default function BookingSuccessScreen() {
   const router = useRouter();
