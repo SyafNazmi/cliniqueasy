@@ -3,6 +3,7 @@ import { Models } from 'appwrite';
 export const COLLECTIONS = {
   DOCTORS: '67e033480011d20e04fb',
   BRANCHES: '67f68c760039e7d1a61d',
+  REGIONS: '6807cb05000906569d69',
   SERVICES: '67f68c88002d35ec29fe',
   APPOINTMENTS: '67e0332c0001131d71ec',
   PATIENT_PROFILES: '67e032ec0025cf1956ff'
@@ -63,38 +64,113 @@ export const IdentificationTypes = [
   "Voter ID Card",
 ];
 
-/**
- * Branches Data
- */
-export const BranchesData = [
+const RegionsData = [
+  {
+    region_id: "tawau",
+    name: "Tawau",
+    hospitalsCount: 1,
+    imagePath: "tawau-region"
+  },
+  {
+    region_id: "semporna",
+    name: "Semporna",
+    hospitalsCount: 1,
+    imagePath: "semporna-region"
+  },
+  {
+    region_id: "kota_kinabalu",
+    name: "Kota Kinabalu",
+    hospitalsCount: 1,
+    imagePath: "kk-region"
+  }
+];
+
+const BranchesData = [
   {
     branch_id: "1",
-    name: "Tawau",
+    region_id: "tawau",
+    name: "Tawau Branch",
     address: "123 Jalan Tawau, Tawau, Sabah",
-    latitude: 4.244, 
+    latitude: 4.244,
     longitude: 117.891,
     phone: "+60 89-123456",
-    operatingHours: "8:00 AM - 5:00 PM (Mon-Fri), 9:00 AM - 1:00 PM (Sat)"
+    operatingHours: "8:00 AM - 5:00 PM (Mon-Fri), 9:00 AM - 1:00 PM (Sat)",
+    openingTime: "08:00 AM",
+    closingTime: "05:00 PM",
+    imagePath: "tawau-clinic"
   },
   {
     branch_id: "2",
-    name: "Semporna",
+    region_id: "semporna",
+    name: "Semporna Branch",
     address: "45 Jalan Semporna, Semporna, Sabah",
-    latitude: 4.485, 
+    latitude: 4.485,
     longitude: 118.609,
     phone: "+60 89-654321",
-    operatingHours: "8:00 AM - 5:00 PM (Mon-Fri), 9:00 AM - 1:00 PM (Sat)"
+    operatingHours: "8:00 AM - 5:00 PM (Mon-Fri), 9:00 AM - 1:00 PM (Sat)",
+    openingTime: "08:00 AM",
+    closingTime: "05:00 PM",
+    imagePath: "semporna-clinic"
   },
   {
     branch_id: "3",
-    name: "Kota Kinabalu",
+    region_id: "kota_kinabalu",
+    name: "Kota Kinabalu Branch",
     address: "78 Jalan KK Central, Kota Kinabalu, Sabah",
-    latitude: 5.980, 
+    latitude: 5.980,
     longitude: 116.073,
     phone: "+60 88-998877",
-    operatingHours: "8:00 AM - 6:00 PM (Mon-Fri), 9:00 AM - 3:00 PM (Sat-Sun)"
+    operatingHours: "8:00 AM - 6:00 PM (Mon-Fri), 9:00 AM - 3:00 PM (Sat-Sun)",
+    openingTime: "08:00 AM",
+    closingTime: "06:00 PM",
+    imagePath: "kk-clinic"
   }
 ];
+
+export const clinicsImages = {
+  // Region images
+  'tawau-region': require('../assets/images/tawau.jpeg'),
+  'semporna-region': require('../assets/images/semporna.jpg'),
+  'kk-region': require('../assets/images/kota-kinabalu.jpg'),
+  
+  // Clinic images
+  'tawau-clinic': require('../assets/images/polyclinic-fajar.jpg'),
+  'semporna-clinic': require('../assets/images/polyclinic-semporna.jpeg'),
+  'kk-clinic': require('../assets/images/polyclinic-kk.jpg'),
+};
+
+/**
+ * Branches Data
+ */
+// export const BranchesData = [
+//   {
+//     branch_id: "1",
+//     name: "Tawau",
+//     address: "123 Jalan Tawau, Tawau, Sabah",
+//     latitude: 4.244, 
+//     longitude: 117.891,
+//     phone: "+60 89-123456",
+//     operatingHours: "8:00 AM - 5:00 PM (Mon-Fri), 9:00 AM - 1:00 PM (Sat)"
+//   },
+//   {
+//     branch_id: "2",
+//     name: "Semporna",
+//     address: "45 Jalan Semporna, Semporna, Sabah",
+//     latitude: 4.485, 
+//     longitude: 118.609,
+//     phone: "+60 89-654321",
+//     operatingHours: "8:00 AM - 5:00 PM (Mon-Fri), 9:00 AM - 1:00 PM (Sat)"
+//   },
+//   {
+//     branch_id: "3",
+//     name: "Kota Kinabalu",
+//     address: "78 Jalan KK Central, Kota Kinabalu, Sabah",
+//     latitude: 5.980, 
+//     longitude: 116.073,
+//     phone: "+60 88-998877",
+//     operatingHours: "8:00 AM - 6:00 PM (Mon-Fri), 9:00 AM - 3:00 PM (Sat-Sun)"
+//   }
+// ];
 
 /**
  * Services Data
@@ -201,12 +277,26 @@ export async function initializeDoctors() {
   }
 }
 
+export async function initializeRegions() {
+  try {
+    const regionsExist = await DatabaseService.listDocuments(COLLECTIONS.REGIONS, [], 1);
+    
+    // If no regions exist in the database, initialize with default data
+    if (regionsExist.documents.length === 0) {
+      for (const region of RegionsData) {
+        await DatabaseService.createDocument(COLLECTIONS.REGIONS, region);
+      }
+      console.log("Regions initialized successfully");
+    }
+  } catch (error) {
+    console.error("Error initializing regions:", error);
+  }
+}
+
 /**
  * Helper function to initialize branches
  */
 export async function initializeBranches() {
-  const { DatabaseService } = await import('../configs/AppwriteConfig');
-  
   try {
     // Check if the branches collection exists and has data
     const existingBranches = await DatabaseService.listDocuments(COLLECTIONS.BRANCHES, [], 100);
@@ -244,7 +334,7 @@ export async function initializeServices() {
   
   try {
     // Check if the services collection exists and has data
-    const existingServices = await DatabaseService.listDocuments(COLLECTIONS.SERVICES, [], 100);
+    const existingServices = await DatabaseService.listDocuments(COLLECTIONS.SERVICES, [], 1);
     
     if (existingServices.documents.length > 0) {
       console.log("Services already initialized.");
@@ -253,7 +343,14 @@ export async function initializeServices() {
     
     // If no services exist, create them
     for (const service of ServicesData) {
-      await DatabaseService.createDocument(COLLECTIONS.SERVICES, service);
+      const { service_id, ...serviceWithoutId } = service;
+      
+      const serviceToCreate = {
+        ...serviceWithoutId,
+        service_id: service.service_id
+      };
+      
+      await DatabaseService.createDocument(COLLECTIONS.SERVICES, serviceToCreate);
     }
     
     console.log("Services initialized successfully.");
@@ -262,8 +359,16 @@ export async function initializeServices() {
   }
 }
 
+export async function fetchRegions() {
+  try {
+    return await DatabaseService.listDocuments(COLLECTIONS.REGIONS);
+  } catch (error) {
+    console.error('Error loading regions:', error);
+    throw error;
+  }
+}
+
 export async function fetchBranches() {
-  const { DatabaseService } = await import('../configs/AppwriteConfig');
   try {
     return await DatabaseService.listDocuments(COLLECTIONS.BRANCHES);
   } catch (error) {
@@ -272,8 +377,19 @@ export async function fetchBranches() {
   }
 }
 
+export async function fetchBranchesByRegion(regionId) {
+  try {
+    return await DatabaseService.listDocuments(
+      COLLECTIONS.BRANCHES,
+      [DatabaseService.createQuery('equal', 'region_id', regionId)]
+    );
+  } catch (error) {
+    console.error('Error loading branches by region:', error);
+    throw error;
+  }
+}
+
 export async function fetchServices() {
-  const { DatabaseService } = await import('../configs/AppwriteConfig');
   try {
     return await DatabaseService.listDocuments(COLLECTIONS.SERVICES);
   } catch (error) {
@@ -283,7 +399,6 @@ export async function fetchServices() {
 }
 
 export async function fetchBranchById(branchId) {
-  const { DatabaseService } = await import('../configs/AppwriteConfig');
   try {
     return await DatabaseService.getDocument(COLLECTIONS.BRANCHES, branchId);
   } catch (error) {
