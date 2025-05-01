@@ -12,31 +12,43 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { DatabaseService, AuthService, Query } from '../../configs/AppwriteConfig';
-import { doctorImages, COLLECTIONS, initializeDoctors } from '../../constants';
+import { doctorImages, COLLECTIONS, getDoctorsForBranch } from '../../constants';
 import PageHeader from '../../components/PageHeader';
 
 const AppointmentBooking = () => {
   const router = useRouter();
-  const { branchId, branchName, service_id, serviceName } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+  
+  // Debugging params received
+  console.log('Received params:', params);
+  
+  // FIXED: Handle both serviceId and service_id parameter names
+  const branchId = String(params.branchId);
+  const branchName = params.branchName;
+  const service_id = String(params.serviceId || params.service_id || ''); // Accept either name
+  const serviceName = params.serviceName;
+  
+  console.log('Processed params:', { branchId, service_id, serviceName, branchName });
   
   const [doctors, setDoctors] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
-  const [error, setError] = useState(null); // Add this for debugging
+  const [error, setError] = useState(null);
+  const [serviceData, setServiceData] = useState(null);
   
-  // Service details based on service ID
+  // Service details based on service ID - matching the format in your constants
   const serviceDetails = {
-    '1': { // Health Check-ups and Preventive Care
+    '1': { 
       duration: 'Approximately 45 minutes',
       fee: 'RM 120, Non-refundable'
     },
-    '2': { // Diagnosis and Treatment of Common Illnesses
+    '2': { 
       duration: 'Approximately 30 minutes',
       fee: 'RM 80, Non-refundable'
     },
-    '3': { // Vaccinations and Immunizations
+    '3': { 
       duration: 'Approximately 20 minutes',
       fee: 'RM 60, Non-refundable'
     }
@@ -53,6 +65,45 @@ const AppointmentBooking = () => {
   const timeSlots = ['8:30 AM', '9:00 AM', '9:30 AM', '10:00 AM', '2:00 PM', '3:00 PM', '4:00 PM'];
 
   useEffect(() => {
+    // Load service data from the database or use fallback
+    const getServiceData = async () => {
+      try {
+        if (service_id) {
+          console.log('Looking for service with ID:', service_id);
+          
+          // Try to fetch from database first
+          const response = await DatabaseService.listDocuments(
+            COLLECTIONS.SERVICES,
+            [Query.equal('service_id', service_id)],
+            1
+          );
+          
+          console.log('Service lookup response:', response);
+          
+          if (response.documents && response.documents.length > 0) {
+            console.log('Found service in database:', response.documents[0]);
+            setServiceData({
+              duration: response.documents[0].duration,
+              fee: response.documents[0].fee
+            });
+          } else {
+            // Use local fallback if not found in DB
+            console.log(`Service not found in DB. Using local fallback for service_id: ${service_id}`);
+            setServiceData(serviceDetails[service_id]);
+            
+            // Additional debug if not found in local data either
+            if (!serviceDetails[service_id]) {
+              console.log(`WARNING: Service ${service_id} not found in local data either.`);
+              console.log('Available service_ids in local data:', Object.keys(serviceDetails));
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching service details:', err);
+        // Still use local fallback on error
+        setServiceData(serviceDetails[service_id]);
+      }
+    };
 
     const checkProfileBeforeBooking = async () => {
       try {
@@ -102,34 +153,26 @@ const AppointmentBooking = () => {
     };
     
     checkProfileBeforeBooking();
+    getServiceData(); // Fetch the service data
 
     const fetchDoctors = async () => {
       try {
-        // First try to initialize doctors to ensure they exist
-        await initializeDoctors();
-
         console.log('Fetching doctors for branchId:', branchId);
         
-        // DEBUGGING: Log all doctors first to check what exists
-        const allDoctors = await DatabaseService.listDocuments(COLLECTIONS.DOCTORS, [], 100);
-        console.log('All available doctors:', allDoctors.documents);
+        // Use the helper function from constants
+        const doctorsForBranch = await getDoctorsForBranch(branchId);
         
-        // Create a query to filter doctors by branch - note we are converting branchId to string
-        // since URL parameters may come as string but database may store them differently
-        const queries = [
-          DatabaseService.createQuery('equal', 'branchId', String(branchId))
-        ];
-        
-        // Execute the filtered query
-        const response = await DatabaseService.listDocuments(COLLECTIONS.DOCTORS, queries, 100);
-        console.log('Doctors filtered by branchId:', response.documents);
-        
-        // If using the DoctorsData from constants as a fallback
-        if (response.documents.length === 0) {
-          console.log('No doctors found in database, checking constants data');
-          // Filter DoctorsData manually (import this from constants)
+        if (doctorsForBranch && doctorsForBranch.length > 0) {
+          console.log(`Found ${doctorsForBranch.length} doctors for branch ${branchId}`);
+          setDoctors(doctorsForBranch);
+        } else {
+          console.log('No doctors found for this branch in the database. Using local fallback.');
+          
+          // Import DoctorsData from constants
           const { DoctorsData } = require('../../constants');
-          const filteredDoctors = DoctorsData.filter(doc => doc.branchId === String(branchId));
+          
+          // Filter doctors by branchId
+          const filteredDoctors = DoctorsData.filter(doc => doc.branchId === branchId);
           
           if (filteredDoctors.length > 0) {
             // Add $id field to match database format
@@ -137,14 +180,13 @@ const AppointmentBooking = () => {
               ...doc,
               $id: `temp_${index}`
             }));
-            console.log('Using constant data doctors:', formattedDoctors);
+            
+            console.log(`Using ${formattedDoctors.length} doctors from local data.`);
             setDoctors(formattedDoctors);
           } else {
-            console.log('No doctors found in constants data either');
+            console.log('No doctors found in local data either.');
             setDoctors([]);
           }
-        } else {
-          setDoctors(response.documents);
         }
       } catch (err) {
         console.error('Error fetching doctors:', err);
@@ -155,7 +197,7 @@ const AppointmentBooking = () => {
       }
     };
     fetchDoctors();
-  }, [branchId]);
+  }, [branchId, service_id]);
 
   const formatDate = (date) => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -189,10 +231,9 @@ const AppointmentBooking = () => {
         doctor_id: selectedDoctor.$id,
         doctor_name: selectedDoctor.name,
         service_name: serviceName,
-        // These fields are missing or null in your database
-        branch_id: branchId, // Make sure this matches your schema naming
+        branch_id: branchId,
         branch_name: branchName,
-        service_id: service_id, // Make sure this is available
+        service_id: service_id,
         date: formattedDate,
         time_slot: selectedTimeSlot,
         status: 'Booked',
@@ -268,14 +309,20 @@ const AppointmentBooking = () => {
         <View style={styles.serviceInfo}>
           <Text style={styles.serviceName}>{serviceName}</Text>
           
-          {serviceDetails[service_id] && (
+          {/* Enhanced service details rendering with proper debug information */}
+          {serviceData ? (
             <>
               <Text style={styles.sectionTitle}>DURATION</Text>
-              <Text style={styles.detailText}>{serviceDetails[service_id].duration}</Text>
+              <Text style={styles.detailText}>{serviceData.duration}</Text>
               
               <Text style={styles.sectionTitle}>BOOKING FEE</Text>
-              <Text style={styles.detailText}>{serviceDetails[service_id].fee}</Text>
+              <Text style={styles.detailText}>{serviceData.fee}</Text>
             </>
+          ) : (
+            <View style={styles.serviceDetailsMissing}>
+              <Text style={styles.errorText}>Service details not found for ID: {service_id}</Text>
+              <Text style={styles.debugText}>Note: Check that service_id is correctly passed from the previous screen</Text>
+            </View>
           )}
         </View>
 
@@ -339,7 +386,7 @@ const AppointmentBooking = () => {
                 ]}
                 onPress={() => setSelectedDoctor(doctor)}
               >
-                {doctorImages[doctor.image] ? (
+                {doctorImages && doctorImages[doctor.image] ? (
                   <Image 
                     source={doctorImages[doctor.image]} 
                     style={styles.doctorImage} 
@@ -430,6 +477,7 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: 14,
     marginBottom: 5,
+    color: '#ff6b6b',
   },
   debugText: {
     fontSize: 14,
@@ -465,6 +513,14 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 10,
+  },
+  serviceDetailsMissing: {
+    padding: 10,
+    backgroundColor: '#fff9f9',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ffdddd',
+    marginTop: 10,
   },
   sectionTitle: {
     fontSize: 14,

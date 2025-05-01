@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { DatabaseService } from '../../configs/AppwriteConfig';
-import { BranchesData, ServicesData, initializeServices, COLLECTIONS } from '../../constants';
+import { BranchesData, ServicesData, initializeServices, clinicsImages, COLLECTIONS } from '../../constants';
 import PageHeader from '../../components/PageHeader';
 
 const BranchDetails = () => {
@@ -104,18 +104,23 @@ const BranchDetails = () => {
     );
   }
 
+  function getClinicImage(imagePath) {
+    return clinicsImages[imagePath] || clinicsImages['polyclinic-fajar'];
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <PageHeader onPress={() => router.back()} />
       
       <ScrollView>
         <View style={styles.header}>
-          <Image 
-            source={require('../../assets/images/polyclinic-logo.png')} 
-            style={styles.logo} 
-          />
+        <Image 
+        source={getClinicImage(branchDetails?.imagePath)} 
+        style={styles.logo} 
+        resizeMode="contain"
+        />
           <Text style={styles.title}>PolyClinic</Text>
-          <Text style={styles.branchName}>{branchName} Branch</Text>
+          <Text style={styles.branchName}>{branchName} </Text>
         </View>
 
         {branchDetails && (
@@ -175,10 +180,13 @@ const styles = StyleSheet.create({
     marginVertical: 20,
   },
   logo: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#5cbeff',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#f0f0f0',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    overflow: 'hidden',
   },
   title: {
     fontSize: 24,

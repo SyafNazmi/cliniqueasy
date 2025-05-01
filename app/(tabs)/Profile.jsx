@@ -42,11 +42,21 @@ export default function Profile() {
               100
             );
             
+            console.log('Appointments loaded:', appointmentsResponse.documents.length);
+            
             // Sort by date, most recent first
             const sortedAppointments = appointmentsResponse.documents.sort((a, b) => {
-              const dateA = new Date(a.date.split(', ')[1]);
-              const dateB = new Date(b.date.split(', ')[1]);
-              return dateB - dateA;
+              // Only sort if both have valid dates
+              if (!a.date || !b.date) return 0;
+              
+              try {
+                const dateA = new Date(a.date.split(', ')[1]);
+                const dateB = new Date(b.date.split(', ')[1]);
+                return dateB - dateA;
+              } catch (error) {
+                console.error('Error sorting appointments:', error);
+                return 0;
+              }
             });
             
             setAppointments(sortedAppointments);
@@ -140,28 +150,50 @@ export default function Profile() {
     return Math.round((requiredCompletion + optionalCompletion) * 100);
   };
   
-  // Check if a date is in the past
+  // Check if a date is in the past - Fixed version
   const isDatePast = (dateString) => {
-    const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
-    if (!parts) return false;
+    if (!dateString) return false;
     
-    const months = {
-      'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-      'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-    };
-    
-    const appointmentDate = new Date(
-      parseInt(parts[4]), // year
-      months[parts[3]], // month
-      parseInt(parts[2]) // day
-    );
-    
-    return appointmentDate < new Date();
+    try {
+      const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
+      if (!parts) return false;
+      
+      const months = {
+        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+      };
+      
+      const appointmentDate = new Date(
+        parseInt(parts[4]), // year
+        months[parts[3]], // month
+        parseInt(parts[2]) // day
+      );
+      
+      // Set the time to end of day to ensure current day appointments show up
+      appointmentDate.setHours(23, 59, 59, 999);
+      
+      const today = new Date();
+      
+      return appointmentDate < today;
+    } catch (error) {
+      console.error('Error parsing date:', dateString, error);
+      return false;
+    }
   };
   
-  // Filter appointments
-  const upcomingAppointments = appointments.filter(app => !isDatePast(app.date));
+  // Filter appointments - with debug logging
+  console.log('Total appointments:', appointments.length);
+  
+  const upcomingAppointments = appointments.filter(app => {
+    const isPast = isDatePast(app.date);
+    // console.log(`Appointment ${app.$id} (${app.date}): isPast = ${isPast}`);
+    return !isPast;
+  });
+  
   const pastAppointments = appointments.filter(app => isDatePast(app.date));
+  
+  // console.log('Upcoming appointments:', upcomingAppointments.length);
+  // console.log('Past appointments:', pastAppointments.length);
   
   return (
     <ScrollView style={styles.container}>
@@ -326,15 +358,19 @@ export default function Profile() {
                     <Text style={styles.appointmentValue}>{appointment.time_slot}</Text>
                   </View>
                   
-                  <View style={styles.qrContainer}>
-                    <QRCode
-                      value={`APPT:${appointment.$id}`}
-                      size={120}
-                      color="#000000"
-                      backgroundColor="#FFFFFF"
-                    />
-                    <Text style={styles.qrText}>Scan this code at the clinic</Text>
-                  </View>
+                  {/* QR Code section - make sure this renders */}
+                  {appointment.$id && (
+                    <View style={styles.qrContainer}>
+                      <QRCode
+                        value={`APPT:${appointment.$id}`}
+                        size={120}
+                        color="#000000"
+                        backgroundColor="#FFFFFF"
+                        logoBackgroundColor="#FFFFFF"
+                      />
+                      <Text style={styles.qrText}>Scan this code at the clinic</Text>
+                    </View>
+                  )}
                 </View>
               ))
             ) : (
@@ -429,6 +465,7 @@ export default function Profile() {
     </ScrollView>
   )
 }
+
 
 const styles = StyleSheet.create({
   container: {

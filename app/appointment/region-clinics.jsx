@@ -14,54 +14,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { DatabaseService } from '../../configs/AppwriteConfig';
 import PageHeader from '../../components/PageHeader';
 import { Ionicons } from '@expo/vector-icons';
-
-// Hardcoded branch data
-const HARDCODED_BRANCHES = [
-  {
-    branch_id: "1",
-    region_id: "tawau",
-    name: "Tawau Branch",
-    address: "123 Jalan Tawau, Tawau, Sabah",
-    latitude: 4.244,
-    longitude: 117.891,
-    phone: "+60 89-123456",
-    operatingHours: "8:00 AM - 5:00 PM (Mon-Fri), 9:00 AM - 1:00 PM (Sat)",
-    openingTime: "08:00 AM",
-    closingTime: "05:00 PM",
-    imagePath: "tawau-clinic"
-  },
-  {
-    branch_id: "2",
-    region_id: "semporna",
-    name: "Semporna Branch",
-    address: "45 Jalan Semporna, Semporna, Sabah",
-    latitude: 4.485,
-    longitude: 118.609,
-    phone: "+60 89-654321",
-    operatingHours: "8:00 AM - 5:00 PM (Mon-Fri), 9:00 AM - 1:00 PM (Sat)",
-    openingTime: "08:00 AM",
-    closingTime: "05:00 PM",
-    imagePath: "semporna-clinic"
-  },
-  {
-    branch_id: "3",
-    region_id: "kota_kinabalu",
-    name: "Kota Kinabalu Branch",
-    address: "78 Jalan KK Central, Kota Kinabalu, Sabah",
-    latitude: 5.980,
-    longitude: 116.073,
-    phone: "+60 88-998877",
-    operatingHours: "8:00 AM - 6:00 PM (Mon-Fri), 9:00 AM - 3:00 PM (Sat-Sun)",
-    openingTime: "08:00 AM",
-    closingTime: "06:00 PM",
-    imagePath: "kk-clinic"
-  }
-];
-
-// Collection IDs
-const COLLECTIONS = {
-  BRANCHES: '67f68c760039e7d1a61d'
-};
+import { COLLECTIONS, BranchesData, clinicsImages, fetchBranchesByRegion } from '../../constants/index';
 
 const RegionClinics = () => {
   const router = useRouter();
@@ -75,20 +28,17 @@ const RegionClinics = () => {
       try {
         console.log("Loading clinics for region:", regionId);
         
-        // First set the filtered hardcoded data to ensure we have something to display
-        const filteredHardcodedClinics = HARDCODED_BRANCHES.filter(
+        // First set the filtered data from constants to ensure we have something to display
+        const filteredBranchesFromConstants = BranchesData.filter(
           branch => branch.region_id === regionId
         );
-        console.log("Filtered hardcoded clinics:", filteredHardcodedClinics);
-        setClinics(filteredHardcodedClinics);
+        console.log("Filtered clinics from constants:", filteredBranchesFromConstants);
+        setClinics(filteredBranchesFromConstants);
         
         // Try to fetch branches from the database, filtered by region_id
         try {
-          const response = await DatabaseService.listDocuments(
-            COLLECTIONS.BRANCHES,
-            [DatabaseService.createQuery('equal', 'region_id', regionId)],
-            100
-          );
+          // Use the fetchBranchesByRegion function from constants
+          const response = await fetchBranchesByRegion(regionId);
           
           console.log("Database response:", response);
           
@@ -97,12 +47,12 @@ const RegionClinics = () => {
             setClinics(response.documents);
           } else {
             console.log("No clinics in database for this region");
-            // We're already using the hardcoded data, so no need to set it again
+            // We're already using the data from constants, so no need to set it again
             
             // Optionally, initialize branches in the database
             try {
               console.log("Attempting to initialize branches in database...");
-              for (const branch of filteredHardcodedClinics) {
+              for (const branch of filteredBranchesFromConstants) {
                 await DatabaseService.createDocument(COLLECTIONS.BRANCHES, branch);
                 console.log(`Created branch ${branch.name} in database`);
               }
@@ -196,13 +146,7 @@ const RegionClinics = () => {
 
 // Helper function to get clinic images
 function getClinicImage(imagePath) {
-  const images = {
-    'tawau-clinic': require('../../assets/images/polyclinic-fajar.jpg'),
-    'semporna-clinic': require('../../assets/images/polyclinic-semporna.jpeg'),
-    'kk-clinic': require('../../assets/images/polyclinic-kk.jpg')
-  };
-  
-  return images[imagePath] || require('../../assets/images/polyclinic-logo.png');
+  return clinicsImages[imagePath] || require('../../assets/images/polyclinic-logo.png');
 }
 
 const styles = StyleSheet.create({
