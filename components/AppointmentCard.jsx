@@ -49,17 +49,51 @@ export default function AppointmentCard({ appointment }) {
   
   const { dayName, day, month } = extractDayMonth(appointment.date);
   
+  // Enhanced function to get doctor image based on name
   const getImageSource = () => {
-    if (appointment.doctor_name) {
-      if (appointment.doctor_name === "John Green") {
-        return doctorImages["doctor1.png"];
-      } else if (appointment.doctor_name === "Leila Cameron") {
-        return doctorImages["doctor2.png"];
-      } else if (appointment.doctor_name === "David Livingston") {
-        return doctorImages["doctor3.png"];
+    const doctorName = appointment.doctor_name;
+    
+    if (!doctorName) {
+      return require('../assets/images/doctor1.png'); // Default image
+    }
+    
+    // Complete mapping of doctor names to image keys
+    const doctorImageMap = {
+      // Original mappings
+      "John Green": "doctor1.png",
+      "Leila Cameron": "doctor2.png",
+      "David Livingston": "doctor3.png",
+      // Additional mappings for all doctors
+      "Jessica Tan": "doctor-jessica.png",
+      "Michael Wong": "doctor-wong.png",
+      "Sarah Johnson": "doctor-sarah.png",
+      "Robert Chen": "doctor-chen.png", 
+      "Emma Lee": "doctor-emma.png",
+      "Ahmad Razak": "doctor-ahmad.png"
+    };
+    
+    // Get the image key for this doctor
+    const imageKey = doctorImageMap[doctorName];
+    
+    // If we have a mapping and the image exists in doctorImages
+    if (imageKey && doctorImages[imageKey]) {
+      // console.log(`Found image for ${doctorName}: ${imageKey}`);
+      return doctorImages[imageKey];
+    }
+    
+    // Fallback approach - try to find a matching image by doctor's first or last name
+    const lowerName = doctorName.toLowerCase();
+    for (const [key, image] of Object.entries(doctorImages)) {
+      // Check if image key contains part of the doctor's name
+      if (key.toLowerCase().includes(lowerName.split(' ')[0]) || 
+          key.toLowerCase().includes(lowerName.split(' ')[1])) {
+        console.log(`Found image by name matching for ${doctorName}: ${key}`);
+        return image;
       }
     }
-    // Fallback to default image
+    
+    // Final fallback - debug the missing image
+    console.log(`No image found for ${doctorName}, using default`);
     return require('../assets/images/doctor1.png');
   };
   
@@ -94,6 +128,7 @@ export default function AppointmentCard({ appointment }) {
           <Image 
             source={getImageSource()} 
             style={styles.doctorImage} 
+            defaultSource={require('../assets/images/doctor1.png')}
           />
           <View style={styles.doctorInfo}>
             <Text style={styles.doctorName}>
