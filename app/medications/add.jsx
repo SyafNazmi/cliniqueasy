@@ -1,12 +1,14 @@
-import { View, Text, ScrollView, TextInput, TouchableOpacity, Switch, StyleSheet, Platform, Dimensions, Alert } from 'react-native'
+// app/medications/add.jsx
+import { View, Text, ScrollView, TextInput, TouchableOpacity, Switch, StyleSheet, Platform, Dimensions, Alert, Modal, ActivityIndicator } from 'react-native'
 import React, { useState } from 'react'
 import { LinearGradient } from 'expo-linear-gradient'
 import PageHeader from '../../components/PageHeader'
 import { Ionicons } from '@expo/vector-icons'
 import DateTimePicker from '@react-native-community/datetimepicker'
-import { router } from 'expo-router'
+import { router, useLocalSearchParams } from 'expo-router'
 import { addMedication } from '../../service/Storage'
 import { scheduleMedicationReminder } from '../../service/Notification'
+import { processPrescriptionQR } from '../../service/PrescriptionScanner'
 
 const {width} = Dimensions.get("window");
 
@@ -149,34 +151,156 @@ const DURATIONS = [
     { id: 4, label: "90 days", value: 90},
     { id: 5, label: "On going", value: -1},
 ];
+
 export default function AddMedicationScreen() {
+    // State for simulated QR scanner
+    const [showQRModal, setShowQRModal] = useState(true); // Start with QR scanner open
+    const [qrInput, setQRInput] = useState('');
+    const [loading, setLoading] = useState(false);
+    
+    // Get params from router if coming from elsewhere
+    const params = useLocalSearchParams();
 
     const [form, setForm] = useState({
-        name: "",
-        type: "",
-        illnessType: "",
-        dosage: "",
-        frequencies: "",
-        duration: "",
-        startDate: new Date(),
-        times: ["09:00"],
-        notes: "",
-        reminderEnabled: true,
-        refillReminder: false,
-        currentSupply: "",
-        refillAt: "",
-      });
+        name: params?.name || "",
+        type: params?.type || "",
+        illnessType: params?.illnessType || "",
+        dosage: params?.dosage || "",
+        frequencies: params?.frequencies || "",
+        duration: params?.duration || "",
+        startDate: params?.startDate ? new Date(params.startDate) : new Date(),
+        times: params?.times ? JSON.parse(params.times) : ["09:00"],
+        notes: params?.notes || "",
+        reminderEnabled: params?.reminderEnabled !== "false",
+        refillReminder: params?.refillReminder === "true",
+        currentSupply: params?.currentSupply || "",
+        refillAt: params?.refillAt || "",
+    });
 
     const [errors, setErrors] = useState({});
-    const [selectedType, setSelectedType] = useState(""); // Added for medication type
-    const [selectedIllnessType, setSelectedIllnessType] = useState("");
+    const [selectedType, setSelectedType] = useState(params?.type || "");
+    const [selectedIllnessType, setSelectedIllnessType] = useState(params?.illnessType || "");
     const [showIllnessDropdown, setShowIllnessDropdown] = useState(false);
-    const [selectedFrequency, setSelectedFrequency] = useState("");
-    const [selectedDuration, setSelectedDuration] = useState("");
+    const [selectedFrequency, setSelectedFrequency] = useState(params?.frequencies || "");
+    const [selectedDuration, setSelectedDuration] = useState(params?.duration || "");
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [currentTimeIndex, setCurrentTimeIndex] = useState(0); // Added to track which time is being edited
+    const [currentTimeIndex, setCurrentTimeIndex] = useState(0);
+
+    // Simulated QR scan handler
+    const handleQRSubmit = async () => {
+        if (!qrInput.trim()) {
+            Alert.alert('Error', 'Please enter a valid QR code');
+            return;
+        }
+        
+        try {
+            setLoading(true);
+            
+            // Process the QR code using our service
+            const prescriptionMeds = await processPrescriptionQR(qrInput);
+            
+            if (prescriptionMeds && prescriptionMeds.length > 0) {
+                // Use the first medication from the list
+                const medication = prescriptionMeds[0];
+                
+                // Update form with medication data
+                setForm({
+                    name: medication.name || "",
+                    type: medication.type || "",
+                    illnessType: medication.illnessType || "",
+                    dosage: medication.dosage || "",
+                    frequencies: medication.frequencies || "",
+                    duration: medication.duration || "",
+                    startDate: new Date(),
+                    times: medication.times || ["09:00"],
+                    notes: medication.notes || "",
+                    reminderEnabled: true,
+                    refillReminder: false,
+                    currentSupply: medication.currentSupply || "",
+                    refillAt: medication.refillAt || "",
+                });
+                
+                // Update selected values for UI
+                setSelectedType(medication.type || "");
+                setSelectedIllnessType(medication.illnessType || "");
+                setSelectedFrequency(medication.frequencies || "");
+                setSelectedDuration(medication.duration || "");
+                
+                // Close modal
+                setShowQRModal(false);
+            } else {
+                throw new Error("No medications found in prescription");
+            }
+        } catch (error) {
+            console.error('QR scan error:', error);
+            Alert.alert(
+                "Error",
+                "Unable to process prescription data. Please try manual entry.",
+                [{ text: "OK", onPress: () => setShowQRModal(false) }]
+            );
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Simulated "quick scan" for demo purposes
+    const handleQuickScan = async (demoType) => {
+        try {
+            setLoading(true);
+            
+            // Create the proper demo QR code format
+            // Format should be: "DEMO:{demoType}:{referenceCode}"
+            const demoQR = `DEMO:${demoType}:APT12345`;
+            console.log('Using demo QR code:', demoQR);
+            
+            // Process the QR code using our service
+            const prescriptionMeds = await processPrescriptionQR(demoQR);
+            
+            if (prescriptionMeds && prescriptionMeds.length > 0) {
+                // Use the first medication from the list
+                const medication = prescriptionMeds[0];
+                
+                // Update form with medication data
+                setForm({
+                    name: medication.name || "",
+                    type: medication.type || "",
+                    illnessType: medication.illnessType || "",
+                    dosage: medication.dosage || "",
+                    frequencies: medication.frequencies || "",
+                    duration: medication.duration || "",
+                    startDate: new Date(),
+                    times: medication.times || ["09:00"],
+                    notes: medication.notes || "",
+                    reminderEnabled: true,
+                    refillReminder: false,
+                    currentSupply: medication.currentSupply || "",
+                    refillAt: medication.refillAt || "",
+                });
+                
+                // Update selected values for UI
+                setSelectedType(medication.type || "");
+                setSelectedIllnessType(medication.illnessType || "");
+                setSelectedFrequency(medication.frequencies || "");
+                setSelectedDuration(medication.duration || "");
+                
+                // Close modal
+                setShowQRModal(false);
+            } else {
+                throw new Error("No medications found in prescription");
+            }
+        } catch (error) {
+            console.error('Quick scan error:', error);
+            Alert.alert(
+                "Error",
+                "Demo scan failed. Please try manual entry.",
+                [{ text: "OK", onPress: () => setShowQRModal(false) }]
+            );
+        } finally {
+            setLoading(false);
+        }
+    };
 
     // Render medication type options
     const renderMedicationTypes = () => {
@@ -450,6 +574,113 @@ export default function AddMedicationScreen() {
         end={{ x: 1, y: 1 }}
         style={styles.headerGradient}
       />
+      
+      {/* QR Code Scanner Modal */}
+      <Modal
+        visible={showQRModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowQRModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Scan Prescription QR</Text>
+              <TouchableOpacity
+                onPress={() => setShowQRModal(false)}
+                style={styles.closeButton}
+              >
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+            
+            {loading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#1a8e2d" />
+                <Text style={styles.loadingText}>Processing prescription...</Text>
+              </View>
+            ) : (
+              <View style={styles.qrContent}>
+                <View style={styles.qrImageContainer}>
+                  <View style={styles.fakeScannerView}>
+                    <Ionicons name="qr-code" size={100} color="#ccc" />
+                    <View style={styles.scanLine} />
+                  </View>
+                </View>
+                
+                <Text style={styles.enterManuallyText}>Enter QR Code manually:</Text>
+                <TextInput
+                  style={styles.qrInput}
+                  placeholder="APPT:12345:APT12345"
+                  value={qrInput}
+                  onChangeText={setQRInput}
+                  placeholderTextColor="#999"
+                />
+                
+                <TouchableOpacity 
+                  style={styles.scanButton}
+                  onPress={handleQRSubmit}
+                >
+                  <LinearGradient
+                    colors={["#1a8e2d", "#146922"]}
+                    style={styles.scanButtonGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  >
+                    <Text style={styles.scanButtonText}>Submit QR Code</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+                
+                <View style={styles.divider}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>OR</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+                
+                <View style={styles.demoButtonsContainer}>
+                  <TouchableOpacity 
+                    style={styles.demoButton}
+                    onPress={() => handleQuickScan('blood_pressure')}
+
+                  >
+                    <Text style={styles.demoButtonText}>Demo: Blood Pressure Medication</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={styles.demoButton}
+                    onPress={() => handleQuickScan('diabetes')}
+                  >
+                    <Text style={styles.demoButtonText}>Demo: Diabetes Medication</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.demoButton}
+                    onPress={() => handleQuickScan('infection')}
+                  >
+                    <Text style={styles.demoButtonText}>Demo: Infection Medication</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.demoButton}
+                    onPress={() => handleQuickScan('cholesterol')}
+                  >
+                    <Text style={styles.demoButtonText}>Demo: Cholesterol Medication</Text>
+                  </TouchableOpacity>
+                </View>
+                
+                <TouchableOpacity 
+                  style={styles.skipButton}
+                  onPress={() => setShowQRModal(false)}
+                >
+                  <Text style={styles.skipButtonText}>Skip & Add Manually</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+      
+      {/* Regular Form */}
       <View style={styles.content}>
         <View style={styles.header}>
             <PageHeader onPress={() => router.back()}/>
@@ -458,6 +689,15 @@ export default function AddMedicationScreen() {
         
         <ScrollView showsVerticalScrollIndicator={false} style={{flex: 1}}
          contentContainerStyle={styles.formContentContainer}>
+            {/* Option to open QR scanner again */}
+            <TouchableOpacity 
+              style={styles.scanPrescriptionButton}
+              onPress={() => setShowQRModal(true)}
+            >
+              <Ionicons name="qr-code" size={24} color="#1a8e2d" />
+              <Text style={styles.scanPrescriptionText}>Scan Prescription QR</Text>
+            </TouchableOpacity>
+            
             <View style={styles.section}>
                 {/* basic informations */}
                 <View style={styles.inputContainer}>
@@ -613,7 +853,6 @@ export default function AddMedicationScreen() {
                 </View>
                 </View>
             </View>
-            {/* Refill Tracker */}
             {/* Notes */}
             <View style={styles.section}>
                 <View style={styles.textAreaContainer}>
@@ -651,7 +890,7 @@ export default function AddMedicationScreen() {
         </View>
       </View>
     </View>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
@@ -769,53 +1008,53 @@ const styles = StyleSheet.create({
     },
     // Illness Type
     dropdownButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: '#f5f5f5',
-        borderRadius: 10,
-        padding: 12,
-        borderWidth: 1,
-        borderColor: '#e5e5e5',
-        marginBottom: 5,
-      },
-      dropdownText: {
-        fontSize: 16,
-        color: '#333',
-      },
-      dropdownPlaceholder: {
-        fontSize: 16,
-        color: '#999',
-      },
-      dropdownMenu: {
-        backgroundColor: 'white',
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: '#e5e5e5',
-        marginBottom: 15,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
-        zIndex: 10,
-      },
-      dropdownItem: {
-        padding: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-      },
-      selectedDropdownItem: {
-        backgroundColor: '#e6f7e9',
-      },
-      dropdownItemText: {
-        fontSize: 16,
-        color: '#333',
-      },
-      selectedDropdownItemText: {
-        color: '#1a8e2d',
-        fontWeight: 'bold',
-      },
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: '#f5f5f5',
+      borderRadius: 10,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
+      marginBottom: 5,
+    },
+    dropdownText: {
+      fontSize: 16,
+      color: '#333',
+    },
+    dropdownPlaceholder: {
+      fontSize: 16,
+      color: '#999',
+    },
+    dropdownMenu: {
+      backgroundColor: 'white',
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
+      marginBottom: 15,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
+      zIndex: 10,
+    },
+    dropdownItem: {
+      padding: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: '#f0f0f0',
+    },
+    selectedDropdownItem: {
+      backgroundColor: '#e6f7e9',
+    },
+    dropdownItemText: {
+      fontSize: 16,
+      color: '#333',
+    },
+    selectedDropdownItemText: {
+      color: '#1a8e2d',
+      fontWeight: 'bold',
+    },
     dateButton: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -950,5 +1189,160 @@ const styles = StyleSheet.create({
     cancelButtonText: {
       color: '#666',
       fontSize: 16,
+    },
+    // QR Scanner Modal Styles
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    modalContainer: {
+      width: '90%',
+      maxHeight: '80%',
+      backgroundColor: 'white',
+      borderRadius: 15,
+      overflow: 'hidden',
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 15,
+      borderBottomWidth: 1,
+      borderBottomColor: '#e5e5e5',
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: '#333',
+    },
+    closeButton: {
+      padding: 5,
+    },
+    qrContent: {
+      padding: 20,
+      alignItems: 'center',
+    },
+    qrImageContainer: {
+      width: 200,
+      height: 200,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 20,
+      borderWidth: 2,
+      borderColor: '#e5e5e5',
+      borderRadius: 10,
+      overflow: 'hidden',
+    },
+    fakeScannerView: {
+      width: '100%',
+      height: '100%',
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: '#f5f5f5',
+    },
+    scanLine: {
+      position: 'absolute',
+      height: 2,
+      width: '100%',
+      backgroundColor: '#1a8e2d',
+      opacity: 0.7,
+    },
+    enterManuallyText: {
+      fontSize: 16,
+      fontWeight: '600',
+      marginBottom: 10,
+      color: '#333',
+    },
+    qrInput: {
+      width: '100%',
+      backgroundColor: '#f5f5f5',
+      borderRadius: 10,
+      padding: 12,
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
+      marginBottom: 15,
+    },
+    scanButton: {
+      width: '100%',
+      borderRadius: 10,
+      overflow: 'hidden',
+      marginBottom: 20,
+    },
+    scanButtonGradient: {
+      paddingVertical: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    scanButtonText: {
+      color: 'white',
+      fontSize: 16,
+      fontWeight: 'bold',
+    },
+    divider: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      width: '100%',
+      marginVertical: 15,
+    },
+    dividerLine: {
+      flex: 1,
+      height: 1,
+      backgroundColor: '#e5e5e5',
+    },
+    dividerText: {
+      marginHorizontal: 10,
+      color: '#999',
+      fontWeight: '500',
+    },
+    demoButtonsContainer: {
+      width: '100%',
+      marginBottom: 15,
+    },
+    demoButton: {
+      backgroundColor: '#f0f0f0',
+      padding: 12,
+      borderRadius: 10,
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    demoButtonText: {
+      color: '#333',
+      fontWeight: '500',
+    },
+    skipButton: {
+      padding: 12,
+    },
+    skipButtonText: {
+      color: '#666',
+      fontWeight: '500',
+    },
+    loadingContainer: {
+      padding: 40,
+      alignItems: 'center',
+    },
+    loadingText: {
+      marginTop: 15,
+      fontSize: 16,
+      color: '#333',
+    },
+    scanPrescriptionButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#e6f7e9',
+      borderRadius: 10,
+      padding: 15,
+      marginBottom: 20,
+      borderWidth: 1,
+      borderColor: '#1a8e2d20',
+      justifyContent: 'center',
+    },
+    scanPrescriptionText: {
+      color: '#1a8e2d',
+      fontWeight: 'bold',
+      fontSize: 16,
+      marginLeft: 10,
     },
   });
