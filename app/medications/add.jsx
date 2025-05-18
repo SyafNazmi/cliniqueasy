@@ -6,9 +6,9 @@ import PageHeader from '../../components/PageHeader'
 import { Ionicons } from '@expo/vector-icons'
 import DateTimePicker from '@react-native-community/datetimepicker'
 import { router, useLocalSearchParams } from 'expo-router'
+import QRScannerModal from '../../components/QRScannerModal';
 import { addMedication } from '../../service/Storage'
 import { scheduleMedicationReminder } from '../../service/Notification'
-import { processPrescriptionQR } from '../../service/PrescriptionScanner'
 
 const {width} = Dimensions.get("window");
 
@@ -155,8 +155,6 @@ const DURATIONS = [
 export default function AddMedicationScreen() {
     // State for simulated QR scanner
     const [showQRModal, setShowQRModal] = useState(true); // Start with QR scanner open
-    const [qrInput, setQRInput] = useState('');
-    const [loading, setLoading] = useState(false);
     
     // Get params from router if coming from elsewhere
     const params = useLocalSearchParams();
@@ -188,118 +186,35 @@ export default function AddMedicationScreen() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [currentTimeIndex, setCurrentTimeIndex] = useState(0);
 
-    // Simulated QR scan handler
-    const handleQRSubmit = async () => {
-        if (!qrInput.trim()) {
-            Alert.alert('Error', 'Please enter a valid QR code');
-            return;
-        }
-        
-        try {
-            setLoading(true);
-            
-            // Process the QR code using our service
-            const prescriptionMeds = await processPrescriptionQR(qrInput);
-            
-            if (prescriptionMeds && prescriptionMeds.length > 0) {
-                // Use the first medication from the list
-                const medication = prescriptionMeds[0];
-                
-                // Update form with medication data
-                setForm({
-                    name: medication.name || "",
-                    type: medication.type || "",
-                    illnessType: medication.illnessType || "",
-                    dosage: medication.dosage || "",
-                    frequencies: medication.frequencies || "",
-                    duration: medication.duration || "",
-                    startDate: new Date(),
-                    times: medication.times || ["09:00"],
-                    notes: medication.notes || "",
-                    reminderEnabled: true,
-                    refillReminder: false,
-                    currentSupply: medication.currentSupply || "",
-                    refillAt: medication.refillAt || "",
-                });
-                
-                // Update selected values for UI
-                setSelectedType(medication.type || "");
-                setSelectedIllnessType(medication.illnessType || "");
-                setSelectedFrequency(medication.frequencies || "");
-                setSelectedDuration(medication.duration || "");
-                
-                // Close modal
-                setShowQRModal(false);
-            } else {
-                throw new Error("No medications found in prescription");
-            }
-        } catch (error) {
-            console.error('QR scan error:', error);
-            Alert.alert(
-                "Error",
-                "Unable to process prescription data. Please try manual entry.",
-                [{ text: "OK", onPress: () => setShowQRModal(false) }]
-            );
-        } finally {
-            setLoading(false);
-        }
-    };
 
-    // Simulated "quick scan" for demo purposes
-    const handleQuickScan = async (demoType) => {
-        try {
-            setLoading(true);
-            
-            // Create the proper demo QR code format
-            // Format should be: "DEMO:{demoType}:{referenceCode}"
-            const demoQR = `DEMO:${demoType}:APT12345`;
-            console.log('Using demo QR code:', demoQR);
-            
-            // Process the QR code using our service
-            const prescriptionMeds = await processPrescriptionQR(demoQR);
-            
-            if (prescriptionMeds && prescriptionMeds.length > 0) {
-                // Use the first medication from the list
-                const medication = prescriptionMeds[0];
-                
-                // Update form with medication data
-                setForm({
-                    name: medication.name || "",
-                    type: medication.type || "",
-                    illnessType: medication.illnessType || "",
-                    dosage: medication.dosage || "",
-                    frequencies: medication.frequencies || "",
-                    duration: medication.duration || "",
-                    startDate: new Date(),
-                    times: medication.times || ["09:00"],
-                    notes: medication.notes || "",
-                    reminderEnabled: true,
-                    refillReminder: false,
-                    currentSupply: medication.currentSupply || "",
-                    refillAt: medication.refillAt || "",
-                });
-                
-                // Update selected values for UI
-                setSelectedType(medication.type || "");
-                setSelectedIllnessType(medication.illnessType || "");
-                setSelectedFrequency(medication.frequencies || "");
-                setSelectedDuration(medication.duration || "");
-                
-                // Close modal
-                setShowQRModal(false);
-            } else {
-                throw new Error("No medications found in prescription");
-            }
-        } catch (error) {
-            console.error('Quick scan error:', error);
-            Alert.alert(
-                "Error",
-                "Demo scan failed. Please try manual entry.",
-                [{ text: "OK", onPress: () => setShowQRModal(false) }]
-            );
-        } finally {
-            setLoading(false);
-        }
+    // Handle successful scan
+    const handleScanSuccess = (medication) => {
+        console.log("Scan success with medication:", medication);
+        // Update form with medication data
+        setForm({
+            name: medication.name || "",
+            type: medication.type || "",
+            illnessType: medication.illnessType || "",
+            dosage: medication.dosage || "",
+            frequencies: medication.frequencies || "",
+            duration: medication.duration || "",
+            startDate: new Date(),
+            times: medication.times || ["09:00"],
+            notes: medication.notes || "",
+            reminderEnabled: true,
+            refillReminder: false,
+            currentSupply: medication.currentSupply || "",
+            refillAt: medication.refillAt || "",
+        });
+        
+        // Update selected values for UI
+        setSelectedType(medication.type || "");
+        setSelectedIllnessType(medication.illnessType || "");
+        setSelectedFrequency(medication.frequencies || "");
+        setSelectedDuration(medication.duration || "");
+        
+        // Close modal
+        setShowQRModal(false);
     };
 
     // Render medication type options
@@ -576,109 +491,11 @@ export default function AddMedicationScreen() {
       />
       
       {/* QR Code Scanner Modal */}
-      <Modal
-        visible={showQRModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowQRModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Scan Prescription QR</Text>
-              <TouchableOpacity
-                onPress={() => setShowQRModal(false)}
-                style={styles.closeButton}
-              >
-                <Ionicons name="close" size={24} color="#333" />
-              </TouchableOpacity>
-            </View>
-            
-            {loading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#1a8e2d" />
-                <Text style={styles.loadingText}>Processing prescription...</Text>
-              </View>
-            ) : (
-              <View style={styles.qrContent}>
-                <View style={styles.qrImageContainer}>
-                  <View style={styles.fakeScannerView}>
-                    <Ionicons name="qr-code" size={100} color="#ccc" />
-                    <View style={styles.scanLine} />
-                  </View>
-                </View>
-                
-                <Text style={styles.enterManuallyText}>Enter QR Code manually:</Text>
-                <TextInput
-                  style={styles.qrInput}
-                  placeholder="APPT:12345:APT12345"
-                  value={qrInput}
-                  onChangeText={setQRInput}
-                  placeholderTextColor="#999"
-                />
-                
-                <TouchableOpacity 
-                  style={styles.scanButton}
-                  onPress={handleQRSubmit}
-                >
-                  <LinearGradient
-                    colors={["#1a8e2d", "#146922"]}
-                    style={styles.scanButtonGradient}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                  >
-                    <Text style={styles.scanButtonText}>Submit QR Code</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-                
-                <View style={styles.divider}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>OR</Text>
-                  <View style={styles.dividerLine} />
-                </View>
-                
-                <View style={styles.demoButtonsContainer}>
-                  <TouchableOpacity 
-                    style={styles.demoButton}
-                    onPress={() => handleQuickScan('blood_pressure')}
-
-                  >
-                    <Text style={styles.demoButtonText}>Demo: Blood Pressure Medication</Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity 
-                    style={styles.demoButton}
-                    onPress={() => handleQuickScan('diabetes')}
-                  >
-                    <Text style={styles.demoButtonText}>Demo: Diabetes Medication</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={styles.demoButton}
-                    onPress={() => handleQuickScan('infection')}
-                  >
-                    <Text style={styles.demoButtonText}>Demo: Infection Medication</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={styles.demoButton}
-                    onPress={() => handleQuickScan('cholesterol')}
-                  >
-                    <Text style={styles.demoButtonText}>Demo: Cholesterol Medication</Text>
-                  </TouchableOpacity>
-                </View>
-                
-                <TouchableOpacity 
-                  style={styles.skipButton}
-                  onPress={() => setShowQRModal(false)}
-                >
-                  <Text style={styles.skipButtonText}>Skip & Add Manually</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        </View>
-      </Modal>
+        <QRScannerModal
+            visible={showQRModal}
+            onClose={() => setShowQRModal(false)}
+            onScanSuccess={handleScanSuccess}
+        />
       
       {/* Regular Form */}
       <View style={styles.content}>

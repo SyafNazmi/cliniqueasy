@@ -8,252 +8,229 @@
  */
 
 // service/PrescriptionScanner.js
-import { DatabaseService, Query, ID } from '../configs/AppwriteConfig';
+import { DatabaseService, Query } from '../configs/AppwriteConfig';
 
-// Collection IDs from your screenshots
+// Collection IDs
 const PRESCRIPTION_COLLECTION_ID = '6824b4cd000e65702ee3'; // Prescriptions collection
 const PRESCRIPTION_MEDICATIONS_COLLECTION_ID = '6824b57b0008686a86b3'; // Prescription medications
 const APPOINTMENTS_COLLECTION_ID = '67e0332c0001131d71ec'; // Appointments
 
 /**
- * Add a prescription for an appointment
- * @param {string} appointmentId - The ID of the appointment
- * @param {Array} medications - Array of medication objects
- * @param {string} doctorNotes - Optional notes from the doctor
- * @returns {Promise<boolean>}
+ * Process QR code data and extract prescription information
+ * @param {string} qrData - Data from the scanned QR code (format: APPT:appointmentId:referenceCode)
+ * @returns {Promise<Array>} - Array of medications from the prescription
  */
-export const addPrescription = async (appointmentId, medications, doctorNotes = '') => {
+export const processPrescriptionQR = async (qrData) => {
   try {
-    console.log("Adding prescription for appointment:", appointmentId);
+    console.log('Processing QR data:', qrData);
     
-    // 1. First create the prescription entry
-    const prescriptionData = {
-      appointment_id: appointmentId,
-      status: 'Active',
-      issued_date: new Date().toISOString().split('T')[0], // Today's date in YYYY-MM-DD
-      doctor_notes: doctorNotes || '',
-      reference_code: Math.random().toString(36).substring(2, 10) // Random reference code
-    };
-    
-    console.log("Creating prescription record:", prescriptionData);
-    
-    const prescription = await DatabaseService.createDocument(
-      PRESCRIPTION_COLLECTION_ID,
-      prescriptionData
-    );
-    
-    console.log("Prescription created with ID:", prescription.$id);
-    
-    // 2. Then add each medication linked to this prescription
-    const formattedMedications = medications.map(med => ({
-      ...med,
-      times: Array.isArray(med.times) ? med.times : [med.times || '09:00']
-    }));
-    
-    // Create an entry for each medication in the prescription medications collection
-    for (const medication of formattedMedications) {
-      // Make one final check to ensure times is an array of strings
-      const medWithValidTimes = {
-        ...medication,
-        times: Array.isArray(medication.times) 
-          ? medication.times.map(t => String(t)) 
-          : ['09:00']
-      };
-      
-      console.log("Adding medication to prescription:", medWithValidTimes.name);
-      
-      await DatabaseService.createDocument(
-        PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
-        {
-          prescription_id: prescription.$id, // Link to the prescription we just created
-          name: medWithValidTimes.name,
-          type: medWithValidTimes.type,
-          dosage: medWithValidTimes.dosage,
-          frequencies: medWithValidTimes.frequencies,
-          duration: medWithValidTimes.duration,
-          illness_type: medWithValidTimes.illnessType || '',
-          notes: medWithValidTimes.notes || '',
-          times: medWithValidTimes.times // This is now guaranteed to be an array
-        }
-      );
+    // Check if this is a demo code
+    if (qrData.startsWith('DEMO:')) {
+      return processDemoQR(qrData);
     }
     
-    // 3. Update the appointment to mark it as having a prescription
-    await DatabaseService.updateDocument(
-      APPOINTMENTS_COLLECTION_ID,
-      appointmentId,
-      {
-        has_prescription: true
+    // Regular appointment QR code (format: APPT:appointmentId:referenceCode)
+    const parts = qrData.split(':');
+    
+    if (parts.length < 2 || parts[0] !== 'APPT') {
+      throw new Error('Invalid QR code format. Expected: APPT:appointmentId:referenceCode');
+    }
+    
+    const appointmentId = parts[1];
+    const referenceCode = parts[2] || '';
+    
+    console.log(`Processing appointment ID: ${appointmentId}, Reference: ${referenceCode}`);
+    
+    // 1. First find the appointment
+    let appointment;
+    try {
+      appointment = await DatabaseService.getDocument(
+        APPOINTMENTS_COLLECTION_ID, 
+        appointmentId
+      );
+      console.log('Found appointment:', appointment.$id);
+    } catch (error) {
+      console.error('Appointment not found:', error.message);
+      // Continue anyway - maybe we have a prescription without valid appointment
+    }
+    
+    // 2. Find prescriptions for this appointment
+    let prescriptions;
+    try {
+      prescriptions = await DatabaseService.listDocuments(
+        PRESCRIPTION_COLLECTION_ID,
+        [Query.equal('appointment_id', appointmentId)]
+      );
+      
+      console.log(`Found ${prescriptions.total} prescriptions`);
+      
+      if (!prescriptions.documents || prescriptions.documents.length === 0) {
+        console.log('No prescriptions found, falling back to demo data');
+        return getDefaultMedication(appointmentId, referenceCode);
       }
-    );
+    } catch (error) {
+      console.error('Error fetching prescriptions:', error.message);
+      return getDefaultMedication(appointmentId, referenceCode);
+    }
     
-    console.log("All medications added successfully and appointment updated");
+    // 3. Get the most recent prescription
+    const prescription = prescriptions.documents[0];
     
-    return true;
+    // 4. Get medications for this prescription
+    try {
+      const medications = await DatabaseService.listDocuments(
+        PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+        [Query.equal('prescription_id', prescription.$id)]
+      );
+      
+      console.log(`Found ${medications.total} medications`);
+      
+      if (!medications.documents || medications.documents.length === 0) {
+        console.log('No medications found, falling back to demo data');
+        return getDefaultMedication(appointmentId, referenceCode);
+      }
+      
+      // 5. Format and return the medications
+      return medications.documents.map(med => ({
+        name: med.name || '',
+        type: med.type || '',
+        dosage: med.dosage || '',
+        frequencies: med.frequencies || '',
+        duration: med.duration || '',
+        illnessType: med.illness_type || '',
+        notes: med.notes || '',
+        times: parseTimesArray(med.times),
+        appointmentId,
+        referenceCode
+      }));
+    } catch (error) {
+      console.error('Error fetching medications:', error.message);
+      return getDefaultMedication(appointmentId, referenceCode);
+    }
   } catch (error) {
-    console.error('Error adding prescription:', error);
+    console.error('Error processing QR code:', error);
     throw error;
   }
 };
 
 /**
- * Get prescriptions for an appointment
- * @param {string} appointmentId - The ID of the appointment
- * @returns {Promise<Object>} - Prescription with medications
+ * Handle demo QR codes
+ * @param {string} qrData - Demo QR data (format: DEMO:type:referenceCode)
+ * @returns {Array} - Array of demo medications
  */
-export const getPrescriptions = async (appointmentId) => {
-  try {
-    // First get the prescription record
-    const prescriptionsResponse = await DatabaseService.listDocuments(
-      PRESCRIPTION_COLLECTION_ID,
-      [Query.equal('appointment_id', appointmentId)]
-    );
-    
-    if (!prescriptionsResponse.documents || prescriptionsResponse.documents.length === 0) {
-      return { prescription: null, medications: [] };
-    }
-    
-    const prescription = prescriptionsResponse.documents[0];
-    
-    // Then get the medications for this prescription
-    const medicationsResponse = await DatabaseService.listDocuments(
-      PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
-      [Query.equal('prescription_id', prescription.$id)]
-    );
-    
-    return {
-      prescription,
-      medications: medicationsResponse.documents || []
-    };
-  } catch (error) {
-    console.error('Error getting prescriptions:', error);
-    return { prescription: null, medications: [] };
+const processDemoQR = (qrData) => {
+  // Parse demo QR data (format: DEMO:demoType:referenceCode)
+  const [prefix, demoType, referenceCode] = qrData.split(':');
+  console.log('Demo scan detected:', { prefix, demoType, referenceCode });
+  
+  // Demo medications based on type
+  switch (demoType.toLowerCase()) {
+    case 'blood_pressure':
+      return [{
+        name: 'Amlodipine',
+        type: 'Tablet',
+        dosage: '10mg',
+        frequencies: 'Once Daily',
+        duration: '30 days',
+        illnessType: 'Blood Pressure',
+        notes: 'Take in the morning with food',
+        times: ['09:00'],
+        appointmentId: 'demo',
+        referenceCode
+      }];
+      
+    case 'diabetes':
+      return [{
+        name: 'Metformin',
+        type: 'Tablet',
+        dosage: '500mg',
+        frequencies: 'Twice Daily',
+        duration: '30 days',
+        illnessType: 'Diabetes',
+        notes: 'Take with meals to reduce stomach upset',
+        times: ['09:00', '18:00'],
+        appointmentId: 'demo',
+        referenceCode
+      }];
+      
+    case 'infection':
+      return [{
+        name: 'Amoxicillin',
+        type: 'Capsule',
+        dosage: '500mg',
+        frequencies: 'Three times Daily',
+        duration: '7 days',
+        illnessType: 'Infection',
+        notes: 'Complete the full course even if you feel better',
+        times: ['08:00', '14:00', '20:00'],
+        appointmentId: 'demo',
+        referenceCode
+      }];
+      
+    case 'cholesterol':
+      return [{
+        name: 'Atorvastatin',
+        type: 'Tablet',
+        dosage: '20mg',
+        frequencies: 'Once Daily',
+        duration: '90 days',
+        illnessType: 'Cholesterol',
+        notes: 'Take in the evening',
+        times: ['20:00'],
+        appointmentId: 'demo',
+        referenceCode
+      }];
+      
+    default:
+      // Default medication
+      return getDefaultMedication('demo', referenceCode);
   }
 };
 
 /**
- * Delete a specific prescription and its medications
- * @param {string} prescriptionId - The document ID of the prescription
- * @returns {Promise<boolean>}
- */
-export const deletePrescription = async (prescriptionId) => {
-  try {
-    // First delete all medications associated with this prescription
-    const medicationsResponse = await DatabaseService.listDocuments(
-      PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
-      [Query.equal('prescription_id', prescriptionId)]
-    );
-    
-    if (medicationsResponse.documents && medicationsResponse.documents.length > 0) {
-      for (const med of medicationsResponse.documents) {
-        await DatabaseService.deleteDocument(
-          PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
-          med.$id
-        );
-      }
-    }
-    
-    // Then delete the prescription itself
-    await DatabaseService.deleteDocument(
-      PRESCRIPTION_COLLECTION_ID,
-      prescriptionId
-    );
-    
-    return true;
-  } catch (error) {
-    console.error('Error deleting prescription:', error);
-    return false;
-  }
-};
-
-// Export constants for use elsewhere
-export const COLLECTIONS = {
-  PRESCRIPTIONS: PRESCRIPTION_COLLECTION_ID,
-  PRESCRIPTION_MEDICATIONS: PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
-  APPOINTMENTS: APPOINTMENTS_COLLECTION_ID
-};
-
-/**
- * Mock function to simulate fetching prescription data from a server
- * In a real app, this would be replaced with an actual API call
+ * Get a default medication if no prescription found
  * @param {string} appointmentId - The appointment ID
  * @param {string} referenceCode - The reference code
- * @param {string} demoType - Optional demo type to determine which medication to return
- * @returns {Promise<Array>} - Array of medication objects
+ * @returns {Array} - Array with one default medication
  */
-const simulateFetchPrescriptionData = (appointmentId, referenceCode, demoType = null) => {
-  // Simulate network delay
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      // Mock medications based on the prescription from the image
-      const medications = [
-        {
-          name: "Amlodipine",
-          type: "Tablet",
-          dosage: "10mg",
-          frequencies: "Once Daily",
-          illnessType: "Blood Pressure",
-          duration: "30 days",
-          appointmentId,
-          referenceCode,
-          times: ["09:00"],
-          notes: "Take in the morning"
-        },
-        {
-          name: "Simvastatin",
-          type: "Tablet", 
-          dosage: "20mg",
-          frequencies: "Once Daily",
-          illnessType: "Cholesterol",
-          duration: "30 days",
-          appointmentId,
-          referenceCode,
-          times: ["21:00"],
-          notes: "Take in the evening"
-        },
-        {
-          name: "Metformin",
-          type: "Tablet",
-          dosage: "1g",
-          frequencies: "Twice Daily",
-          illnessType: "Diabetes",
-          duration: "30 days",
-          appointmentId,
-          referenceCode,
-          times: ["09:00", "21:00"],
-          notes: "Take with meals"
-        },
-        {
-          name: "Cloxacillin",
-          type: "Capsule",
-          dosage: "500mg",
-          frequencies: "Four times Daily",
-          illnessType: "Infection",
-          duration: "7 days",
-          appointmentId,
-          referenceCode,
-          times: ["09:00", "13:00", "17:00", "21:00"],
-          notes: "Complete full course"
-        }
-      ];
-      
-      // Return specific medication based on demo type
-      if (demoType === 'blood_pressure') {
-        // Return blood pressure medication (Amlodipine)
-        resolve([medications[0]]);
-      } else if (demoType === 'diabetes') {
-        // Return diabetes medication (Metformin)
-        resolve([medications[2]]);
-      } else if (demoType === 'cholesterol') {
-        // Return cholesterol medication (Simvastatin)
-        resolve([medications[1]]);
-      } else if (demoType === 'infection') {
-        // Return infection medication (Cloxacillin)
-        resolve([medications[3]]);
-      } else {
-        // Default, return first medication (for backward compatibility)
-        resolve([medications[0]]);
-      }
-    }, 1500);
-  });
+const getDefaultMedication = (appointmentId, referenceCode) => {
+  return [{
+    name: 'Generic Medication',
+    type: 'Tablet',
+    dosage: '100mg',
+    frequencies: 'Once Daily',
+    duration: '30 days',
+    illnessType: 'General',
+    notes: 'This is a placeholder medication. Please consult your doctor for details.',
+    times: ['09:00'],
+    appointmentId,
+    referenceCode
+  }];
 };
+
+/**
+ * Parse times array from database
+ * @param {any} times - Times data from database
+ * @returns {Array} - Parsed array of times
+ */
+const parseTimesArray = (times) => {
+  if (Array.isArray(times)) {
+    return times.map(t => String(t));
+  }
+  
+  if (typeof times === 'string') {
+    try {
+      // Check if it looks like JSON
+      if (times.startsWith('[') && times.endsWith(']')) {
+        return JSON.parse(times);
+      }
+      return [times];
+    } catch (e) {
+      return [times];
+    }
+  }
+  
+  return ['09:00']; // Default
+};
+
+export { PRESCRIPTION_COLLECTION_ID, PRESCRIPTION_MEDICATIONS_COLLECTION_ID, APPOINTMENTS_COLLECTION_ID };
