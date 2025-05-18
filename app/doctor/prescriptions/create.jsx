@@ -1,12 +1,32 @@
-// app/doctor/prescriptions/create.jsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Platform, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import PageHeader from '../../../components/PageHeader';
 import { DatabaseService, Query } from '../../../configs/AppwriteConfig';
 import { addPrescription } from '../../../service/PrescriptionScanner';
+
+// Predefined options for medication fields
+const MEDICATION_TYPES = [
+  'Tablet', 'Capsule', 'Liquid', 'Injection', 'Topical', 'Inhaler', 'Patch', 'Drops'
+];
+
+const FREQUENCY_OPTIONS = [
+  'Once Daily', 'Twice Daily', 'Three times Daily', 'Four times Daily',
+  'Every Morning', 'Every Evening', 'Every 4 Hours', 'Every 6 Hours',
+  'Every 8 Hours', 'Every 12 Hours', 'Weekly', 'As Needed'
+];
+
+const DURATION_OPTIONS = [
+  '7 days', '14 days', '30 days', '90 days', 'On going'
+];
+
+const ILLNESS_TYPES = [
+  'Hypertension', 'Diabetes', 'Asthma', 'Cholesterol', 'Anxiety',
+  'Depression', 'Blood Pressure', 'Thyroid', 'Allergies', 'Pain Relief',
+  'Inflammation', 'Infection', 'Prenatal Care', 'Vitamin Deficiency', 'Heart Condition'
+];
 
 export default function CreatePrescriptionScreen() {
   const params = useLocalSearchParams();
@@ -15,6 +35,7 @@ export default function CreatePrescriptionScreen() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [appointment, setAppointment] = useState(null);
+  const [patientName, setPatientName] = useState('');
   const [medications, setMedications] = useState([
     {
       name: '',
@@ -29,6 +50,13 @@ export default function CreatePrescriptionScreen() {
   ]);
   const [doctorNotes, setDoctorNotes] = useState('');
   
+  // UI state for dropdowns
+  const [dropdownVisible, setDropdownVisible] = useState(false);
+  const [dropdownType, setDropdownType] = useState('');
+  const [dropdownOptions, setDropdownOptions] = useState([]);
+  const [currentMedicationIndex, setCurrentMedicationIndex] = useState(0);
+  const [currentField, setCurrentField] = useState('');
+  
   useEffect(() => {
     if (appointmentId) {
       loadAppointment();
@@ -39,13 +67,56 @@ export default function CreatePrescriptionScreen() {
   
   const loadAppointment = async () => {
     try {
-      const appointmentData = await DatabaseService.getDocument('appointments', appointmentId);
+      const appointmentData = await DatabaseService.getDocument('67e0332c0001131d71ec', appointmentId);
       setAppointment(appointmentData);
+      
+      // Fetch patient name
+      if (appointmentData && appointmentData.user_id) {
+        await fetchPatientName(appointmentData.user_id);
+      }
     } catch (error) {
       console.error('Error loading appointment:', error);
       Alert.alert('Error', 'Could not load appointment information');
     } finally {
       setLoading(false);
+    }
+  };
+  
+  // Optimized patient name lookup function based on the discovered data structure
+  const fetchPatientName = async (userId) => {
+    try {
+      console.log("Fetching patient name for user ID:", userId);
+      
+      // Query by userId field (which we now know is the correct field)
+      const usersResponse = await DatabaseService.listDocuments(
+        '67e032ec0025cf1956ff', // Users collection
+        [Query.equal('userId', userId)]
+      );
+      
+      if (usersResponse.documents && usersResponse.documents.length > 0) {
+        const user = usersResponse.documents[0];
+        
+        // We know fullName is the correct field
+        if (user.fullName) {
+          setPatientName(user.fullName);
+          console.log(`Found patient name: ${user.fullName}`);
+          return;
+        }
+      }
+      
+      // Fallback if lookup fails for any reason
+      if (userId.includes('@')) {
+        // Extract from email
+        const name = userId.split('@')[0].replace(/[._-]/g, ' ');
+        const formattedName = name.charAt(0).toUpperCase() + name.slice(1);
+        setPatientName(formattedName);
+      } else {
+        const patientLabel = `Patient ${userId.substring(0, 8)}`;
+        setPatientName(patientLabel);
+      }
+    } catch (error) {
+      console.error('Error fetching patient name:', error);
+      setPatientName(`Patient ${userId.substring(0, 8)}`);
     }
   };
   
@@ -79,6 +150,37 @@ export default function CreatePrescriptionScreen() {
     }
   };
   
+  const openDropdown = (type, index, field) => {
+    let options = [];
+    switch (type) {
+      case 'medicationType':
+        options = MEDICATION_TYPES;
+        break;
+      case 'frequency':
+        options = FREQUENCY_OPTIONS;
+        break;
+      case 'duration':
+        options = DURATION_OPTIONS;
+        break;
+      case 'illness':
+        options = ILLNESS_TYPES;
+        break;
+      default:
+        return;
+    }
+    
+    setDropdownType(type);
+    setDropdownOptions(options);
+    setCurrentMedicationIndex(index);
+    setCurrentField(field);
+    setDropdownVisible(true);
+  };
+  
+  const selectOption = (option) => {
+    updateMedication(currentMedicationIndex, currentField, option);
+    setDropdownVisible(false);
+  };
+  
   const handleSubmit = async () => {
     try {
       // Validate required fields
@@ -93,13 +195,55 @@ export default function CreatePrescriptionScreen() {
       
       setSubmitting(true);
       
+      // Make sure each medication has times as a proper array
+      const formattedMedications = medications.map(med => {
+        // Create a copy of the medication to avoid mutating the original
+        const formattedMed = {...med};
+        
+        // Ensure times is an array
+        if (!Array.isArray(formattedMed.times)) {
+          // If times is a string, try to parse it
+          if (typeof formattedMed.times === 'string') {
+            try {
+              // Check if it looks like JSON
+              if (formattedMed.times.startsWith('[') && formattedMed.times.endsWith(']')) {
+                formattedMed.times = JSON.parse(formattedMed.times);
+              } else {
+                // If it's a single time as string, put it in an array
+                formattedMed.times = [formattedMed.times];
+              }
+            } catch (e) {
+              // If parsing fails, default to an array with a single time
+              formattedMed.times = [formattedMed.times];
+            }
+          } else if (!formattedMed.times) {
+            // If times is null/undefined, default to an empty array or a default time
+            formattedMed.times = ['09:00'];
+          } else {
+            // For any other non-array value, convert to string and wrap in array
+            formattedMed.times = [String(formattedMed.times)];
+          }
+        }
+        
+        // Make sure all times in the array are strings
+        formattedMed.times = formattedMed.times.map(time => String(time));
+        
+        return formattedMed;
+      });
+      
+      console.log("Formatted medications with proper times arrays:", formattedMedications);
+      
       // Add prescription to database
-      await addPrescription(appointmentId, medications, doctorNotes);
+      await addPrescription(appointmentId, formattedMedications, doctorNotes);
       
       // Update appointment to indicate it has a prescription
-      await DatabaseService.updateDocument('appointments', appointmentId, {
-        has_prescription: true
-      });
+      await DatabaseService.updateDocument(
+        '67e0332c0001131d71ec', // Use the APPOINTMENTS_COLLECTION_ID constant here
+        appointmentId, 
+        {
+          has_prescription: true
+        }
+      );
       
       Alert.alert(
         'Success',
@@ -113,6 +257,51 @@ export default function CreatePrescriptionScreen() {
       setSubmitting(false);
     }
   };
+  
+  
+  // Render dropdown modal
+  const renderDropdownModal = () => (
+    <Modal
+      visible={dropdownVisible}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={() => setDropdownVisible(false)}
+    >
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        activeOpacity={1}
+        onPress={() => setDropdownVisible(false)}
+      >
+        <View style={styles.dropdownContainer}>
+          <View style={styles.dropdownHeader}>
+            <Text style={styles.dropdownTitle}>
+              {dropdownType === 'medicationType' ? 'Select Medication Type' : 
+               dropdownType === 'frequency' ? 'Select Frequency' :
+               dropdownType === 'duration' ? 'Select Duration' : 'Select Illness Type'}
+            </Text>
+            <TouchableOpacity onPress={() => setDropdownVisible(false)}>
+              <Ionicons name="close" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+          
+          <ScrollView style={styles.dropdownOptionsContainer}>
+            {dropdownOptions.map((option, index) => (
+              <TouchableOpacity
+                key={index}
+                style={styles.dropdownOption}
+                onPress={() => selectOption(option)}
+              >
+                <Text style={styles.dropdownOptionText}>{option}</Text>
+                {medications[currentMedicationIndex][currentField] === option && (
+                  <Ionicons name="checkmark" size={20} color="#0AD476" />
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
   
   if (loading) {
     return (
@@ -148,6 +337,8 @@ export default function CreatePrescriptionScreen() {
         <Text style={styles.headerTitle}>Create Prescription</Text>
       </View>
       
+      {renderDropdownModal()}
+      
       <ScrollView style={styles.content}>
         {appointment && (
           <View style={styles.appointmentCard}>
@@ -155,7 +346,9 @@ export default function CreatePrescriptionScreen() {
             <View style={styles.appointmentDetail}>
               <Ionicons name="person" size={16} color="#0AD476" />
               <Text style={styles.appointmentDetailLabel}>Patient:</Text>
-              <Text style={styles.appointmentDetailValue}>{appointment.user_id}</Text>
+              <Text style={styles.appointmentDetailValue}>
+                {patientName || appointment.user_id}
+              </Text>
             </View>
             <View style={styles.appointmentDetail}>
               <Ionicons name="calendar" size={16} color="#0AD476" />
@@ -192,7 +385,9 @@ export default function CreatePrescriptionScreen() {
             </View>
             
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Medication Name*</Text>
+              <Text style={styles.inputLabel}>
+                Medication Name<Text style={styles.requiredAsterisk}>*</Text>
+              </Text>
               <TextInput
                 style={styles.input}
                 value={medication.name}
@@ -204,20 +399,22 @@ export default function CreatePrescriptionScreen() {
             
             <View style={styles.inputRow}>
               <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
-                <Text style={styles.inputLabel}>Type*</Text>
-                <View style={styles.pickerContainer}>
-                  <TextInput
-                    style={styles.input}
-                    value={medication.type}
-                    onChangeText={(text) => updateMedication(index, 'type', text)}
-                    placeholder="e.g. Tablet"
-                    placeholderTextColor="#999"
-                  />
-                </View>
+                <Text style={styles.inputLabel}>
+                  Type<Text style={styles.requiredAsterisk}>*</Text>
+                </Text>
+                <TouchableOpacity
+                  style={styles.dropdownButton}
+                  onPress={() => openDropdown('medicationType', index, 'type')}
+                >
+                  <Text style={styles.dropdownButtonText}>{medication.type}</Text>
+                  <Ionicons name="chevron-down" size={20} color="#666" />
+                </TouchableOpacity>
               </View>
               
               <View style={[styles.inputGroup, { flex: 1 }]}>
-                <Text style={styles.inputLabel}>Dosage*</Text>
+                <Text style={styles.inputLabel}>
+                  Dosage<Text style={styles.requiredAsterisk}>*</Text>
+                </Text>
                 <TextInput
                   style={styles.input}
                   value={medication.dosage}
@@ -230,37 +427,43 @@ export default function CreatePrescriptionScreen() {
             
             <View style={styles.inputRow}>
               <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
-                <Text style={styles.inputLabel}>Frequency*</Text>
-                <TextInput
-                  style={styles.input}
-                  value={medication.frequencies}
-                  onChangeText={(text) => updateMedication(index, 'frequencies', text)}
-                  placeholder="e.g. Once Daily"
-                  placeholderTextColor="#999"
-                />
+                <Text style={styles.inputLabel}>
+                  Frequency<Text style={styles.requiredAsterisk}>*</Text>
+                </Text>
+                <TouchableOpacity
+                  style={styles.dropdownButton}
+                  onPress={() => openDropdown('frequency', index, 'frequencies')}
+                >
+                  <Text style={styles.dropdownButtonText}>{medication.frequencies}</Text>
+                  <Ionicons name="chevron-down" size={20} color="#666" />
+                </TouchableOpacity>
               </View>
               
               <View style={[styles.inputGroup, { flex: 1 }]}>
-                <Text style={styles.inputLabel}>Duration*</Text>
-                <TextInput
-                  style={styles.input}
-                  value={medication.duration}
-                  onChangeText={(text) => updateMedication(index, 'duration', text)}
-                  placeholder="e.g. 30 days"
-                  placeholderTextColor="#999"
-                />
+                <Text style={styles.inputLabel}>
+                  Duration<Text style={styles.requiredAsterisk}>*</Text>
+                </Text>
+                <TouchableOpacity
+                  style={styles.dropdownButton}
+                  onPress={() => openDropdown('duration', index, 'duration')}
+                >
+                  <Text style={styles.dropdownButtonText}>{medication.duration}</Text>
+                  <Ionicons name="chevron-down" size={20} color="#666" />
+                </TouchableOpacity>
               </View>
             </View>
             
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Illness Type</Text>
-              <TextInput
-                style={styles.input}
-                value={medication.illnessType}
-                onChangeText={(text) => updateMedication(index, 'illnessType', text)}
-                placeholder="e.g. Diabetes"
-                placeholderTextColor="#999"
-              />
+              <TouchableOpacity
+                style={styles.dropdownButton}
+                onPress={() => openDropdown('illness', index, 'illnessType')}
+              >
+                <Text style={styles.dropdownButtonText}>
+                  {medication.illnessType || "Select illness type"}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color="#666" />
+              </TouchableOpacity>
             </View>
             
             <View style={styles.inputGroup}>
@@ -444,6 +647,10 @@ const styles = StyleSheet.create({
     color: '#4b5563',
     marginBottom: 8,
   },
+  requiredAsterisk: {
+    color: '#FF4747',
+    fontWeight: 'bold',
+  },
   input: {
     backgroundColor: '#f5f5f5',
     borderRadius: 10,
@@ -452,11 +659,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e5e5',
   },
-  pickerContainer: {
+  dropdownButton: {
     backgroundColor: '#f5f5f5',
     borderRadius: 10,
+    padding: 12,
     borderWidth: 1,
     borderColor: '#e5e5e5',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  dropdownButtonText: {
+    fontSize: 16,
+    color: '#333',
   },
   textArea: {
     backgroundColor: '#f5f5f5',
@@ -467,6 +682,54 @@ const styles = StyleSheet.create({
     borderColor: '#e5e5e5',
     minHeight: 100,
     textAlignVertical: 'top',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropdownContainer: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    width: '80%',
+    maxHeight: '70%',
+    padding: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  dropdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+    marginBottom: 10,
+  },
+  dropdownTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  dropdownOptionsContainer: {
+    maxHeight: 400,
+  },
+  dropdownOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  dropdownOptionText: {
+    fontSize: 16,
+    color: '#333',
   },
   addMedicationButton: {
     flexDirection: 'row',

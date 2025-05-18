@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'expo-router'
 import { account, DatabaseService, Query } from '@/configs/AppwriteConfig'
 import { removeSpecificStorageKey, getLocalStorage, clearUserData } from '@/service/Storage'
+import { useAuth } from '@/app/_layout';
 import Toast from 'react-native-toast-message'
 import { Ionicons } from '@expo/vector-icons'
 import { COLLECTIONS } from '@/constants'
@@ -82,6 +83,8 @@ export default function Profile() {
     checkUserId();
   }, []);
   
+  const { logout } = useAuth(); // Get logout function from auth context
+
   const handleLogout = async () => {
     try {
       console.log("Starting logout process...");
@@ -90,32 +93,21 @@ export default function Profile() {
       const userDetail = await getLocalStorage('userDetail');
       const userId = userDetail?.uid || 'anonymous';
       
-      // Sign out from Appwrite by deleting the current session
-      try {
-        await account.deleteSession('current');
-        console.log("Appwrite session deleted successfully");
-      } catch (sessionError) {
-        console.log("Error deleting Appwrite session:", sessionError);
-        // Continue with logout even if session deletion fails
-      }
-      
       // Clear user-specific data (medications, dose history)
       await clearUserData(userId);
-      
-      // Remove user authentication details
-      await removeSpecificStorageKey('userDetail');
-      console.log("User details removed from storage");
       
       // Show success message
       Toast.show({
         type: 'success',
-        text1: 'Logged Out',
-        text2: 'You have been successfully logged out',
+        text1: 'Logging Out',
+        text2: 'Please wait...',
       });
       
-      // Redirect to login screen
-      console.log("Redirecting to login screen...");
-      router.replace('/login');
+      // Use the auth context logout function which handles everything else
+      await logout();
+      
+      // Note: No need to redirect here - auth context will handle that
+      console.log("Logout function completed");
     } catch (error) {
       console.error("Logout error:", error);
       
@@ -125,8 +117,7 @@ export default function Profile() {
         text2: 'Failed to log out. Please try again.',
       });
     }
-  }
-  
+  };
   const calculateProfileCompletion = () => {
     if (!profile) return 0;
     

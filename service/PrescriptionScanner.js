@@ -8,181 +8,169 @@
  */
 
 // service/PrescriptionScanner.js
-import { DatabaseService, Query } from '../configs/AppwriteConfig';
+import { DatabaseService, Query, ID } from '../configs/AppwriteConfig';
 
-// IMPORTANT: Update these with your actual Appwrite collection IDs
-const COLLECTION_IDS = {
-  APPOINTMENTS: '67e0332c0001131d71ec', 
-  PRESCRIPTIONS: '6824b4cd000e65702ee3',
-  PRESCRIPTION_MEDICATIONS: '6824b57b0008686a86b3'
-};
+// Collection IDs from your screenshots
+const PRESCRIPTION_COLLECTION_ID = '6824b4cd000e65702ee3'; // Prescriptions collection
+const PRESCRIPTION_MEDICATIONS_COLLECTION_ID = '6824b57b0008686a86b3'; // Prescription medications
+const APPOINTMENTS_COLLECTION_ID = '67e0332c0001131d71ec'; // Appointments
 
 /**
- * Process QR code data and extract prescription information
- * This connects to Appwrite to fetch real prescription data
- * @param {string} qrData - Data from the scanned QR code (format: APPT:appointmentId:referenceCode)
- * @returns {Promise<Array>} - Array of medications from the prescription
- */
-export const processPrescriptionQR = async (qrData) => {
-    try {
-      console.log('Processing QR data:', qrData);
-      
-      // Check if this is a demo code
-      if (qrData.startsWith('DEMO:')) {
-        // Parse demo QR data (format: DEMO:demoType:referenceCode)
-        const [prefix, demoType, referenceCode] = qrData.split(':');
-        console.log('Demo scan detected:', { prefix, demoType, referenceCode });
-        
-        // Handle special demo types
-        return simulateFetchPrescriptionData('demo', referenceCode, demoType);
-      }
-      
-      // Regular appointment QR code (format: APPT:appointmentId:referenceCode)
-      const [prefix, appointmentId, referenceCode] = qrData.split(':');
-      
-      if (prefix !== 'APPT' || !appointmentId || !referenceCode) {
-        throw new Error('Invalid QR code format');
-      }
-      
-      // First, verify the appointment exists
-      try {
-        const appointment = await DatabaseService.getDocument(
-          COLLECTION_IDS.APPOINTMENTS, 
-          appointmentId
-        );
-        
-        // Verify reference code matches (optional additional security check)
-        if (appointment && referenceCode) {
-          // You can add verification here if needed
-          console.log('Appointment verified');
-        }
-      } catch (error) {
-        console.error('Appointment verification error:', error);
-        // Continue with the flow even if appointment verification fails
-        // This allows testing without requiring real appointment records
-      }
-      
-      // Try to fetch prescriptions for this appointment
-      try {
-        const prescriptions = await DatabaseService.listDocuments(
-          COLLECTION_IDS.PRESCRIPTIONS,
-          [Query.equal('appointment_id', appointmentId)]
-        );
-        
-        if (prescriptions && prescriptions.documents && prescriptions.documents.length > 0) {
-          // Found prescriptions, fetch the medications
-          const prescription = prescriptions.documents[0];
-          
-          const medications = await DatabaseService.listDocuments(
-            COLLECTION_IDS.PRESCRIPTION_MEDICATIONS,
-            [Query.equal('prescription_id', prescription.$id)]
-          );
-          
-          if (medications && medications.documents && medications.documents.length > 0) {
-            // Format medications for the app
-            return medications.documents.map(med => ({
-              name: med.name || "",
-              type: med.type || "",
-              dosage: med.dosage || "",
-              frequencies: med.frequencies || "",
-              illnessType: med.illness_type || "",
-              duration: med.duration || "",
-              appointmentId,
-              referenceCode,
-              times: tryParseJSON(med.times, ["09:00"]),
-              notes: med.notes || ""
-            }));
-          }
-        }
-        
-        // If we reach here, no prescriptions were found in the database
-        console.log('No prescriptions found, using simulation data');
-        return simulateFetchPrescriptionData(appointmentId, referenceCode);
-        
-      } catch (error) {
-        console.error('Error fetching prescriptions:', error);
-        // Fall back to simulated data if there's an error with the database
-        return simulateFetchPrescriptionData(appointmentId, referenceCode);
-      }
-      
-    } catch (error) {
-      console.error('Error processing prescription QR:', error);
-      throw error;
-    }
-  };
-
-/**
- * Helper function to safely parse JSON
- * @param {string} jsonString - JSON string to parse
- * @param {any} defaultValue - Default value if parsing fails
- * @returns {any} - Parsed object or default value
- */
-const tryParseJSON = (jsonString, defaultValue) => {
-  try {
-    return jsonString ? JSON.parse(jsonString) : defaultValue;
-  } catch (e) {
-    console.error('JSON parse error:', e);
-    return defaultValue;
-  }
-};
-
-/**
- * Add a prescription to the database
- * @param {string} appointmentId - ID of the appointment
- * @param {Array} medications - List of medications to add
+ * Add a prescription for an appointment
+ * @param {string} appointmentId - The ID of the appointment
+ * @param {Array} medications - Array of medication objects
  * @param {string} doctorNotes - Optional notes from the doctor
- * @returns {Promise<string>} - ID of the created prescription
+ * @returns {Promise<boolean>}
  */
-export const addPrescription = async (appointmentId, medications, doctorNotes = "") => {
+export const addPrescription = async (appointmentId, medications, doctorNotes = '') => {
   try {
-    // Create the prescription record
+    console.log("Adding prescription for appointment:", appointmentId);
+    
+    // 1. First create the prescription entry
+    const prescriptionData = {
+      appointment_id: appointmentId,
+      status: 'Active',
+      issued_date: new Date().toISOString().split('T')[0], // Today's date in YYYY-MM-DD
+      doctor_notes: doctorNotes || '',
+      reference_code: Math.random().toString(36).substring(2, 10) // Random reference code
+    };
+    
+    console.log("Creating prescription record:", prescriptionData);
+    
     const prescription = await DatabaseService.createDocument(
-      COLLECTION_IDS.PRESCRIPTIONS,
+      PRESCRIPTION_COLLECTION_ID,
+      prescriptionData
+    );
+    
+    console.log("Prescription created with ID:", prescription.$id);
+    
+    // 2. Then add each medication linked to this prescription
+    const formattedMedications = medications.map(med => ({
+      ...med,
+      times: Array.isArray(med.times) ? med.times : [med.times || '09:00']
+    }));
+    
+    // Create an entry for each medication in the prescription medications collection
+    for (const medication of formattedMedications) {
+      // Make one final check to ensure times is an array of strings
+      const medWithValidTimes = {
+        ...medication,
+        times: Array.isArray(medication.times) 
+          ? medication.times.map(t => String(t)) 
+          : ['09:00']
+      };
+      
+      console.log("Adding medication to prescription:", medWithValidTimes.name);
+      
+      await DatabaseService.createDocument(
+        PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+        {
+          prescription_id: prescription.$id, // Link to the prescription we just created
+          name: medWithValidTimes.name,
+          type: medWithValidTimes.type,
+          dosage: medWithValidTimes.dosage,
+          frequencies: medWithValidTimes.frequencies,
+          duration: medWithValidTimes.duration,
+          illness_type: medWithValidTimes.illnessType || '',
+          notes: medWithValidTimes.notes || '',
+          times: medWithValidTimes.times // This is now guaranteed to be an array
+        }
+      );
+    }
+    
+    // 3. Update the appointment to mark it as having a prescription
+    await DatabaseService.updateDocument(
+      APPOINTMENTS_COLLECTION_ID,
+      appointmentId,
       {
-        appointment_id: appointmentId,
-        status: 'issued',
-        issued_date: new Date().toISOString(),
-        doctor_notes: doctorNotes || ""
+        has_prescription: true
       }
     );
     
-    // Add each medication to the prescription
-    const medicationPromises = medications.map(med => 
-      DatabaseService.createDocument(
-        COLLECTION_IDS.PRESCRIPTION_MEDICATIONS,
-        {
-          prescription_id: prescription.$id,
-          name: med.name || "",
-          type: med.type || "",
-          dosage: med.dosage || "",
-          frequencies: med.frequencies || "",
-          duration: med.duration || "",
-          illness_type: med.illnessType || "",
-          notes: med.notes || "",
-          times: JSON.stringify(med.times || ["09:00"])
-        }
-      )
-    );
+    console.log("All medications added successfully and appointment updated");
     
-    await Promise.all(medicationPromises);
-    
-    // Try to update the appointment if needed
-    try {
-      await DatabaseService.updateDocument(
-        COLLECTION_IDS.APPOINTMENTS,
-        appointmentId,
-        { has_prescription: true }
-      );
-    } catch (error) {
-      console.warn('Could not update appointment with prescription status:', error);
-      // Continue even if this fails
-    }
-    
-    return prescription.$id;
+    return true;
   } catch (error) {
     console.error('Error adding prescription:', error);
     throw error;
   }
+};
+
+/**
+ * Get prescriptions for an appointment
+ * @param {string} appointmentId - The ID of the appointment
+ * @returns {Promise<Object>} - Prescription with medications
+ */
+export const getPrescriptions = async (appointmentId) => {
+  try {
+    // First get the prescription record
+    const prescriptionsResponse = await DatabaseService.listDocuments(
+      PRESCRIPTION_COLLECTION_ID,
+      [Query.equal('appointment_id', appointmentId)]
+    );
+    
+    if (!prescriptionsResponse.documents || prescriptionsResponse.documents.length === 0) {
+      return { prescription: null, medications: [] };
+    }
+    
+    const prescription = prescriptionsResponse.documents[0];
+    
+    // Then get the medications for this prescription
+    const medicationsResponse = await DatabaseService.listDocuments(
+      PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+      [Query.equal('prescription_id', prescription.$id)]
+    );
+    
+    return {
+      prescription,
+      medications: medicationsResponse.documents || []
+    };
+  } catch (error) {
+    console.error('Error getting prescriptions:', error);
+    return { prescription: null, medications: [] };
+  }
+};
+
+/**
+ * Delete a specific prescription and its medications
+ * @param {string} prescriptionId - The document ID of the prescription
+ * @returns {Promise<boolean>}
+ */
+export const deletePrescription = async (prescriptionId) => {
+  try {
+    // First delete all medications associated with this prescription
+    const medicationsResponse = await DatabaseService.listDocuments(
+      PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+      [Query.equal('prescription_id', prescriptionId)]
+    );
+    
+    if (medicationsResponse.documents && medicationsResponse.documents.length > 0) {
+      for (const med of medicationsResponse.documents) {
+        await DatabaseService.deleteDocument(
+          PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+          med.$id
+        );
+      }
+    }
+    
+    // Then delete the prescription itself
+    await DatabaseService.deleteDocument(
+      PRESCRIPTION_COLLECTION_ID,
+      prescriptionId
+    );
+    
+    return true;
+  } catch (error) {
+    console.error('Error deleting prescription:', error);
+    return false;
+  }
+};
+
+// Export constants for use elsewhere
+export const COLLECTIONS = {
+  PRESCRIPTIONS: PRESCRIPTION_COLLECTION_ID,
+  PRESCRIPTION_MEDICATIONS: PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+  APPOINTMENTS: APPOINTMENTS_COLLECTION_ID
 };
 
 /**
