@@ -16,6 +16,45 @@ const PRESCRIPTION_MEDICATIONS_COLLECTION_ID = '6824b57b0008686a86b3'; // Prescr
 const APPOINTMENTS_COLLECTION_ID = '67e0332c0001131d71ec'; // Appointments
 
 /**
+ * Get prescriptions and medications for an appointment
+ * @param {string} appointmentId - The appointment ID
+ * @returns {Promise<Object>} - Object containing prescription and medications
+ */
+export const getPrescriptions = async (appointmentId) => {
+  try {
+    console.log(`Getting prescriptions for appointment: ${appointmentId}`);
+    
+    // Find prescriptions for this appointment
+    const prescriptions = await DatabaseService.listDocuments(
+      PRESCRIPTION_COLLECTION_ID,
+      [Query.equal('appointment_id', appointmentId)]
+    );
+    
+    if (!prescriptions.documents || prescriptions.documents.length === 0) {
+      console.log('No prescriptions found for this appointment');
+      return { prescription: null, medications: [] };
+    }
+    
+    // Get the most recent prescription
+    const prescription = prescriptions.documents[0];
+    
+    // Get medications for this prescription
+    const medications = await DatabaseService.listDocuments(
+      PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+      [Query.equal('prescription_id', prescription.$id)]
+    );
+    
+    return {
+      prescription: prescription,
+      medications: medications.documents || []
+    };
+  } catch (error) {
+    console.error('Error getting prescriptions:', error);
+    throw error;
+  }
+};
+
+/**
  * Process QR code data and extract prescription information
  * @param {string} qrData - Data from the scanned QR code (format: APPT:appointmentId:referenceCode)
  * @returns {Promise<Array>} - Array of medications from the prescription
@@ -233,4 +272,8 @@ const parseTimesArray = (times) => {
   return ['09:00']; // Default
 };
 
-export { PRESCRIPTION_COLLECTION_ID, PRESCRIPTION_MEDICATIONS_COLLECTION_ID, APPOINTMENTS_COLLECTION_ID };
+export {
+  PRESCRIPTION_COLLECTION_ID,
+  PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+  APPOINTMENTS_COLLECTION_ID
+};

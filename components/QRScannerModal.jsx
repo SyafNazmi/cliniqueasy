@@ -9,54 +9,81 @@ import {
   Modal, 
   TextInput, 
   ActivityIndicator,
-  ScrollView 
+  ScrollView,
+  Dimensions
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { processPrescriptionQR } from '../service/PrescriptionScanner';
-import { Camera } from 'expo-camera';
+import { CameraView, Camera } from 'expo-camera';
 
-// Start with a simple working version
 const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
   const [qrInput, setQRInput] = useState('');
   const [hasPermission, setHasPermission] = useState(null);
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [showManualEntry, setShowManualEntry] = useState(true); // Start with manual entry 
-
+  const [showManualEntry, setShowManualEntry] = useState(true); // Start with manual entry
+  const [cameraAvailable, setCameraAvailable] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [facing, setFacing] = useState('back');
+  
+  // Initialize the camera permissions
   useEffect(() => {
     (async () => {
       try {
+        // Request camera permission
         const { status } = await Camera.requestCameraPermissionsAsync();
+        console.log("Camera permission status:", status);
         setHasPermission(status === 'granted');
+        setCameraAvailable(true);
+        
+        if (status !== 'granted') {
+          setErrorMsg("Camera permission was denied. Please enable it in settings.");
+        }
       } catch (error) {
-        console.error('Camera permission error:', error);
-        setHasPermission(false);
+        console.error("Error initializing camera:", error);
+        setErrorMsg(`Error accessing camera: ${error.message}`);
+        setCameraAvailable(false);
       }
     })();
   }, []);
-  
-  // Add this handler function:
-  const handleBarCodeScanned = async ({ type, data }) => {
+
+  // Handle barcode scanning
+  const handleBarCodeScanned = ({ type, data }) => {
+    console.log("Barcode scanned:", type, data);
+    
     if (scanned || loading) return;
+    
+    // Set scanned immediately to prevent multiple scans
     setScanned(true);
+    setLoading(true);
     
     try {
-      console.log('Scanned QR code:', data);
+      console.log('Processing QR code:', data);
       
-      setLoading(true);
-      const prescriptionMeds = await processPrescriptionQR(data);
-      
-      if (prescriptionMeds && prescriptionMeds.length > 0) {
-        onScanSuccess(prescriptionMeds[0]);
-      } else {
-        throw new Error('No medication data found');
-      }
+      processPrescriptionQR(data)
+        .then(prescriptionMeds => {
+          if (prescriptionMeds && prescriptionMeds.length > 0) {
+            onScanSuccess(prescriptionMeds[0]);
+          } else {
+            throw new Error('No medication data found');
+          }
+        })
+        .catch(error => {
+          console.error('Error processing scanned QR code:', error);
+          Alert.alert('Error', 'Failed to process QR code', [
+            { text: 'OK', onPress: () => setScanned(false) }
+          ]);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
     } catch (error) {
-      console.error('Error processing scanned QR code:', error);
-      Alert.alert('Error', 'Failed to process QR code');
+      console.error('Error handling QR scan:', error);
+      Alert.alert('Error', 'Failed to process QR code', [
+        { text: 'OK', onPress: () => setScanned(false) }
+      ]);
       setScanned(false);
-    } finally {
       setLoading(false);
     }
   };
@@ -71,7 +98,6 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
     try {
       setLoading(true);
       
-      // Process the QR code
       const prescriptionMeds = await processPrescriptionQR(qrInput);
       
       if (prescriptionMeds && prescriptionMeds.length > 0) {
@@ -117,6 +143,81 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
     }
   };
 
+  // Reset scanning state when exiting camera mode
+  const handleToggleManualEntry = (showManual) => {
+    setScanned(false);
+    setLoading(false);
+    setShowManualEntry(showManual);
+  };
+
+  // Toggle camera facing between front and back
+  const toggleCameraFacing = () => {
+    setFacing(current => (current === 'back' ? 'front' : 'back'));
+  };
+
+  // Conditionally render the camera
+  const renderCamera = () => {
+    if (!cameraAvailable) {
+      return (
+        <View style={styles.cameraPlaceholder}>
+          <Text style={styles.placeholderText}>
+            Camera is not available. Please use manual entry instead.
+          </Text>
+          <TouchableOpacity 
+            style={styles.toggleButton}
+            onPress={() => handleToggleManualEntry(true)}
+          >
+            <Text style={styles.toggleButtonText}>Switch to Manual Entry</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    
+    return (
+      <View style={styles.cameraContainer}>
+        <CameraView
+          style={StyleSheet.absoluteFillObject}
+          facing={facing}
+          onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+          barcodeScannerSettings={{
+            barcodeTypes: ['qr'],
+          }}
+        />
+        {/* Overlay content moved outside CameraView */}
+        <View style={styles.scanOverlay}>
+          <View style={styles.scannerFrame}>
+            <View style={styles.scanLine} />
+          </View>
+          {scanned && (
+            <TouchableOpacity
+              style={styles.scanAgainButton}
+              onPress={() => setScanned(false)}
+            >
+              <Text style={styles.scanAgainButtonText}>Tap to Scan Again</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        <View style={styles.cameraControls}>
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => handleToggleManualEntry(true)}
+          >
+            <Ionicons name="arrow-back" size={24} color="white" />
+            <Text style={styles.backButtonText}>Back</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.flipButton}
+            onPress={toggleCameraFacing}
+          >
+            <Ionicons name="camera-reverse" size={24} color="white" />
+            <Text style={styles.flipButtonText}>Flip</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
   return (
     <Modal
       visible={visible}
@@ -160,13 +261,16 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
                 </LinearGradient>
               </TouchableOpacity>
               
-              <TouchableOpacity 
-                style={styles.toggleButton}
-                onPress={() => setShowManualEntry(false)}
-              >
-                <Ionicons name="camera-outline" size={20} color="#1a8e2d" />
-                <Text style={styles.toggleButtonText}>Use Camera Scanner</Text>
-              </TouchableOpacity>
+              {/* Only show camera option if Camera is available */}
+              {cameraAvailable && (
+                <TouchableOpacity 
+                  style={styles.toggleButton}
+                  onPress={() => handleToggleManualEntry(false)}
+                >
+                  <Ionicons name="camera-outline" size={20} color="#1a8e2d" />
+                  <Text style={styles.toggleButtonText}>Use Camera Scanner</Text>
+                </TouchableOpacity>
+              )}
               
               <View style={styles.divider}>
                 <View style={styles.dividerLine} />
@@ -209,30 +313,26 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
             </View>
           ) : (
             <>
-              {hasPermission === false ? (
+              {hasPermission === null ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#1a8e2d" />
+                  <Text style={styles.loadingText}>Requesting camera permission...</Text>
+                </View>
+              ) : hasPermission === false ? (
                 <View style={styles.permissionContainer}>
+                  <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" style={styles.permissionIcon} />
                   <Text style={styles.permissionText}>
-                    Camera permission is required to scan QR codes. Please enable camera access in your device settings.
+                    {errorMsg || "Camera permission is required to scan QR codes. Please enable camera access in your device settings."}
                   </Text>
                   <TouchableOpacity
                     style={styles.manualEntryButton}
-                    onPress={() => setShowManualEntry(true)}
+                    onPress={() => handleToggleManualEntry(true)}
                   >
                     <Text style={styles.manualEntryButtonText}>Use Manual Entry</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
-                <View style={styles.cameraContainer}>
-                  <View style={styles.cameraPlaceholder}>
-                    <Text>Camera view would appear here</Text>
-                    <TouchableOpacity
-                      style={styles.toggleButton}
-                      onPress={() => setShowManualEntry(true)}
-                    >
-                      <Text style={styles.toggleButtonText}>Switch to Manual Entry</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                renderCamera()
               )}
             </>
           )}
@@ -241,6 +341,8 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
     </Modal>
   );
 };
+
+const { width, height } = Dimensions.get('window');
 
 const styles = StyleSheet.create({
   modalOverlay: {
@@ -251,7 +353,7 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     width: '90%',
-    maxHeight: '80%',
+    maxHeight: '90%',
     backgroundColor: 'white',
     borderRadius: 15,
     overflow: 'hidden',
@@ -280,6 +382,7 @@ const styles = StyleSheet.create({
     marginTop: 15,
     fontSize: 16,
     color: '#333',
+    textAlign: 'center',
   },
   manualEntryContainer: {
     padding: 20,
@@ -291,19 +394,94 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   cameraContainer: {
-    height: 300,
-    overflow: 'hidden',
+    height: height * 0.6,
+    maxHeight: 500,
+    width: '100%',
     position: 'relative',
   },
   cameraPlaceholder: {
-    flex: 1,
-    backgroundColor: '#f0f0f0',
+    height: 300,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#f0f0f0',
+    padding: 20,
+  },
+  placeholderText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 15,
+  },
+  scanOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  scannerFrame: {
+    width: 200,
+    height: 200,
+    borderWidth: 2,
+    borderColor: 'white',
+    backgroundColor: 'transparent',
+    position: 'relative',
+  },
+  scanLine: {
+    height: 2,
+    width: '100%',
+    backgroundColor: '#1a8e2d',
+    position: 'absolute',
+    top: '50%',
+  },
+  scanAgainButton: {
+    marginTop: 20,
+    padding: 10,
+    backgroundColor: 'rgba(26, 142, 45, 0.8)',
+    borderRadius: 20,
+  },
+  scanAgainButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  cameraControls: {
+    position: 'absolute',
+    bottom: 30,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 30,
+  },
+  backButton: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 12,
+    padding: 10,
+  },
+  backButtonText: {
+    color: 'white',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  flipButton: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 12,
+    padding: 10,
+  },
+  flipButtonText: {
+    color: 'white',
+    fontSize: 12,
+    marginTop: 4,
   },
   permissionContainer: {
     padding: 20,
     alignItems: 'center',
+  },
+  permissionIcon: {
+    marginBottom: 15,
   },
   permissionText: {
     fontSize: 16,

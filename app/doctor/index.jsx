@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getLocalStorage } from '../../service/Storage';
+import { useAuth } from '../_layout';
 import { DatabaseService, Query, account } from '../../configs/AppwriteConfig';
 import RoleProtected from '../../components/RoleProtected';
 
@@ -24,6 +25,9 @@ function DoctorDashboardContent() {
   const [upcomingAppointments, setUpcomingAppointments] = useState([]);
   const [loadingAppointments, setLoadingAppointments] = useState(true);
   const [patientNames, setPatientNames] = useState({}); // Map of user_id to user names
+
+  // Use the auth context's logout function for consistent behavior
+  const { logout } = useAuth();
   
   useEffect(() => {
     const loadUserData = async () => {
@@ -303,6 +307,8 @@ function DoctorDashboardContent() {
   
   const handleSignOut = async () => {
     try {
+      console.log("Starting doctor logout process...");
+      
       // Try to delete the session
       try {
         await account.deleteSession('current');
@@ -310,10 +316,18 @@ function DoctorDashboardContent() {
         console.log('Session deletion error (can be ignored):', e);
       }
       
-      // Navigate to sign in
-      router.replace('/login/signIn');
+      // Call the auth context logout which handles everything properly
+      if (typeof logout === 'function') {
+        await logout();
+      } else {
+        // Fallback if logout function isn't available
+        await AsyncStorage.removeItem('userDetail');
+        await AsyncStorage.removeItem('current_user_is_doctor');
+        router.replace('/login/signIn');
+      }
     } catch (error) {
       console.error("Logout error:", error);
+      // Force navigation to login on error
       router.replace('/login/signIn');
     }
   };

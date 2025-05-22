@@ -5,9 +5,11 @@ import { account } from '../../configs/AppwriteConfig';
 import { setLocalStorage, removeLocalStorage } from '../../service/Storage';
 import Toast from 'react-native-toast-message';
 import RoleManager from '../../configs/RoleManager';
+import { useAuth } from '../_layout'; // Import auth context
 
 export default function SignIn() {
     const router = useRouter();
+    const { setUser, setIsDoctor } = useAuth(); // Get auth context functions
     
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -119,6 +121,11 @@ export default function SignIn() {
             console.log("Final user data being saved:", userData);
             await setLocalStorage('userDetail', userData);
             console.log('User data saved to localStorage');
+            
+            // IMPORTANT: Update auth context state to reflect signed-in user
+            // This is critical to ensure the auth provider knows about the new user
+            setUser(userData);
+            setIsDoctor(userData.isDoctor);
 
             Toast.show({
                 type: 'success',
@@ -127,13 +134,18 @@ export default function SignIn() {
             });
 
             // Redirect based on role
-            if (userData.isDoctor) {
-                console.log('Redirecting to doctor dashboard');
-                router.replace('/doctor');
-            } else {
-                console.log('Redirecting to patient dashboard');
-                router.replace('(tabs)');
-            }
+            // We use a small delay to ensure the state updates have time to process
+            setTimeout(() => {
+                if (userData.isDoctor) {
+                    console.log('Redirecting to doctor dashboard');
+                    router.replace('/doctor');
+                } else {
+                    console.log('Redirecting to patient dashboard');
+                    router.replace('/(tabs)');
+                }
+                setLoading(false);
+            }, 100);
+            
         } catch (error) {
             console.error('Signin Error:', error);
             Toast.show({
@@ -141,7 +153,6 @@ export default function SignIn() {
                 text1: 'Error',
                 text2: error.message || 'Failed to sign in',
             });
-        } finally {
             setLoading(false);
         }
     }

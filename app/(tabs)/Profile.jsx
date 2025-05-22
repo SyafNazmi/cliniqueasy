@@ -89,6 +89,13 @@ export default function Profile() {
     try {
       console.log("Starting logout process...");
       
+      // Show toast first to provide immediate feedback
+      Toast.show({
+        type: 'success',
+        text1: 'Logging Out',
+        text2: 'Please wait...',
+      });
+      
       // Get the current user ID before logging out
       const userDetail = await getLocalStorage('userDetail');
       const userId = userDetail?.uid || 'anonymous';
@@ -96,28 +103,35 @@ export default function Profile() {
       // Clear user-specific data (medications, dose history)
       await clearUserData(userId);
       
-      // Show success message
-      Toast.show({
-        type: 'success',
-        text1: 'Logging Out',
-        text2: 'Please wait...',
-      });
-      
-      // Use the auth context logout function which handles everything else
-      await logout();
-      
-      // Note: No need to redirect here - auth context will handle that
-      console.log("Logout function completed");
+      // Use a small timeout to ensure the toast is visible
+      // before potentially freezing the UI during logout
+      setTimeout(async () => {
+        try {
+          // Use the auth context logout function which handles everything else
+          await logout();
+          console.log("Logout function completed");
+        } catch (error) {
+          console.error("Error during logout:", error);
+          // If logout fails, force navigation to sign in
+          router.replace('/login/signIn');
+        }
+      }, 300);
     } catch (error) {
-      console.error("Logout error:", error);
+      console.error("Logout preparation error:", error);
       
       Toast.show({
         type: 'error',
         text1: 'Error',
         text2: 'Failed to log out. Please try again.',
       });
+      
+      // Even if there's an error, try to navigate to sign in
+      setTimeout(() => {
+        router.replace('/login/signIn');
+      }, 1000);
     }
   };
+  
   const calculateProfileCompletion = () => {
     if (!profile) return 0;
     

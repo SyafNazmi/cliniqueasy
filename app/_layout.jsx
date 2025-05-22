@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from "react";
+// Fix 1: Update app/_layout.jsx
+// Modified AuthProvider component with improved authentication handling
+
+import React, { useEffect, useState, useCallback } from "react";
 import { Stack, useSegments, useRouter, SplashScreen } from "expo-router";
 import Toast from 'react-native-toast-message';
 import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
-import { getLocalStorage } from '../service/Storage';
+import { getLocalStorage, removeLocalStorage } from '../service/Storage';
 import RoleManager from '../configs/RoleManager';
 import { account } from '../configs/AppwriteConfig';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -21,12 +24,13 @@ function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isDoctor, setIsDoctor] = useState(false);
   const [isLoggedOut, setIsLoggedOut] = useState(false);
+  const [authInitialized, setAuthInitialized] = useState(false);
   
   const segments = useSegments();
   const router = useRouter();
 
-  // Check auth status
-  const checkAuth = async () => {
+  // Check auth status - changed to useCallback to avoid recreation
+  const checkAuth = useCallback(async () => {
     try {
       // If we've just logged out, don't check auth again
       if (isLoggedOut) {
@@ -35,7 +39,8 @@ function AuthProvider({ children }) {
         return;
       }
       
-      console.log("App starting - checking authentication state...");
+      console.log("Checking authentication state...");
+      setIsLoading(true);
       
       // First check global role flag (fastest) for immediate response after reload
       const globalRoleFlag = await RoleManager.getGlobalRoleFlag();
@@ -61,22 +66,31 @@ function AuthProvider({ children }) {
             setUser(null);
             setIsDoctor(false);
           } else {
-            // Set the user first for faster UI response
+            // Set the user for UI response
             setUser(userData);
             
-            // If we have a global role flag, use it right away for faster response
-            // We'll still verify it with the database
+            // If we have a global role flag, use it right away
             if (globalRoleFlag !== null) {
               console.log(`Using global role flag immediately: ${globalRoleFlag ? "Doctor" : "Patient"}`);
               setIsDoctor(globalRoleFlag);
+            } else {
+              // Otherwise check user data for role info
+              setIsDoctor(userData.isDoctor || false);
             }
             
-            // Check if the user is a doctor
-            const doctorCheck = await RoleManager.isDoctor(userData.uid);
-            console.log(`Full user role check completed - isDoctor: ${doctorCheck}`);
-            
-            // Update state with verified role
-            setIsDoctor(doctorCheck);
+            // Perform an additional role check in the background
+            try {
+              const doctorCheck = await RoleManager.isDoctor(userData.uid);
+              console.log(`Full user role check completed - isDoctor: ${doctorCheck}`);
+              
+              // Only update if different to avoid unnecessary rerenders
+              if (doctorCheck !== isDoctor) {
+                setIsDoctor(doctorCheck);
+              }
+            } catch (err) {
+              console.log("Role check error:", err);
+              // Keep using the data we have
+            }
           }
         } else {
           setUser(null);
@@ -93,6 +107,7 @@ function AuthProvider({ children }) {
       setIsDoctor(false);
     } finally {
       setIsLoading(false);
+      setAuthInitialized(true);
       // Hide the splash screen
       try {
         SplashScreen.hideAsync();
@@ -100,10 +115,10 @@ function AuthProvider({ children }) {
         console.log("Error hiding splash screen:", e);
       }
     }
-  };
+  }, [isLoggedOut, isDoctor]);
 
-  // Logout function that handles all cleanup properly
-  const logoutUser = async () => {
+  // Logout function with improved cleanup
+  const logoutUser = useCallback(async () => {
     try {
       console.log("Starting logout process from auth context");
       setIsLoading(true);
@@ -148,16 +163,21 @@ function AuthProvider({ children }) {
       }
       
       console.log("Logout complete - redirecting to login");
-      router.replace('/login/signIn');
+      
+      // The state update + router navigation combo sometimes causes issues
+      // Use a small timeout to ensure state has been updated first
+      setTimeout(() => {
+        router.replace('/login/signIn');
+        setIsLoading(false);
+      }, 50);
       
     } catch (error) {
       console.error("Error during logout:", error);
       // Ensure we still redirect to login even if there was an error
       router.replace('/login/signIn');
-    } finally {
       setIsLoading(false);
     }
-  };
+  }, [router]);
 
   // Initial auth check
   useEffect(() => {
@@ -166,7 +186,7 @@ function AuthProvider({ children }) {
 
   // Handle redirects based on auth state
   useEffect(() => {
-    if (isLoading) return; // Don't redirect while still checking
+    if (isLoading || !authInitialized) return; // Don't redirect while still checking
     if (isLoggedOut) return; // Don't redirect during logout process
     
     const inAuthGroup = segments[0] === 'login';
@@ -203,17 +223,16 @@ function AuthProvider({ children }) {
         router.replace('/(tabs)');
       }
     }
-  }, [user, segments, isLoading, isDoctor, isLoggedOut]);
+  }, [user, segments, isLoading, isDoctor, isLoggedOut, authInitialized, router]);
   
-  // Value to expose through context - using logoutUser as the function name
-  // to avoid conflicts with any existing logout function
+  // Value to expose through context
   const value = {
     user,
     isDoctor,
     isLoading,
     setUser,
     setIsDoctor,
-    logout: logoutUser,     // Expose logout function with unique name
+    logout: logoutUser,     // Expose logout function
     refresh: checkAuth      // Expose refresh function
   };
 
