@@ -1,4 +1,3 @@
-// app/_layout.jsx
 import React, { useEffect, useRef } from 'react'
 import { Tabs, useRouter } from 'expo-router'
 import { FontAwesome } from '@expo/vector-icons'

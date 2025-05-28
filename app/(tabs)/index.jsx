@@ -183,6 +183,16 @@ export default function HomeScreen() {
           <NearbyHospitals />
         </View>
       </View>
+
+          {/* Testing the prescription flow */}
+          <View>
+            <TouchableOpacity
+              style={styles.testButton}
+              onPress={() => router.push('/testing/prescription-flow')}
+            >
+              <Text style={styles.testButtonText}>Test Prescription Flow</Text>
+            </TouchableOpacity>
+          </View>
     </ScrollView>
   )
 }
@@ -286,5 +296,21 @@ const styles = StyleSheet.create({
   bookAppointmentText: { 
     color: 'white',
     fontWeight: 'bold',
+  },
+  testButton: { 
+    flexDirection: 'row',
+    alignItems: 'center', 
+    justifyContent: 'center',
+    marginTop: 10, 
+    paddingVertical: 12,
+    backgroundColor: '#f0fff4',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d1fae5',
+  },
+  testButtonText: { 
+    color: '#0AD476',
+    fontWeight: '600',
+    marginLeft: 6,
   },
 });

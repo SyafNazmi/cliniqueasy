@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'expo-router'
 import { account, DatabaseService, Query } from '@/configs/AppwriteConfig'
 import { removeSpecificStorageKey, getLocalStorage, clearUserData } from '@/service/Storage'
+import { useAuth } from '@/app/_layout';
 import Toast from 'react-native-toast-message'
 import { Ionicons } from '@expo/vector-icons'
 import { COLLECTIONS } from '@/constants'
@@ -82,50 +83,54 @@ export default function Profile() {
     checkUserId();
   }, []);
   
+  const { logout } = useAuth(); // Get logout function from auth context
+
   const handleLogout = async () => {
     try {
       console.log("Starting logout process...");
+      
+      // Show toast first to provide immediate feedback
+      Toast.show({
+        type: 'success',
+        text1: 'Logging Out',
+        text2: 'Please wait...',
+      });
       
       // Get the current user ID before logging out
       const userDetail = await getLocalStorage('userDetail');
       const userId = userDetail?.uid || 'anonymous';
       
-      // Sign out from Appwrite by deleting the current session
-      try {
-        await account.deleteSession('current');
-        console.log("Appwrite session deleted successfully");
-      } catch (sessionError) {
-        console.log("Error deleting Appwrite session:", sessionError);
-        // Continue with logout even if session deletion fails
-      }
-      
       // Clear user-specific data (medications, dose history)
       await clearUserData(userId);
       
-      // Remove user authentication details
-      await removeSpecificStorageKey('userDetail');
-      console.log("User details removed from storage");
-      
-      // Show success message
-      Toast.show({
-        type: 'success',
-        text1: 'Logged Out',
-        text2: 'You have been successfully logged out',
-      });
-      
-      // Redirect to login screen
-      console.log("Redirecting to login screen...");
-      router.replace('/login');
+      // Use a small timeout to ensure the toast is visible
+      // before potentially freezing the UI during logout
+      setTimeout(async () => {
+        try {
+          // Use the auth context logout function which handles everything else
+          await logout();
+          console.log("Logout function completed");
+        } catch (error) {
+          console.error("Error during logout:", error);
+          // If logout fails, force navigation to sign in
+          router.replace('/login/signIn');
+        }
+      }, 300);
     } catch (error) {
-      console.error("Logout error:", error);
+      console.error("Logout preparation error:", error);
       
       Toast.show({
         type: 'error',
         text1: 'Error',
         text2: 'Failed to log out. Please try again.',
       });
+      
+      // Even if there's an error, try to navigate to sign in
+      setTimeout(() => {
+        router.replace('/login/signIn');
+      }, 1000);
     }
-  }
+  };
   
   const calculateProfileCompletion = () => {
     if (!profile) return 0;

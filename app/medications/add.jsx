@@ -1,10 +1,12 @@
-import { View, Text, ScrollView, TextInput, TouchableOpacity, Switch, StyleSheet, Platform, Dimensions, Alert } from 'react-native'
+// app/medications/add.jsx
+import { View, Text, ScrollView, TextInput, TouchableOpacity, Switch, StyleSheet, Platform, Dimensions, Alert, Modal, ActivityIndicator } from 'react-native'
 import React, { useState } from 'react'
 import { LinearGradient } from 'expo-linear-gradient'
 import PageHeader from '../../components/PageHeader'
 import { Ionicons } from '@expo/vector-icons'
 import DateTimePicker from '@react-native-community/datetimepicker'
-import { router } from 'expo-router'
+import { router, useLocalSearchParams } from 'expo-router'
+import QRScannerModal from '../../components/QRScannerModal';
 import { addMedication } from '../../service/Storage'
 import { scheduleMedicationReminder } from '../../service/Notification'
 
@@ -149,34 +151,71 @@ const DURATIONS = [
     { id: 4, label: "90 days", value: 90},
     { id: 5, label: "On going", value: -1},
 ];
+
 export default function AddMedicationScreen() {
+    // State for simulated QR scanner
+    const [showQRModal, setShowQRModal] = useState(true); // Start with QR scanner open
+    
+    // Get params from router if coming from elsewhere
+    const params = useLocalSearchParams();
 
     const [form, setForm] = useState({
-        name: "",
-        type: "",
-        illnessType: "",
-        dosage: "",
-        frequencies: "",
-        duration: "",
-        startDate: new Date(),
-        times: ["09:00"],
-        notes: "",
-        reminderEnabled: true,
-        refillReminder: false,
-        currentSupply: "",
-        refillAt: "",
-      });
+        name: params?.name || "",
+        type: params?.type || "",
+        illnessType: params?.illnessType || "",
+        dosage: params?.dosage || "",
+        frequencies: params?.frequencies || "",
+        duration: params?.duration || "",
+        startDate: params?.startDate ? new Date(params.startDate) : new Date(),
+        times: params?.times ? JSON.parse(params.times) : ["09:00"],
+        notes: params?.notes || "",
+        reminderEnabled: params?.reminderEnabled !== "false",
+        refillReminder: params?.refillReminder === "true",
+        currentSupply: params?.currentSupply || "",
+        refillAt: params?.refillAt || "",
+    });
 
     const [errors, setErrors] = useState({});
-    const [selectedType, setSelectedType] = useState(""); // Added for medication type
-    const [selectedIllnessType, setSelectedIllnessType] = useState("");
+    const [selectedType, setSelectedType] = useState(params?.type || "");
+    const [selectedIllnessType, setSelectedIllnessType] = useState(params?.illnessType || "");
     const [showIllnessDropdown, setShowIllnessDropdown] = useState(false);
-    const [selectedFrequency, setSelectedFrequency] = useState("");
-    const [selectedDuration, setSelectedDuration] = useState("");
+    const [selectedFrequency, setSelectedFrequency] = useState(params?.frequencies || "");
+    const [selectedDuration, setSelectedDuration] = useState(params?.duration || "");
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [currentTimeIndex, setCurrentTimeIndex] = useState(0); // Added to track which time is being edited
+    const [currentTimeIndex, setCurrentTimeIndex] = useState(0);
+
+
+    // Handle successful scan
+    const handleScanSuccess = (medication) => {
+        console.log("Scan success with medication:", medication);
+        // Update form with medication data
+        setForm({
+            name: medication.name || "",
+            type: medication.type || "",
+            illnessType: medication.illnessType || "",
+            dosage: medication.dosage || "",
+            frequencies: medication.frequencies || "",
+            duration: medication.duration || "",
+            startDate: new Date(),
+            times: medication.times || ["09:00"],
+            notes: medication.notes || "",
+            reminderEnabled: true,
+            refillReminder: false,
+            currentSupply: medication.currentSupply || "",
+            refillAt: medication.refillAt || "",
+        });
+        
+        // Update selected values for UI
+        setSelectedType(medication.type || "");
+        setSelectedIllnessType(medication.illnessType || "");
+        setSelectedFrequency(medication.frequencies || "");
+        setSelectedDuration(medication.duration || "");
+        
+        // Close modal
+        setShowQRModal(false);
+    };
 
     // Render medication type options
     const renderMedicationTypes = () => {
@@ -450,6 +489,15 @@ export default function AddMedicationScreen() {
         end={{ x: 1, y: 1 }}
         style={styles.headerGradient}
       />
+      
+      {/* QR Code Scanner Modal */}
+        <QRScannerModal
+            visible={showQRModal}
+            onClose={() => setShowQRModal(false)}
+            onScanSuccess={handleScanSuccess}
+        />
+      
+      {/* Regular Form */}
       <View style={styles.content}>
         <View style={styles.header}>
             <PageHeader onPress={() => router.back()}/>
@@ -458,6 +506,15 @@ export default function AddMedicationScreen() {
         
         <ScrollView showsVerticalScrollIndicator={false} style={{flex: 1}}
          contentContainerStyle={styles.formContentContainer}>
+            {/* Option to open QR scanner again */}
+            <TouchableOpacity 
+              style={styles.scanPrescriptionButton}
+              onPress={() => setShowQRModal(true)}
+            >
+              <Ionicons name="qr-code" size={24} color="#1a8e2d" />
+              <Text style={styles.scanPrescriptionText}>Scan Prescription QR</Text>
+            </TouchableOpacity>
+            
             <View style={styles.section}>
                 {/* basic informations */}
                 <View style={styles.inputContainer}>
@@ -613,7 +670,6 @@ export default function AddMedicationScreen() {
                 </View>
                 </View>
             </View>
-            {/* Refill Tracker */}
             {/* Notes */}
             <View style={styles.section}>
                 <View style={styles.textAreaContainer}>
@@ -651,7 +707,7 @@ export default function AddMedicationScreen() {
         </View>
       </View>
     </View>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
@@ -769,53 +825,53 @@ const styles = StyleSheet.create({
     },
     // Illness Type
     dropdownButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: '#f5f5f5',
-        borderRadius: 10,
-        padding: 12,
-        borderWidth: 1,
-        borderColor: '#e5e5e5',
-        marginBottom: 5,
-      },
-      dropdownText: {
-        fontSize: 16,
-        color: '#333',
-      },
-      dropdownPlaceholder: {
-        fontSize: 16,
-        color: '#999',
-      },
-      dropdownMenu: {
-        backgroundColor: 'white',
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: '#e5e5e5',
-        marginBottom: 15,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
-        zIndex: 10,
-      },
-      dropdownItem: {
-        padding: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-      },
-      selectedDropdownItem: {
-        backgroundColor: '#e6f7e9',
-      },
-      dropdownItemText: {
-        fontSize: 16,
-        color: '#333',
-      },
-      selectedDropdownItemText: {
-        color: '#1a8e2d',
-        fontWeight: 'bold',
-      },
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: '#f5f5f5',
+      borderRadius: 10,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
+      marginBottom: 5,
+    },
+    dropdownText: {
+      fontSize: 16,
+      color: '#333',
+    },
+    dropdownPlaceholder: {
+      fontSize: 16,
+      color: '#999',
+    },
+    dropdownMenu: {
+      backgroundColor: 'white',
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
+      marginBottom: 15,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
+      zIndex: 10,
+    },
+    dropdownItem: {
+      padding: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: '#f0f0f0',
+    },
+    selectedDropdownItem: {
+      backgroundColor: '#e6f7e9',
+    },
+    dropdownItemText: {
+      fontSize: 16,
+      color: '#333',
+    },
+    selectedDropdownItemText: {
+      color: '#1a8e2d',
+      fontWeight: 'bold',
+    },
     dateButton: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -950,5 +1006,160 @@ const styles = StyleSheet.create({
     cancelButtonText: {
       color: '#666',
       fontSize: 16,
+    },
+    // QR Scanner Modal Styles
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    modalContainer: {
+      width: '90%',
+      maxHeight: '80%',
+      backgroundColor: 'white',
+      borderRadius: 15,
+      overflow: 'hidden',
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 15,
+      borderBottomWidth: 1,
+      borderBottomColor: '#e5e5e5',
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: '#333',
+    },
+    closeButton: {
+      padding: 5,
+    },
+    qrContent: {
+      padding: 20,
+      alignItems: 'center',
+    },
+    qrImageContainer: {
+      width: 200,
+      height: 200,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 20,
+      borderWidth: 2,
+      borderColor: '#e5e5e5',
+      borderRadius: 10,
+      overflow: 'hidden',
+    },
+    fakeScannerView: {
+      width: '100%',
+      height: '100%',
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: '#f5f5f5',
+    },
+    scanLine: {
+      position: 'absolute',
+      height: 2,
+      width: '100%',
+      backgroundColor: '#1a8e2d',
+      opacity: 0.7,
+    },
+    enterManuallyText: {
+      fontSize: 16,
+      fontWeight: '600',
+      marginBottom: 10,
+      color: '#333',
+    },
+    qrInput: {
+      width: '100%',
+      backgroundColor: '#f5f5f5',
+      borderRadius: 10,
+      padding: 12,
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: '#e5e5e5',
+      marginBottom: 15,
+    },
+    scanButton: {
+      width: '100%',
+      borderRadius: 10,
+      overflow: 'hidden',
+      marginBottom: 20,
+    },
+    scanButtonGradient: {
+      paddingVertical: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    scanButtonText: {
+      color: 'white',
+      fontSize: 16,
+      fontWeight: 'bold',
+    },
+    divider: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      width: '100%',
+      marginVertical: 15,
+    },
+    dividerLine: {
+      flex: 1,
+      height: 1,
+      backgroundColor: '#e5e5e5',
+    },
+    dividerText: {
+      marginHorizontal: 10,
+      color: '#999',
+      fontWeight: '500',
+    },
+    demoButtonsContainer: {
+      width: '100%',
+      marginBottom: 15,
+    },
+    demoButton: {
+      backgroundColor: '#f0f0f0',
+      padding: 12,
+      borderRadius: 10,
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    demoButtonText: {
+      color: '#333',
+      fontWeight: '500',
+    },
+    skipButton: {
+      padding: 12,
+    },
+    skipButtonText: {
+      color: '#666',
+      fontWeight: '500',
+    },
+    loadingContainer: {
+      padding: 40,
+      alignItems: 'center',
+    },
+    loadingText: {
+      marginTop: 15,
+      fontSize: 16,
+      color: '#333',
+    },
+    scanPrescriptionButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#e6f7e9',
+      borderRadius: 10,
+      padding: 15,
+      marginBottom: 20,
+      borderWidth: 1,
+      borderColor: '#1a8e2d20',
+      justifyContent: 'center',
+    },
+    scanPrescriptionText: {
+      color: '#1a8e2d',
+      fontWeight: 'bold',
+      fontSize: 16,
+      marginLeft: 10,
     },
   });

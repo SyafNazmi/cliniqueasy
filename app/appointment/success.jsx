@@ -69,16 +69,18 @@ export default function BookingSuccessScreen() {
         
         {/* QR Code placeholder - you can use a QR code library later */}
         <View style={styles.qrContainer}>
-          {/* <View style={styles.qrPlaceholder}>
-            <Text style={styles.qrPlaceholderText}>QR Code</Text>
-          </View> */}
-          <QRCode
+        <QRCode
             value={`APPT:${appointmentId}:${referenceCode}`}
             size={150}
             color="#000000"
             backgroundColor="#FFFFFF"
-           />
-          <Text style={styles.qrText}>Scan this code at the clinic</Text>
+        />
+        <Text style={styles.qrText}>Scan this code at the clinic</Text>
+        
+        {/* Add this information about prescriptions */}
+        <Text style={styles.qrPrescriptionNote}>
+            Save this QR code to add prescribed medications later
+        </Text>
         </View>
       </View>
       
@@ -194,6 +196,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   qrText: {
+    marginTop: 10,
+    color: '#6b7280',
+    fontSize: 14,
+  },
+  qrPrescriptionNote: {
     marginTop: 10,
     color: '#6b7280',
     fontSize: 14,
