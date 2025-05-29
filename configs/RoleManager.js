@@ -31,16 +31,75 @@ const RoleManager = {
           console.log("Doctor role found in labels");
           await RoleManager.setGlobalRoleFlag(true);
           await RoleManager.cacheRole(userId, true);
-          return 'doctor';
+          return {
+            role: 'doctor',
+            isDoctor: true
+          };
         }
       }
       
       // If no doctor label found, check if user is a doctor using other methods
       const isDoctor = await RoleManager.isDoctor(userId);
-      return isDoctor ? 'doctor' : 'patient';
+      return {
+        role: isDoctor ? 'doctor' : 'patient',
+        isDoctor: isDoctor
+      };
     } catch (error) {
       console.error('Error in getUserRole:', error);
-      return 'patient'; // Default to patient on error
+      return {
+        role: 'patient',
+        isDoctor: false
+      }; // Default to patient on error
+    }
+  },
+
+  /**
+ * Set user role and additional metadata
+ * @param {string} userId - The user ID
+ * @param {string} role - 'doctor' or 'patient'
+ * @param {Object} accountInstance - Appwrite account instance
+ * @param {Object} additionalData - Additional data like doctorLicense
+ */
+setUserRole: async (userId, role, accountInstance, additionalData = {}) => {
+    try {
+      console.log(`Setting user role to: ${role} for user: ${userId}`);
+      
+      // Prepare preferences object
+      const preferences = {
+        role: role,
+        isDoctor: role === 'doctor',
+        ...additionalData
+      };
+      
+      console.log('Setting user preferences:', preferences);
+      
+      // Update user preferences
+      await accountInstance.updatePrefs(preferences);
+      
+      // Also update our local cache
+      await RoleManager.cacheRole(userId, role === 'doctor');
+      await RoleManager.setGlobalRoleFlag(role === 'doctor');
+      
+      console.log(`User role and preferences updated successfully`);
+      return true;
+    } catch (error) {
+      console.error('Error setting user role:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Get user preferences including doctor license
+   * @param {Object} accountInstance - Appwrite account instance
+   * @returns {Promise<Object>} User preferences
+   */
+  getUserPreferences: async (accountInstance) => {
+    try {
+      const user = await accountInstance.get();
+      return user.prefs || {};
+    } catch (error) {
+      console.error('Error getting user preferences:', error);
+      return {};
     }
   },
 

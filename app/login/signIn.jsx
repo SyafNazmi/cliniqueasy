@@ -52,6 +52,7 @@ export default function SignIn() {
                 user = await account.get();
                 console.log('User details fetched:', user.$id);
                 console.log('User labels:', user.labels);
+                console.log('User preferences:', user.prefs); // This will contain our doctor license
             } catch (getUserError) {
                 console.error('Error getting user:', getUserError);
                 // If we can't get the user, we'll try to continue with the session information
@@ -62,27 +63,35 @@ export default function SignIn() {
                 user = { 
                     $id: session.userId,
                     email: email,
-                    name: email.split('@')[0] // Fallback name from email
+                    name: email.split('@')[0], // Fallback name from email
+                    prefs: {} // Empty prefs object
                 };
                 console.log('Created fallback user object from session');
             }
-            
+
+            // Extract doctor information from user preferences
+            const userPrefs = user.prefs || {};
+            const isKnownDoctor = userPrefs.isDoctor === true || userPrefs.role === 'doctor';
+            const doctorLicense = userPrefs.doctorLicense || null;
+
+            console.log('User preferences - isDoctor:', isKnownDoctor, 'license:', doctorLicense);
+
             // MANUAL ROLE CHECK FOR DEBUGGING
             // This checks if the user has the specific "doctor" label in Appwrite
-            let isKnownDoctor = false;
-            
+            let isKnownDoctorFromLabels = false;
+
             if (user.labels) {
                 console.log("User labels found:", user.labels);
                 
                 // Direct check for doctor label
                 if (user.labels === "doctor") {
-                    isKnownDoctor = true;
+                    isKnownDoctorFromLabels = true;
                     console.log("Doctor label found directly");
                 }
                 // Check in array
                 else if (Array.isArray(user.labels) && 
                     (user.labels.includes("doctor") || user.labels.includes("role:doctor"))) {
-                    isKnownDoctor = true;
+                    isKnownDoctorFromLabels = true;
                     console.log("Doctor label found in array");
                 }
                 // Try to handle object with values
@@ -92,36 +101,48 @@ export default function SignIn() {
                     );
                     
                     if (hasDoctor) {
-                        isKnownDoctor = true;
+                        isKnownDoctorFromLabels = true;
                         console.log("Doctor label found in object");
                     }
                 }
             }
-            
+
             // Get role information using our utility
             const roleInfo = await RoleManager.getUserRole(user.$id, user.labels || []);
             console.log('Role information retrieved:', roleInfo);
-            
-            // OVERRIDE: If we found doctor label but roleInfo says patient, fix it
-            if (isKnownDoctor && roleInfo.role !== 'doctor') {
-                console.log("OVERRIDING ROLE: Found doctor label but roleInfo didn't catch it");
-                roleInfo.role = 'doctor';
-                roleInfo.isDoctor = true;
+
+            // OVERRIDE: Combine all sources of doctor information
+            const finalIsDoctor = isKnownDoctor || isKnownDoctorFromLabels || (roleInfo === 'doctor');
+
+            // Create a proper role object instead of trying to modify the returned string
+            let finalRoleInfo = {
+                role: roleInfo,
+                isDoctor: roleInfo === 'doctor'
+            };
+
+            // Override if we found doctor info but roleInfo didn't catch it
+            if (finalIsDoctor && roleInfo !== 'doctor') {
+                console.log("OVERRIDING ROLE: Found doctor info but roleInfo didn't catch it");
+                finalRoleInfo = {
+                    role: 'doctor',
+                    isDoctor: true
+                };
             }
-            
+
             // Save user details to local storage
             const userData = {
                 uid: user.$id,
                 email: user.email || email,
                 displayName: user.name || email.split('@')[0],
-                isDoctor: roleInfo.isDoctor || isKnownDoctor,
-                role: roleInfo.role || (isKnownDoctor ? 'doctor' : 'patient')
+                isDoctor: finalIsDoctor,
+                role: finalRoleInfo.role || (finalIsDoctor ? 'doctor' : 'patient'),
+                ...(finalIsDoctor && doctorLicense && { doctorLicense: doctorLicense })
             };
-            
+
             console.log("Final user data being saved:", userData);
             await setLocalStorage('userDetail', userData);
             console.log('User data saved to localStorage');
-            
+
             // IMPORTANT: Update auth context state to reflect signed-in user
             // This is critical to ensure the auth provider knows about the new user
             setUser(userData);

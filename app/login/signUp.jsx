@@ -13,6 +13,7 @@ export default function SignUp() {
     const [password, setPassword] = useState('');
     const [userName, setUserName] = useState('');
     const [isDoctor, setIsDoctor] = useState(false);
+    const [doctorLicense, setDoctorLicense] = useState(''); // New state for doctor license
     const [loading, setLoading] = useState(false);
 
     const onCreateAccount = async () => {
@@ -21,6 +22,16 @@ export default function SignUp() {
                 type: 'error',
                 text1: 'Error',
                 text2: 'Please fill all the details',
+            });
+            return;
+        }
+
+        // Validate doctor license if registering as doctor
+        if (isDoctor && !doctorLicense.trim()) {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Please enter your doctor license number',
             });
             return;
         }
@@ -42,18 +53,23 @@ export default function SignUp() {
             const session = await account.createEmailPasswordSession(email, password);
             console.log("Session created");
             
-            // Set the user's role using our utility
+            // Set the user's role using our utility with additional data
             const role = isDoctor ? 'doctor' : 'patient';
-            await RoleManager.setUserRole(user.$id, role, account);
+            const additionalData = isDoctor && doctorLicense.trim() 
+                ? { doctorLicense: doctorLicense.trim() }
+                : {};
+                
+            await RoleManager.setUserRole(user.$id, role, account, additionalData);
             console.log(`User role set to: ${role}`);
             
-            // Save user details to local storage with role info
+            // Save user details to local storage with role info and doctor license
             const userData = {
                 uid: user.$id,
                 email: user.email,
                 displayName: user.name,
                 isDoctor: isDoctor,
-                role: role
+                role: role,
+                ...(isDoctor && { doctorLicense: doctorLicense.trim() }) // Add license if doctor
             };
             await setLocalStorage('userDetail', userData);
             console.log("User data saved to localStorage");
@@ -115,16 +131,40 @@ export default function SignUp() {
                 />
             </View>
             
-            {/* Add doctor role toggle */}
+            {/* Doctor role toggle */}
             <View style={styles.roleToggleContainer}>
                 <Text style={styles.roleLabel}>Register as a Doctor</Text>
                 <Switch
                     value={isDoctor}
-                    onValueChange={setIsDoctor}
+                    onValueChange={(value) => {
+                        setIsDoctor(value);
+                        // Clear license field when switching off doctor mode
+                        if (!value) {
+                            setDoctorLicense('');
+                        }
+                    }}
                     trackColor={{ false: "#ccc", true: "#0AD476" }}
                     thumbColor={isDoctor ? "#fff" : "#fff"}
                 />
             </View>
+
+            {/* Conditional Doctor License Field */}
+            {isDoctor && (
+                <View style={[styles.licenseContainer, { marginTop: 25 }]}>
+                    <Text style={styles.licenseLabel}>Doctor License Number</Text>
+                    <TextInput 
+                        placeholder='Enter your medical license number' 
+                        style={styles.textInput}
+                        value={doctorLicense}
+                        onChangeText={(value) => setDoctorLicense(value)}
+                        autoCapitalize='characters' // Capitalize license numbers
+                        autoCorrect={false}
+                    />
+                    <Text style={styles.licenseHelperText}>
+                        Please enter your valid medical license number
+                    </Text>
+                </View>
+            )}
             
             <TouchableOpacity 
                 style={[styles.button, loading && styles.buttonDisabled]} 
@@ -188,5 +228,19 @@ const styles = StyleSheet.create ({
     roleLabel: {
         fontSize: 16,
         color: '#333'
+    },
+    licenseContainer: {
+        // Additional styling for the license container if needed
+    },
+    licenseLabel: {
+        fontSize: 16,
+        color: '#333',
+        marginBottom: 5
+    },
+    licenseHelperText: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 5,
+        fontStyle: 'italic'
     }
 })
