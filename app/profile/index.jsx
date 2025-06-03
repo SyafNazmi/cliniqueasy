@@ -1,3 +1,4 @@
+// app/profile/index.jsx - Enhanced with Security
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -7,13 +8,16 @@ import {
   TouchableOpacity, 
   StyleSheet, 
   Alert,
-  ActivityIndicator 
+  ActivityIndicator, 
+  Modal
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { DatabaseService, AuthService, Query } from '../../configs/AppwriteConfig';
 import { COLLECTIONS, COLORS } from '../../constants';
 import PageHeader from '../../components/PageHeader';
+import MyKadScanner from '../../components/MyKadScanner';
+import { secureOcrService, privacyGuidelines } from '../../service/secureOcrService';
 
 // List of blood types for dropdown
 const BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Unknown"];
@@ -31,10 +35,17 @@ export default function PatientProfileScreen() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   
-  // Form state - matches exactly your Appwrite schema
+  // Security states
+  const [isSecurityInitialized, setIsSecurityInitialized] = useState(false);
+  const [securityInitializing, setSecurityInitializing] = useState(true);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [userConsent, setUserConsent] = useState(false);
+  const [showConsentDialog, setShowConsentDialog] = useState(false);
+  
+  // Form state
   const [profile, setProfile] = useState({
-    // Personal Information
     email: '',
     phoneNumber: '',
     userId: '',
@@ -43,57 +54,85 @@ export default function PatientProfileScreen() {
     birthDate: '',
     address: '',
     age: '',
-    
-    // Emergency Contact
     emergencyContactName: '',
     emergencyContactNumber: '',
     emergencyContactRelationship: [],
-    
-    // Insurance
     insuranceProvider: '',
     insurancePolicyNumber: '',
-    
-    // Medical Information
     allergies: '',
     currentMedication: '',
     familyMedicalHistory: '',
     pastMedicalHistory: '',
     bloodType: [],
-    
-    // Identification
     identificationType: '',
     identificationNumber: '',
     identificationDocumentId: ''
   });
 
-  // Selected dropdown items state
+  // Your existing dropdown states
   const [selectedBloodType, setSelectedBloodType] = useState(null);
   const [selectedGender, setSelectedGender] = useState(null);
   const [selectedIDType, setSelectedIDType] = useState(null);
   const [selectedRelationship, setSelectedRelationship] = useState(null);
-  
-  // UI state
   const [showBloodTypeDropdown, setShowBloodTypeDropdown] = useState(false);
   const [showGenderDropdown, setShowGenderDropdown] = useState(false);
   const [showIDTypeDropdown, setShowIDTypeDropdown] = useState(false);
   const [showRelationshipDropdown, setShowRelationshipDropdown] = useState(false);
   
-  // Load existing profile if available
+  // Initialize security and load profile
+  useEffect(() => {
+    const initializeProfileSecurity = async () => {
+      try {
+        setSecurityInitializing(true);
+        
+        console.log('Initializing profile security with full features...');
+        
+        // Initialize the secure OCR service
+        await secureOcrService.initialize();
+        setIsSecurityInitialized(true);
+        
+        console.log('Profile security initialized successfully');
+        
+        // Load current user
+        const user = await AuthService.getCurrentUser();
+        setCurrentUser(user);
+        
+        // Check if user has given consent for data processing
+        if (user && privacyGuidelines.requireExplicitConsent) {
+          const consent = await secureOcrService.checkUserConsent(user.$id);
+          setUserConsent(consent);
+          console.log('User consent status:', consent);
+        }
+        
+      } catch (error) {
+        console.error('Failed to initialize profile security:', error);
+        Alert.alert(
+          'Security Initialization Error',
+          'Some security features may not work properly. The app will continue to function normally.',
+          [{ text: 'OK' }]
+        );
+      } finally {
+        setSecurityInitializing(false);
+      }
+    };
+
+    initializeProfileSecurity();
+  }, []);
+
+  // Load existing profile (your existing code)
   useEffect(() => {
     const loadProfile = async () => {
       try {
         setIsLoading(true);
-        const currentUser = await AuthService.getCurrentUser();
+        const user = currentUser || await AuthService.getCurrentUser();
         
-        if (currentUser) {
-          // Set the userId in the profile
-          setProfile(prev => ({...prev, userId: currentUser.$id}));
+        if (user) {
+          setProfile(prev => ({...prev, userId: user.$id}));
           
-          // Check if profile exists
           try {
             const response = await DatabaseService.listDocuments(
               COLLECTIONS.PATIENT_PROFILES,
-              [Query.equal('userId', currentUser.$id)],
+              [Query.equal('userId', user.$id)],
               1
             );
             
@@ -105,15 +144,12 @@ export default function PatientProfileScreen() {
               if (patientData.bloodType && patientData.bloodType.length > 0) {
                 setSelectedBloodType(patientData.bloodType[0]);
               }
-              
               if (patientData.gender) {
-                setSelectedGender(patientData.gender);
+                setSelectedGender(patientData.gender === 'male' ? 'Male' : 'Female');
               }
-              
               if (patientData.identificationType) {
                 setSelectedIDType(patientData.identificationType);
               }
-              
               if (patientData.emergencyContactRelationship && 
                   patientData.emergencyContactRelationship.length > 0) {
                 setSelectedRelationship(patientData.emergencyContactRelationship[0]);
@@ -130,9 +166,175 @@ export default function PatientProfileScreen() {
       }
     };
     
-    loadProfile();
-  }, []);
-  
+    if (!securityInitializing) {
+      loadProfile();
+    }
+  }, [securityInitializing, currentUser]);
+
+  // Handle consent dialog
+  const handleConsentAccept = async () => {
+    try {
+      if (currentUser) {
+        await secureOcrService.recordUserConsent(currentUser.$id, {
+          purpose: 'MyKad information extraction for clinic registration',
+          dataTypes: privacyGuidelines.allowedFields,
+          retentionPeriod: privacyGuidelines.dataRetentionDays
+        });
+        setUserConsent(true);
+        setShowConsentDialog(false);
+        setShowScanner(true);
+      }
+    } catch (error) {
+      console.error('Failed to record consent:', error);
+      Alert.alert('Error', 'Failed to record consent. Please try again.');
+    }
+  };
+
+  const handleConsentDecline = () => {
+    setShowConsentDialog(false);
+    Alert.alert(
+      'Consent Required',
+      'MyKad scanning requires your consent to process personal data. You can enter information manually instead.',
+      [{ text: 'OK' }]
+    );
+  };
+
+  // Handle secure MyKad scanning
+  const handleMyKadScanPress = async () => {
+    try {
+      if (!isSecurityInitialized) {
+        Alert.alert('Security Not Ready', 'Security features are still initializing. Please wait a moment.');
+        return;
+      }
+
+      if (privacyGuidelines.requireAuthentication && !currentUser) {
+        Alert.alert('Authentication Required', 'Please log in to use MyKad scanning features.');
+        return;
+      }
+
+      if (privacyGuidelines.requireExplicitConsent && !userConsent) {
+        setShowConsentDialog(true);
+        return;
+      }
+
+      setShowScanner(true);
+    } catch (error) {
+      console.error('Error opening MyKad scanner:', error);
+      Alert.alert('Error', 'Failed to open MyKad scanner. Please try again.');
+    }
+  };
+
+  // Enhanced OCR data extraction with security
+  const handleOCRDataExtracted = async (extractedData) => {
+    try {
+      console.log('Secure OCR Data received:', extractedData);
+      
+      // Filter the data according to privacy guidelines
+      const filteredData = secureOcrService.filterSensitiveData(extractedData);
+      console.log('Filtered OCR data:', filteredData);
+      
+      // Pre-fill form with filtered extracted data
+      setProfile(prev => ({
+        ...prev,
+        identificationNumber: filteredData.icNumber || prev.identificationNumber,
+        fullName: filteredData.name || prev.fullName,
+        birthDate: filteredData.dateOfBirth || prev.birthDate,
+        gender: filteredData.gender || prev.gender,
+        address: filteredData.address || prev.address,
+        age: filteredData.age || prev.age,
+      }));
+
+      // Update gender dropdown
+      if (filteredData.gender) {
+        setSelectedGender(filteredData.gender === 'male' ? 'Male' : 'Female');
+      }
+
+      // Set ID type to National ID if IC number is extracted
+      if (filteredData.icNumber) {
+        setSelectedIDType('National ID');
+        setProfile(prev => ({...prev, identificationType: 'National ID'}));
+      }
+
+      Alert.alert(
+        'Information Extracted Securely!', 
+        'Your MyKad information has been extracted and processed according to privacy guidelines. Please verify the information and complete any missing fields.',
+        [{ text: 'OK' }]
+      );
+
+    } catch (error) {
+      console.error('Error processing extracted data:', error);
+      Alert.alert('Error', 'Failed to process extracted data. Please try manual entry.');
+    }
+  };
+
+  // Render consent dialog
+  const renderConsentDialog = () => (
+    <Modal visible={showConsentDialog} transparent={true} animationType="slide">
+      <View style={styles.consentOverlay}>
+        <View style={styles.consentContainer}>
+          <Ionicons name="shield-checkmark" size={48} color="#0AD476" style={styles.consentIcon} />
+          <Text style={styles.consentTitle}>Data Processing Consent</Text>
+          <Text style={styles.consentText}>
+            To scan your MyKad, we need your consent to process the following information:
+          </Text>
+          <View style={styles.consentFields}>
+            {privacyGuidelines.allowedFields.map((field, index) => (
+              <Text key={index} style={styles.consentField}>
+                • {field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+              </Text>
+            ))}
+          </View>
+          <Text style={styles.consentDetails}>
+            Your data will be processed securely and retained for {privacyGuidelines.dataRetentionDays} days in compliance with PDPA regulations.
+          </Text>
+          <View style={styles.consentButtons}>
+            <TouchableOpacity style={styles.declineButton} onPress={handleConsentDecline}>
+              <Text style={styles.declineButtonText}>Decline</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.acceptButton} onPress={handleConsentAccept}>
+              <Text style={styles.acceptButtonText}>Accept</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // Render security status indicator
+  const renderSecurityStatus = () => {
+    if (securityInitializing) {
+      return (
+        <View style={styles.securityStatus}>
+          <ActivityIndicator size="small" color="#0AD476" />
+          <Text style={styles.securityStatusText}>Initializing security...</Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.securityStatus}>
+        <Ionicons 
+          name={isSecurityInitialized ? "shield-checkmark" : "shield-outline"} 
+          size={16} 
+          color={isSecurityInitialized ? "#0AD476" : "#FF6B6B"} 
+        />
+        <Text style={[
+          styles.securityStatusText, 
+          { color: isSecurityInitialized ? "#0AD476" : "#FF6B6B" }
+        ]}>
+          {isSecurityInitialized ? "Security Active" : "Security Error"}
+        </Text>
+        {isSecurityInitialized && userConsent && (
+          <>
+            <Text style={styles.securityDivider}> • </Text>
+            <Text style={styles.consentStatus}>PDPA Compliant</Text>
+          </>
+        )}
+      </View>
+    );
+  };
+
+  // Your existing handler functions
   const handleChange = (field, value) => {
     setProfile(prev => ({...prev, [field]: value}));
   };
@@ -144,8 +346,8 @@ export default function PatientProfileScreen() {
   };
   
   const handleGenderSelect = (gender) => {
-    setSelectedGender(gender); // Keep the display value with capitalization
-    setProfile(prev => ({...prev, gender: gender.toLowerCase()})); // Convert to lowercase for the database
+    setSelectedGender(gender);
+    setProfile(prev => ({...prev, gender: gender.toLowerCase()}));
     setShowGenderDropdown(false);
   };
   
@@ -161,54 +363,62 @@ export default function PatientProfileScreen() {
     setShowRelationshipDropdown(false);
   };
   
+  // Your existing save handler with audit logging
   const handleSave = async () => {
     try {
       setIsSaving(true);
       
-      // Validation for required fields based on your schema
       if (!profile.email || !profile.phoneNumber || !profile.fullName || !profile.userId) {
         Alert.alert('Missing Information', 'Please fill in all required fields (email, phone number, full name).');
         setIsSaving(false);
         return;
       }
 
-      // Ensure gender is in correct format
       if (profile.gender && profile.gender !== 'male' && profile.gender !== 'female') {
-        // If gender is not in the correct format, default to 'other' or convert as appropriate
         setProfile(prev => ({...prev, gender: prev.gender.toLowerCase()}));
       }
       
-      const currentUser = await AuthService.getCurrentUser();
+      const user = currentUser || await AuthService.getCurrentUser();
       
-      if (currentUser) {
-        // Double check userId is set correctly
+      if (user) {
         const dataToSave = {
           ...profile,
-          userId: currentUser.$id
+          userId: user.$id
         };
         
-        // Check if profile exists first
         const response = await DatabaseService.listDocuments(
           COLLECTIONS.PATIENT_PROFILES,
-          [Query.equal('userId', currentUser.$id)],
+          [Query.equal('userId', user.$id)],
           1
         );
         
         if (response.documents.length > 0) {
-          // Update existing profile
           await DatabaseService.updateDocument(
             COLLECTIONS.PATIENT_PROFILES,
             response.documents[0].$id,
             dataToSave
           );
           
+          // Log profile update for audit
+          if (isSecurityInitialized) {
+            await secureOcrService.logAccess(user.$id, 'profile_updated', {
+              profileId: response.documents[0].$id
+            });
+          }
+          
           Alert.alert('Success', 'Your profile has been updated.');
         } else {
-          // Create new profile
-          await DatabaseService.createDocument(
+          const newProfile = await DatabaseService.createDocument(
             COLLECTIONS.PATIENT_PROFILES,
             dataToSave
           );
+          
+          // Log profile creation for audit
+          if (isSecurityInitialized) {
+            await secureOcrService.logAccess(user.$id, 'profile_created', {
+              profileId: newProfile.$id
+            });
+          }
           
           Alert.alert('Success', 'Your profile has been created.');
         }
@@ -222,8 +432,8 @@ export default function PatientProfileScreen() {
       setIsSaving(false);
     }
   };
-  
-  // Calculate profile completion percentage
+
+  // Your existing completion calculation
   const getProfileCompletion = () => {
     const requiredFields = ['email', 'phoneNumber', 'fullName', 'gender', 'birthDate', 'address'];
     const semiImportantFields = ['emergencyContactName', 'emergencyContactNumber', 'emergencyContactRelationship'];
@@ -254,9 +464,9 @@ export default function PatientProfileScreen() {
       return profile[field]?.trim?.();
     }).length;
     
-    const requiredWeight = 0.6; // Required fields are 60% of completion
-    const semiImportantWeight = 0.25; // Semi-important fields are 25% of completion
-    const optionalWeight = 0.15; // Optional fields are 15% of completion
+    const requiredWeight = 0.6;
+    const semiImportantWeight = 0.25;
+    const optionalWeight = 0.15;
     
     const requiredCompletion = (filledRequired / requiredFields.length) * requiredWeight;
     const semiImportantCompletion = (filledSemiImportant / semiImportantFields.length) * semiImportantWeight;
@@ -267,16 +477,20 @@ export default function PatientProfileScreen() {
   
   const completion = getProfileCompletion();
   
-  if (isLoading) {
+  if (isLoading || securityInitializing) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Loading your profile...</Text>
+        <Text style={styles.loadingText}>
+          {securityInitializing ? 'Initializing security...' : 'Loading your profile...'}
+        </Text>
       </View>
     );
   }
   
   return (
+    <>
+    {renderConsentDialog()}
     <View style={styles.container}>
         <View style={{ marginTop: 50 }}>
         <PageHeader title="Patient Profile" onPress={() => router.back()} />
@@ -289,6 +503,24 @@ export default function PatientProfileScreen() {
         </View>
         <Text style={styles.completionText}>Profile {completion}% complete</Text>
       </View>
+
+      {/* Secure OCR Scanner Button */}
+      <TouchableOpacity
+          style={[
+            styles.scanButton,
+            (!isSecurityInitialized || securityInitializing) && styles.scanButtonDisabled
+          ]}
+          onPress={handleMyKadScanPress}
+          disabled={!isSecurityInitialized || securityInitializing}
+        >
+          <Ionicons name="scan" size={24} color="white" />
+          <Text style={styles.scanButtonText}>
+            {!isSecurityInitialized ? 'Security Initializing...' : 'Scan MyKad to Auto-Fill (Secure)'}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Security Status */}
+        {renderSecurityStatus()}
       
       <ScrollView style={styles.form}>
         <Text style={styles.sectionTitle}>Personal Information</Text>
@@ -593,7 +825,15 @@ export default function PatientProfileScreen() {
         {/* Add some bottom padding for better scrolling */}
         <View style={{ height: 40 }} />
       </ScrollView>
-    </View>
+
+      {/* Enhanced MyKad Scanner Modal with Security */}
+       <MyKadScanner
+          visible={showScanner}
+          onDataExtracted={handleOCRDataExtracted}
+          onClose={() => setShowScanner(false)}
+        />
+      </View>
+    </>
   );
 }
 
@@ -632,6 +872,54 @@ const styles = StyleSheet.create({
     color: '#4b5563',
     textAlign: 'right',
   },
+  scanButton: {
+    backgroundColor: '#0AD476',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 5,
+    paddingVertical: 12,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  scanButtonDisabled: {
+    backgroundColor: '#d1d5db',
+  },
+  scanButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+  securityStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginBottom: 5,
+  },
+  securityStatusText: {
+    fontSize: 12,
+    marginLeft: 5,
+    fontWeight: '500',
+  },
+  securityDivider: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginHorizontal: 5,
+  },
+  consentStatus: {
+    fontSize: 12,
+    color: '#0AD476',
+    fontWeight: '500',
+  },
   form: {
     padding: 16,
   },
@@ -660,6 +948,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
+  },
+  saveButton: {
+    backgroundColor: '#0AD476',
+    paddingVertical: 14,
+    borderRadius: 8,
+    marginVertical: 30,
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   textArea: {
     height: 80,
@@ -702,16 +1002,81 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#374151',
   },
-  saveButton: {
-    backgroundColor: '#0AD476',
-    paddingVertical: 14,
-    borderRadius: 8,
-    marginVertical: 30,
+   // Consent Dialog Styles
+   consentOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
-  saveButtonText: {
-    color: 'white',
-    fontSize: 16,
+  consentContainer: {
+    backgroundColor: 'white',
+    borderRadius: 15,
+    padding: 20,
+    width: '100%',
+    maxWidth: 400,
+  },
+  consentIcon: {
+    alignSelf: 'center',
+    marginBottom: 10,
+  },
+  consentTitle: {
+    fontSize: 20,
     fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 15,
+    color: '#333',
+  },
+  consentText: {
+    fontSize: 16,
+    color: '#333',
+    marginBottom: 15,
+    lineHeight: 22,
+  },
+  consentFields: {
+    backgroundColor: '#f5f5f5',
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 15,
+  },
+  consentField: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 5,
+  },
+  consentDetails: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 20,
+    lineHeight: 18,
+  },
+  consentButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  declineButton: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginRight: 10,
+  },
+  declineButtonText: {
+    color: '#666',
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  acceptButton: {
+    flex: 1,
+    backgroundColor: '#0AD476',
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginLeft: 10,
+  },
+  acceptButtonText: {
+    color: 'white',
+    textAlign: 'center',
+    fontWeight: '500',
   },
 });

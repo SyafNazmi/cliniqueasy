@@ -1,3 +1,4 @@
+// app/(tabs)/Profile.jsx
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native'
 import React, { useEffect, useState } from 'react'
 import { useRouter } from 'expo-router'
@@ -19,8 +20,6 @@ export default function Profile() {
     if (!dateString) return new Date(0);
     
     try {
-      // Handle different date formats
-      // Format: "Day, DD Mon YYYY" (e.g., "Monday, 15 Jan 2024")
       const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
       if (parts) {
         const months = {
@@ -29,17 +28,16 @@ export default function Profile() {
         };
         
         return new Date(
-          parseInt(parts[4]), // year
-          months[parts[3]], // month
-          parseInt(parts[2]) // day
+          parseInt(parts[4]),
+          months[parts[3]],
+          parseInt(parts[2])
         );
       }
       
-      // Fallback: try to parse as standard date string
       return new Date(dateString);
     } catch (error) {
       console.error('Error parsing date:', dateString, error);
-      return new Date(0); // Return epoch if parsing fails
+      return new Date(0);
     }
   };
 
@@ -53,7 +51,6 @@ export default function Profile() {
       const currentUser = await account.get();
       
       if (currentUser) {
-        // Load profile and appointments in parallel
         const [profileResponse, appointmentsResponse] = await Promise.all([
           DatabaseService.listDocuments(
             COLLECTIONS.PATIENT_PROFILES,
@@ -71,15 +68,12 @@ export default function Profile() {
           setProfile(profileResponse.documents[0]);
         }
         
-        // Sort appointments by date, most recent first (latest dates first)
         const sortedAppointments = appointmentsResponse.documents.sort((a, b) => {
           if (!a.date || !b.date) return 0;
           
           try {
             const dateA = parseAppointmentDate(a.date);
             const dateB = parseAppointmentDate(b.date);
-            
-            // Sort by most recent first (latest dates first)
             return dateB.getTime() - dateA.getTime();
           } catch (error) {
             console.error('Error sorting appointments:', error);
@@ -181,207 +175,206 @@ export default function Profile() {
     }
   };
 
-  const handleAppointmentClick = (appointment) => {
-    router.push({
-      pathname: '/profile/appointment-details',
-      params: {
-        appointment: JSON.stringify(appointment)
-      }
-    });
-  };
-
-  const renderAppointmentItem = (appointment, isPast = false) => {
-    const statusColor = isPast ? '#8E8E93' : '#0AD476';
-    const statusText = isPast ? 'Completed' : 'Upcoming';
-    
-    return (
-      <TouchableOpacity
-        key={appointment.$id}
-        style={[styles.appointmentItem, isPast && styles.pastAppointmentItem]}
-        onPress={() => handleAppointmentClick(appointment)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.appointmentHeader}>
-          <View style={styles.appointmentInfo}>
-            <Text style={[styles.appointmentDoctor, isPast && styles.pastText]}>
-              {appointment.doctor_name || 'Doctor'}
-            </Text>
-            <Text style={[styles.appointmentSpecialization, isPast && styles.pastText]}>
-              {appointment.doctor_specialization || 'General Practice'}
-            </Text>
-          </View>
-          <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-            <Text style={styles.statusBadgeText}>{statusText}</Text>
-          </View>
-        </View>
-        
-        <View style={styles.appointmentDetails}>
-          <View style={styles.appointmentDetailRow}>
-            <Ionicons name="calendar-outline" size={14} color={isPast ? '#8E8E93' : '#666'} />
-            <Text style={[styles.appointmentDetailText, isPast && styles.pastText]}>
-              {appointment.date || 'Date not set'}
-            </Text>
-          </View>
-          <View style={styles.appointmentDetailRow}>
-            <Ionicons name="time-outline" size={14} color={isPast ? '#8E8E93' : '#666'} />
-            <Text style={[styles.appointmentDetailText, isPast && styles.pastText]}>
-              {appointment.time || 'Time not set'}
-            </Text>
-          </View>
-          <View style={styles.appointmentDetailRow}>
-            <Ionicons name="location-outline" size={14} color={isPast ? '#8E8E93' : '#666'} />
-            <Text style={[styles.appointmentDetailText, isPast && styles.pastText]} numberOfLines={1}>
-              {appointment.hospital_name || 'Hospital not specified'}
-            </Text>
-          </View>
-        </View>
-        
-        <View style={styles.appointmentFooter}>
-          <Text style={[styles.appointmentId, isPast && styles.pastText]}>
-            ID: {appointment.$id?.substring(0, 8) || 'N/A'}
-          </Text>
-          <Ionicons name="chevron-forward-outline" size={16} color={isPast ? '#8E8E93' : '#0AD476'} />
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
   // Separate appointments into upcoming and past
   const upcomingAppointments = appointments.filter(app => !isDatePast(app.date));
   const pastAppointments = appointments.filter(app => isDatePast(app.date));
+  const completion = calculateProfileCompletion();
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#0AD476" />
+        <Text style={styles.loadingText}>Loading your profile...</Text>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       {/* Header */}
       <View style={styles.header}>
-        {isLoading ? (
-          <ActivityIndicator size="large" color="#0AD476" />
-        ) : profile ? (
-          <View style={styles.profileHeader}>
-            <View style={styles.avatarContainer}>
+        <View style={styles.profileHeader}>
+          <View style={styles.avatarContainer}>
+            {profile?.fullName ? (
               <Text style={styles.avatarText}>
-                {profile.fullName ? profile.fullName.charAt(0).toUpperCase() : '?'}
+                {profile.fullName.charAt(0).toUpperCase()}
               </Text>
-            </View>
-            <Text style={styles.userName}>{profile.fullName || 'User'}</Text>
-            <Text style={styles.userEmail}>{profile.email || 'user@example.com'}</Text>
+            ) : (
+              <Ionicons name="person" size={24} color="#fff" />
+            )}
           </View>
-        ) : (
-          <View style={styles.profileHeader}>
-            <View style={styles.avatarContainer}>
-              <Ionicons name="person" size={30} color="#fff" />
-            </View>
-            <Text style={styles.userName}>Create Profile</Text>
-            <Text style={styles.userEmail}>Complete your profile to get started</Text>
+          <View style={styles.profileInfo}>
+            <Text style={styles.userName}>{profile?.fullName || 'Complete Your Profile'}</Text>
+            <Text style={styles.userEmail}>{profile?.email || 'Add your information'}</Text>
           </View>
+        </View>
+      </View>
+
+      {/* Profile Completion Card - Moved to top */}
+      <View style={styles.completionCard}>
+        <View style={styles.completionHeader}>
+          <View style={styles.completionInfo}>
+            <Text style={styles.completionTitle}>Profile Completion</Text>
+            <Text style={styles.completionSubtext}>
+              {completion === 100 ? 'Your profile is complete!' : 'Complete your profile to unlock all features'}
+            </Text>
+          </View>
+          <View style={styles.completionPercentageContainer}>
+            <Text style={styles.completionPercentage}>{completion}%</Text>
+          </View>
+        </View>
+        <View style={styles.progressBarBackground}>
+          <View style={[styles.progressBar, { width: `${completion}%` }]} />
+        </View>
+        {completion < 100 && (
+          <TouchableOpacity 
+            style={styles.completeProfileButton}
+            onPress={() => router.push('/profile')}
+          >
+            <Text style={styles.completeProfileText}>Complete Profile</Text>
+            <Ionicons name="chevron-forward" size={16} color="#0AD476" />
+          </TouchableOpacity>
         )}
       </View>
 
-      {/* Account Settings Section */}
+      {/* Account Information */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account Setting</Text>
+        <Text style={styles.sectionTitle}>Account Information</Text>
         
         <TouchableOpacity 
           style={styles.menuItem}
           onPress={() => router.push('/profile')}
         >
           <View style={styles.menuItemLeft}>
-            <Ionicons name="person-outline" size={20} color="#666" />
-            <Text style={styles.menuItemText}>Personal Information</Text>
+            <View style={styles.iconContainer}>
+              <Ionicons name="person-outline" size={20} color="#0AD476" />
+            </View>
+            <View>
+              <Text style={styles.menuItemText}>Personal Information</Text>
+              <Text style={styles.menuItemSubtext}>Update your profile details</Text>
+            </View>
           </View>
-          <Ionicons name="chevron-forward" size={16} color="#999" />
+          <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
         </TouchableOpacity>
+      </View>
 
-        {/* Appointment Summary Cards */}
-        {upcomingAppointments.length > 0 && (
-          <View style={styles.infoCard}>
-            <Ionicons name="time-outline" size={16} color="#0AD476" />
-            <Text style={styles.infoText}>
-              You have {upcomingAppointments.length} upcoming appointment{upcomingAppointments.length > 1 ? 's' : ''}
+      {/* Appointments Summary */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Appointments</Text>
+          {appointments.length > 0 && (
+            <TouchableOpacity onPress={() => router.push('/profile/upcoming-appointments')}>
+              <Text style={styles.viewAllLink}>View All</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        
+        {appointments.length === 0 ? (
+          <View style={styles.emptyAppointments}>
+            <Ionicons name="calendar-outline" size={32} color="#C7C7CC" />
+            <Text style={styles.emptyAppointmentsText}>No appointments yet</Text>
+            <Text style={styles.emptyAppointmentsSubtext}>
+              Your appointment history will appear here
             </Text>
           </View>
-        )}
+        ) : (
+          <View style={styles.appointmentsMenuContainer}>
+            {/* Upcoming Appointments */}
+            {upcomingAppointments.length > 0 && (
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={() => router.push('/profile/upcoming-appointments')}
+              >
+                <View style={styles.menuItemLeft}>
+                  <View style={[styles.iconContainer, { backgroundColor: '#E8F5E8' }]}>
+                    <Ionicons name="time-outline" size={20} color="#0AD476" />
+                  </View>
+                  <View>
+                    <Text style={styles.menuItemText}>Upcoming Appointments</Text>
+                    <Text style={styles.menuItemSubtext}>
+                      {upcomingAppointments.length} appointment{upcomingAppointments.length > 1 ? 's' : ''} scheduled
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.appointmentBadge}>
+                  <Text style={styles.appointmentBadgeText}>{upcomingAppointments.length}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
 
-        {pastAppointments.length > 0 && (
-          <TouchableOpacity 
-            style={styles.pastInfoCard}
-            onPress={() => router.push('/profile/past-appointments')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="checkmark-circle-outline" size={16} color="#8E8E93" />
-            <Text style={styles.pastInfoText}>
-              You have {pastAppointments.length} completed appointment{pastAppointments.length > 1 ? 's' : ''}
-            </Text>
-            <Ionicons name="chevron-forward" size={14} color="#8E8E93" />
-          </TouchableOpacity>
-        )}
+            {/* Past Appointments */}
+            {pastAppointments.length > 0 && (
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={() => router.push('/profile/past-appointments')}
+              >
+                <View style={styles.menuItemLeft}>
+                  <View style={[styles.iconContainer, { backgroundColor: '#F5F5F5' }]}>
+                    <Ionicons name="checkmark-circle-outline" size={20} color="#8E8E93" />
+                  </View>
+                  <View>
+                    <Text style={styles.menuItemText}>Past Appointments</Text>
+                    <Text style={styles.menuItemSubtext}>
+                      {pastAppointments.length} completed appointment{pastAppointments.length > 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                </View>
+                <View style={[styles.appointmentBadge, { backgroundColor: '#F5F5F5' }]}>
+                  <Text style={[styles.appointmentBadgeText, { color: '#8E8E93' }]}>{pastAppointments.length}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
 
-        {appointments.length > 0 && (
-          <View style={styles.totalInfoCard}>
-            <Ionicons name="calendar" size={16} color="#0AD476" />
-            <Text style={styles.totalInfoText}>
-              Total appointments: {appointments.length}
-            </Text>
+            {/* All Appointments Summary */}
+            <TouchableOpacity 
+              style={[styles.menuItem, { borderBottomWidth: 0 }]}
+              onPress={() => router.push('/profile/upcoming-appointments')}
+            >
+              <View style={styles.menuItemLeft}>
+                <View style={[styles.iconContainer, { backgroundColor: '#F0FDF4' }]}>
+                  <Ionicons name="calendar-outline" size={20} color="#0AD476" />
+                </View>
+                <View>
+                  <Text style={styles.menuItemText}>All Appointments</Text>
+                  <Text style={styles.menuItemSubtext}>
+                    View complete appointment history
+                  </Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
+            </TouchableOpacity>
           </View>
         )}
       </View>
 
-      {/* Upcoming Appointments Section */}
-      {upcomingAppointments.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
-          {upcomingAppointments.slice(0, 3).map(appointment => 
-            renderAppointmentItem(appointment, false)
-          )}
-          {upcomingAppointments.length > 3 && (
-            <TouchableOpacity 
-              style={styles.viewAllButton}
-              onPress={() => router.push('/profile/upcoming-appointments')}
-            >
-              <Text style={styles.viewAllText}>View All Upcoming ({upcomingAppointments.length})</Text>
-              <Ionicons name="chevron-forward" size={16} color="#0AD476" />
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-
-      {/* Recent Past Appointments Section */}
-      {pastAppointments.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Recent Appointments</Text>
-          {pastAppointments.slice(0, 2).map(appointment => 
-            renderAppointmentItem(appointment, true)
-          )}
-          <TouchableOpacity 
-            style={styles.viewAllButton}
-            onPress={() => router.push('/profile/past-appointments')}
-          >
-            <Text style={[styles.viewAllText, { color: '#8E8E93' }]}>
-              View All Past ({pastAppointments.length})
-            </Text>
-            <Ionicons name="chevron-forward" size={16} color="#8E8E93" />
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Other Section */}
+      {/* Settings & Support */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Other</Text>
+        <Text style={styles.sectionTitle}>Settings & Support</Text>
         
         <TouchableOpacity style={styles.menuItem}>
           <View style={styles.menuItemLeft}>
-            <Ionicons name="help-circle-outline" size={20} color="#666" />
-            <Text style={styles.menuItemText}>Help Center</Text>
+            <View style={styles.iconContainer}>
+              <Ionicons name="help-circle-outline" size={20} color="#0AD476" />
+            </View>
+            <View>
+              <Text style={styles.menuItemText}>Help Center</Text>
+              <Text style={styles.menuItemSubtext}>Get help and support</Text>
+            </View>
           </View>
-          <Ionicons name="chevron-forward" size={16} color="#999" />
+          <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.menuItem}>
           <View style={styles.menuItemLeft}>
-            <Ionicons name="information-circle-outline" size={20} color="#666" />
-            <Text style={styles.menuItemText}>About</Text>
+            <View style={styles.iconContainer}>
+              <Ionicons name="information-circle-outline" size={20} color="#0AD476" />
+            </View>
+            <View>
+              <Text style={styles.menuItemText}>About</Text>
+              <Text style={styles.menuItemSubtext}>App version and info</Text>
+            </View>
           </View>
-          <Ionicons name="chevron-forward" size={16} color="#999" />
+          <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
         </TouchableOpacity>
 
         <TouchableOpacity 
@@ -389,28 +382,17 @@ export default function Profile() {
           onPress={handleLogout}
         >
           <View style={styles.menuItemLeft}>
-            <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
-            <Text style={[styles.menuItemText, styles.logoutText]}>Logout</Text>
+            <View style={[styles.iconContainer, { backgroundColor: '#FFE5E5' }]}>
+              <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
+            </View>
+            <View>
+              <Text style={[styles.menuItemText, styles.logoutText]}>Sign Out</Text>
+              <Text style={styles.menuItemSubtext}>Sign out of your account</Text>
+            </View>
           </View>
           <Ionicons name="chevron-forward" size={16} color="#FF3B30" />
         </TouchableOpacity>
       </View>
-
-      {/* Profile Completion Indicator */}
-      {profile && (
-        <View style={styles.completionCard}>
-          <View style={styles.completionHeader}>
-            <Text style={styles.completionTitle}>Profile Completion</Text>
-            <Text style={styles.completionPercentage}>{calculateProfileCompletion()}%</Text>
-          </View>
-          <View style={styles.progressBarBackground}>
-            <View style={[styles.progressBar, { width: `${calculateProfileCompletion()}%` }]} />
-          </View>
-          <Text style={styles.completionSubtext}>
-            Complete your profile to unlock all features
-          </Text>
-        </View>
-      )}
 
       <Toast />
       <View style={{ height: 100 }} />
@@ -423,55 +405,144 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8F9FA',
   },
-  header: {
-    backgroundColor: '#FFFFFF',
-    paddingTop: 60,
-    paddingBottom: 30,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  profileHeader: {
-    alignItems: 'center',
-  },
-  avatarContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#0AD476',
+  loadingContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
+    backgroundColor: '#F8F9FA',
   },
-  avatarText: {
-    fontSize: 32,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  userName: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 4,
-  },
-  userEmail: {
+  loadingText: {
+    marginTop: 16,
     fontSize: 16,
     color: '#8E8E93',
   },
-  section: {
+  header: {
     backgroundColor: '#FFFFFF',
-    marginTop: 20,
+    paddingTop: 60,
+    paddingBottom: 24,
+    paddingHorizontal: 20,
+  },
+  profileHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatarContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#0AD476',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  avatarText: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  profileInfo: {
+    flex: 1,
+  },
+  userName: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 2,
+  },
+  userEmail: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  completionCard: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 20,
+    marginTop: 16,
+    padding: 20,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  completionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  completionInfo: {
+    flex: 1,
+  },
+  completionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 2,
+  },
+  completionSubtext: {
+    fontSize: 13,
+    color: '#8E8E93',
+    lineHeight: 18,
+  },
+  completionPercentageContainer: {
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  completionPercentage: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0AD476',
+  },
+  progressBarBackground: {
+    height: 6,
+    backgroundColor: '#F0F0F0',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  progressBar: {
+    height: '100%',
+    backgroundColor: '#0AD476',
+    borderRadius: 3,
+  },
+  completeProfileButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 8,
   },
+  completeProfileText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#0AD476',
+    marginRight: 4,
+  },
+  section: {
+    backgroundColor: '#FFFFFF',
+    marginTop: 16,
+    paddingVertical: 8,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#000000',
     paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    paddingVertical: 12,
+  },
+  viewAllLink: {
+    fontSize: 14,
+    color: '#0AD476',
+    fontWeight: '500',
   },
   menuItem: {
     flexDirection: 'row',
@@ -485,11 +556,26 @@ const styles = StyleSheet.create({
   menuItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+  },
+  iconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F0FDF4',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
   menuItemText: {
     fontSize: 16,
+    fontWeight: '500',
     color: '#000000',
-    marginLeft: 12,
+    marginBottom: 2,
+  },
+  menuItemSubtext: {
+    fontSize: 13,
+    color: '#8E8E93',
   },
   logoutItem: {
     borderBottomWidth: 0,
@@ -497,189 +583,82 @@ const styles = StyleSheet.create({
   logoutText: {
     color: '#FF3B30',
   },
-  infoCard: {
-    flexDirection: 'row',
+  emptyAppointments: {
     alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    marginHorizontal: 20,
-    marginVertical: 8,
-    padding: 12,
-    borderRadius: 8,
+    paddingVertical: 32,
+    paddingHorizontal: 20,
   },
-  infoText: {
-    fontSize: 14,
-    color: '#0AD476',
-    marginLeft: 8,
-    flex: 1,
-  },
-  pastInfoCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8F9FA',
-    marginHorizontal: 20,
-    marginVertical: 8,
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E5E7',
-  },
-  pastInfoText: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginLeft: 8,
-    flex: 1,
-  },
-  totalInfoCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    marginHorizontal: 20,
-    marginVertical: 8,
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#0AD476',
-  },
-  totalInfoText: {
-    fontSize: 14,
-    color: '#0AD476',
-    marginLeft: 8,
-    flex: 1,
-    fontWeight: '500',
-  },
-  appointmentItem: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 20,
-    marginVertical: 6,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#F0F0F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  pastAppointmentItem: {
-    backgroundColor: '#FAFAFA',
-    borderColor: '#E5E5E7',
-  },
-  appointmentHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  appointmentInfo: {
-    flex: 1,
-    marginRight: 12,
-  },
-  appointmentDoctor: {
+  emptyAppointmentsText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-    marginBottom: 2,
+    color: '#8E8E93',
+    marginTop: 8,
+    marginBottom: 16,
   },
-  appointmentSpecialization: {
+  emptyAppointmentsSubtext: {
     fontSize: 14,
-    color: '#666666',
+    color: '#C7C7CC',
+    marginTop: 4,
+    textAlign: 'center',
   },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+  bookFirstButton: {
+    backgroundColor: '#0AD476',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
   },
-  statusBadgeText: {
-    fontSize: 12,
+  bookFirstButtonText: {
+    fontSize: 14,
     fontWeight: '500',
     color: '#FFFFFF',
   },
-  appointmentDetails: {
-    marginBottom: 12,
+  appointmentsContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 8,
   },
-  appointmentDetailRow: {
+  appointmentSummaryCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
-  },
-  appointmentDetailText: {
-    fontSize: 14,
-    color: '#666666',
-    marginLeft: 8,
-    flex: 1,
-  },
-  appointmentFooter: {
-    flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-  },
-  appointmentId: {
-    fontSize: 12,
-    color: '#8E8E93',
-    fontWeight: '500',
-  },
-  pastText: {
-    color: '#8E8E93',
-  },
-  viewAllButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    marginHorizontal: 20,
-    marginTop: 8,
-  },
-  viewAllText: {
-    fontSize: 14,
-    color: '#0AD476',
-    fontWeight: '500',
-    marginRight: 4,
-  },
-  completionCard: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 20,
-    marginTop: 20,
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  completionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  completionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  completionPercentage: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#0AD476',
-  },
-  progressBarBackground: {
-    height: 6,
-    backgroundColor: '#F0F0F0',
-    borderRadius: 3,
-    overflow: 'hidden',
+    backgroundColor: '#F8F9FA',
+    padding: 16,
+    borderRadius: 8,
     marginBottom: 8,
   },
-  progressBar: {
-    height: '100%',
-    backgroundColor: '#0AD476',
+  appointmentSummaryLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
   },
-  completionSubtext: {
-    fontSize: 14,
+  appointmentIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  appointmentSummaryTitle: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#000000',
+    marginBottom: 2,
+  },
+  appointmentSummarySubtext: {
+    fontSize: 13,
     color: '#8E8E93',
+  },
+  appointmentTotalCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  appointmentTotalText: {
+    fontSize: 14,
+    color: '#0AD476',
+    marginLeft: 8,
+    fontWeight: '500',
   },
 });
