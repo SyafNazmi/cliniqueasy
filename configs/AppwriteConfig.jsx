@@ -1,5 +1,50 @@
 // configs/AppwriteConfig.jsx
+
+// Add polyfill at the top
+import 'react-native-url-polyfill/auto';
+
 import { Client, Account, Databases, ID, Query } from 'appwrite';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Mock localStorage for React Native (alternative approach)
+if (typeof global.localStorage === 'undefined') {
+  global.localStorage = {
+    getItem: async (key) => {
+      try {
+        return await AsyncStorage.getItem(key);
+      } catch (error) {
+        console.log('Storage getItem error:', error);
+        return null;
+      }
+    },
+    setItem: async (key, value) => {
+      try {
+        await AsyncStorage.setItem(key, value);
+      } catch (error) {
+        console.log('Storage setItem error:', error);
+      }
+    },
+    removeItem: async (key) => {
+      try {
+        await AsyncStorage.removeItem(key);
+      } catch (error) {
+        console.log('Storage removeItem error:', error);
+      }
+    },
+    clear: async () => {
+      try {
+        await AsyncStorage.clear();
+      } catch (error) {
+        console.log('Storage clear error:', error);
+      }
+    }
+  };
+}
+
+// Also mock sessionStorage
+if (typeof global.sessionStorage === 'undefined') {
+  global.sessionStorage = global.localStorage;
+}
 
 // Appwrite Client Configuration
 const client = new Client()
@@ -35,7 +80,6 @@ const DatabaseService = {
       },
 
     // List documents in a collection with optional queries
-
     async listDocuments(collectionId, queries = [], limit = 25) {
         try {
           return await databases.listDocuments(
@@ -49,8 +93,6 @@ const DatabaseService = {
           throw error;
         }
       },
-
- 
 
     // Get a specific document by its ID
     async getDocument(collectionId, documentId) {
@@ -163,6 +205,57 @@ const AuthService = {
     }
 };
 
+// Enhanced Realtime Service with JSON error fix
+const RealtimeService = {
+    // Subscribe to collection changes with proper JSON handling
+    subscribeToCollection(collectionId, callback) {
+      try {
+        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+        
+        if (!databaseId) {
+          console.warn('Database ID is not defined, skipping subscription');
+          return null;
+        }
+        
+        return client.subscribe(
+          `databases.${databaseId}.collections.${collectionId}.documents`,
+          (response) => {
+            try {
+              console.log('Raw subscription response:', response);
+              
+              // Handle different response formats
+              let processedResponse = response;
+              
+              // If response.payload is a string, try to parse it
+              if (response.payload && typeof response.payload === 'string') {
+                try {
+                  processedResponse = {
+                    ...response,
+                    payload: JSON.parse(response.payload)
+                  };
+                } catch (parseError) {
+                  console.warn('Could not parse payload as JSON, using as-is:', parseError);
+                  // Use the response as-is if JSON parsing fails
+                }
+              }
+              
+              // Call the callback with processed response
+              callback(processedResponse);
+              
+            } catch (callbackError) {
+              console.error('Error in realtime callback:', callbackError);
+              console.error('Response that caused error:', response);
+            }
+          }
+        );
+      } catch (error) {
+        console.error('Error subscribing to collection:', error);
+        // Return null instead of throwing to prevent app crashes
+        return null;
+      }
+    }
+};
+
 export { 
     client, 
     account, 
@@ -170,7 +263,8 @@ export {
     ID, 
     Query,
     DatabaseService,
-    AuthService
+    AuthService,
+    RealtimeService
 };
 
 // Example usage in a component:

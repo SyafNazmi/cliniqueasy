@@ -1,3 +1,4 @@
+// app/appointment/appointmentBooking.jsx
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -11,9 +12,11 @@ import {
   ScrollView
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { DatabaseService, AuthService, Query } from '../../configs/AppwriteConfig';
+import { DatabaseService, AuthService, Query, RealtimeService } from '../../configs/AppwriteConfig';
 import { doctorImages, COLLECTIONS, getDoctorsForBranch } from '../../constants';
 import PageHeader from '../../components/PageHeader';
+import { appointmentManager, APPOINTMENT_STATUS } from '../../service/appointmentUtils';
+
 
 const AppointmentBooking = () => {
   const router = useRouter();
@@ -37,6 +40,9 @@ const AppointmentBooking = () => {
   const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
   const [error, setError] = useState(null);
   const [serviceData, setServiceData] = useState(null);
+  const [bookedSlots, setBookedSlots] = useState({});
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [realtimeSubscription, setRealtimeSubscription] = useState(null);
   
   // Service details based on service ID - matching the format in your constants
   const serviceDetails = {
@@ -64,7 +70,83 @@ const AppointmentBooking = () => {
   // Time slots
   const timeSlots = ['8:30 AM', '9:00 AM', '9:30 AM', '10:00 AM', '2:00 PM', '3:00 PM', '4:00 PM'];
 
+  // Format date for comparison
+  const formatDateForQuery = (date) => {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+  };
+
+  // Fetch booked appointments for a specific doctor and date
+  const fetchBookedSlots = async (doctorId, date) => {
+    if (!doctorId || !date) return;
+    
+    setLoadingSlots(true);
+    try {
+      // Use the enhanced method from appointmentManager
+      const bookedSlotsArray = await appointmentManager.getBookedSlots(doctorId, date);
+      
+      console.log('Found booked slots:', bookedSlotsArray);
+      
+      // Convert array to map for easier checking
+      const bookedMap = {};
+      bookedSlotsArray.forEach(slot => {
+        bookedMap[slot] = true;
+      });
+      
+      console.log('Booked slots map:', bookedMap);
+      setBookedSlots(bookedMap);
+      
+    } catch (error) {
+      console.error('Error fetching booked slots:', error);
+      Alert.alert('Error', 'Failed to check availability. Please try again.');
+    } finally {
+      setLoadingSlots(false);
+    }
+  };
+
+  // Subscribe to real-time updates for appointments
+  const subscribeToAppointments = () => {
+    try {
+      const subscription = appointmentManager.subscribeToAppointments((update) => {
+        console.log('Booking screen received update:', update);
+        
+        // If the update is for the currently selected doctor and date, refresh availability
+        if (selectedDoctor && selectedDate && update.appointment) {
+          const appointment = update.appointment;
+          const formattedDate = formatDate(selectedDate);
+          
+          if (appointment.doctor_id === selectedDoctor.$id && 
+              appointment.date === formattedDate) {
+            console.log('Updating availability for current selection');
+            fetchBookedSlots(selectedDoctor.$id, selectedDate);
+          }
+        }
+      });
+      
+      setRealtimeSubscription(subscription);
+      console.log('Subscribed to real-time appointment updates');
+    } catch (error) {
+      console.error('Error subscribing to real-time updates:', error);
+    }
+  };
+
+  // Cleanup subscription on unmount
   useEffect(() => {
+    return () => {
+      if (realtimeSubscription) {
+        // Use the appointmentManager's unsubscribe method instead of calling realtimeSubscription directly
+        appointmentManager.unsubscribe(realtimeSubscription);
+        console.log('Unsubscribed from real-time updates');
+      }
+    };
+  }, [realtimeSubscription]);
+
+  useEffect(() => {
+    // Subscribe to real-time updates when component mounts
+    subscribeToAppointments();
+    
     // Load service data from the database or use fallback
     const getServiceData = async () => {
       try {
@@ -199,6 +281,15 @@ const AppointmentBooking = () => {
     fetchDoctors();
   }, [branchId, service_id]);
 
+  // Fetch booked slots when doctor or date changes
+  useEffect(() => {
+    if (selectedDoctor && selectedDate) {
+      fetchBookedSlots(selectedDoctor.$id, selectedDate);
+    } else {
+      setBookedSlots({});
+    }
+  }, [selectedDoctor, selectedDate]);
+
   const formatDate = (date) => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -212,6 +303,11 @@ const AppointmentBooking = () => {
   };
 
   const handleTimeSlotSelect = (timeSlot) => {
+    // Check if slot is booked
+    if (bookedSlots[timeSlot]) {
+      Alert.alert('Unavailable', 'This time slot is already booked. Please select another time.');
+      return;
+    }
     setSelectedTimeSlot(timeSlot);
   };
 
@@ -220,12 +316,27 @@ const AppointmentBooking = () => {
       Alert.alert('Incomplete Selection', 'Please select doctor, date and time slot');
       return;
     }
-
+  
+    // Double-check availability before booking using the enhanced method
+    const isStillAvailable = await appointmentManager.checkSlotAvailability(
+      selectedDoctor.$id,
+      selectedDate,
+      selectedTimeSlot
+    );
+  
+    if (!isStillAvailable) {
+      Alert.alert('Slot Unavailable', 'This time slot was just booked. Please select another time.');
+      setSelectedTimeSlot(null);
+      // Refresh availability using your existing function
+      fetchBookedSlots(selectedDoctor.$id, selectedDate);
+      return;
+    }
+  
     try {
       const currentUser = await AuthService.getCurrentUser();
       const formattedDate = formatDate(selectedDate);
       
-      // Make sure all these parameters are available and correctly named
+      // Enhanced appointment object with new status constant
       const appointment = {
         user_id: currentUser.$id,
         doctor_id: selectedDoctor.$id,
@@ -236,15 +347,18 @@ const AppointmentBooking = () => {
         service_id: service_id,
         date: formattedDate,
         time_slot: selectedTimeSlot,
-        status: 'Booked',
-        created_at: new Date().toISOString()
+        status: APPOINTMENT_STATUS.BOOKED, // Use the new constant instead of 'Booked'
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(), // ADD this
+        has_prescription: false, // ADD this
+        reschedule_count: 0 // ADD this
       };
       
-      console.log('Creating appointment with data:', appointment);
+      console.log('Creating appointment with enhanced data:', appointment);
       
       const result = await DatabaseService.createDocument(COLLECTIONS.APPOINTMENTS, appointment);
       
-      // Navigate to success page
+      // Navigate to success page (keep your existing navigation)
       router.push({
         pathname: '/appointment/success',
         params: {
@@ -405,27 +519,40 @@ const AppointmentBooking = () => {
                   {selectedDoctor && selectedDoctor.$id === doctor.$id && selectedDate && (
                     <View style={styles.timeSlotSection}>
                       <Text style={styles.timeSlotTitle}>Available Time Slots</Text>
-                      <View style={styles.timeSlotContainer}>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                          {timeSlots.map((time, index) => (
-                            <TouchableOpacity
-                              key={index}
-                              style={[
-                                styles.timeSlot,
-                                selectedTimeSlot === time && styles.selectedTimeSlot
-                              ]}
-                              onPress={() => handleTimeSlotSelect(time)}
-                            >
-                              <Text style={[
-                                styles.timeSlotText,
-                                selectedTimeSlot === time && styles.selectedTimeSlotText
-                              ]}>
-                                {time}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </ScrollView>
-                      </View>
+                      {loadingSlots ? (
+                        <ActivityIndicator size="small" color="#0AD476" />
+                      ) : (
+                        <View style={styles.timeSlotContainer}>
+                          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                            {timeSlots.map((time, index) => {
+                              const isBooked = bookedSlots[time];
+                              return (
+                                <TouchableOpacity
+                                  key={index}
+                                  style={[
+                                    styles.timeSlot,
+                                    selectedTimeSlot === time && styles.selectedTimeSlot,
+                                    isBooked && styles.bookedTimeSlot
+                                  ]}
+                                  onPress={() => handleTimeSlotSelect(time)}
+                                  disabled={isBooked}
+                                >
+                                  <Text style={[
+                                    styles.timeSlotText,
+                                    selectedTimeSlot === time && styles.selectedTimeSlotText,
+                                    isBooked && styles.bookedTimeSlotText
+                                  ]}>
+                                    {time}
+                                  </Text>
+                                  {isBooked && (
+                                    <Text style={styles.bookedLabel}>Booked</Text>
+                                  )}
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </ScrollView>
+                        </View>
+                      )}
                     </View>
                   )}
                 </View>
@@ -649,15 +776,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
     borderRadius: 20,
     marginRight: 10,
+    minWidth: 80,
+    alignItems: 'center',
   },
   selectedTimeSlot: {
     backgroundColor: '#0AD476',
+  },
+  bookedTimeSlot: {
+    backgroundColor: '#ffcccc',
+    opacity: 0.7,
   },
   timeSlotText: {
     fontSize: 14,
   },
   selectedTimeSlotText: {
     color: 'white',
+  },
+  bookedTimeSlotText: {
+    color: '#666',
+    textDecorationLine: 'line-through',
+  },
+  bookedLabel: {
+    fontSize: 10,
+    color: '#ff0000',
+    marginTop: 2,
   },
   continueButton: {
     backgroundColor: '#0AD476',

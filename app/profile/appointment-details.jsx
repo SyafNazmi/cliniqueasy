@@ -1,29 +1,144 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native'
-import React, { useState } from 'react'
-import { useRouter, useLocalSearchParams } from 'expo-router'
-import { Ionicons } from '@expo/vector-icons'
-import { DatabaseService } from '@/configs/AppwriteConfig'
-import { COLLECTIONS } from '@/constants'
-import Toast from 'react-native-toast-message'
+// app/profile/appointment-details.jsx 
+import React, { useState, useEffect } from 'react';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  ScrollView, 
+  TouchableOpacity, 
+  Alert,
+  ActivityIndicator,
+  Modal,
+  TextInput,
+  SafeAreaView,
+  StatusBar
+} from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { DatabaseService } from '@/configs/AppwriteConfig';
+import { COLLECTIONS } from '@/constants';
+import Toast from 'react-native-toast-message';
+import { appointmentManager, APPOINTMENT_STATUS } from '@/service/appointmentUtils';
 
-export default function AppointmentDetails() {
+export default function EnhancedAppointmentDetails() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const [isLoading, setIsLoading] = useState(false);
+  const [appointment, setAppointment] = useState(null);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [realtimeSubscription, setRealtimeSubscription] = useState(null); 
+  const [isUpdating, setIsUpdating] = useState(false);
   
-  // Parse appointment data from params
-  const appointment = params.appointment ? JSON.parse(params.appointment) : null;
+  // Parse appointment data from params or ID
+  const appointmentData = params.appointment ? JSON.parse(params.appointment) : null;
+  const appointmentId = params.appointmentId || appointmentData?.$id;
   
-  if (!appointment) {
+  useEffect(() => {
+    if (appointmentData) {
+      setAppointment(appointmentData);
+    } else if (appointmentId) {
+      loadAppointmentDetails();
+    }
+    
+    if (appointmentId) {
+      const subscription = appointmentManager.subscribeToAppointments((update) => {
+        console.log('Appointment details received update:', update);
+        
+        // Check if the update is for the current appointment
+        if (update.appointment.$id === appointmentId) {
+          handleRealtimeUpdate(update);
+        }
+      });
+      
+      setRealtimeSubscription(subscription);
+    }
+  
+    return () => {
+      if (realtimeSubscription) {
+        appointmentManager.unsubscribe(realtimeSubscription);
+      }
+    };
+  }, [appointmentId]);
+
+  const loadAppointmentDetails = async () => {
+    try {
+      setIsLoading(true);
+      const appointmentDoc = await DatabaseService.getDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId
+      );
+      setAppointment(appointmentDoc);
+    } catch (error) {
+      console.error('Error loading appointment:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to load appointment details',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRealtimeUpdate = (update) => {
+    setIsUpdating(true);
+    
+    switch (update.type) {
+      case 'updated':
+        setAppointment(update.appointment);
+        Toast.show({
+          type: 'info',
+          text1: 'Appointment Updated',
+          text2: 'This appointment has been updated',
+        });
+        break;
+        
+      case 'deleted':
+        Toast.show({
+          type: 'success',
+          text1: 'Appointment Cancelled',
+          text2: 'This appointment has been cancelled',
+        });
+        // Navigate back after a delay
+        setTimeout(() => {
+          router.back();
+        }, 2000);
+        break;
+        
+      default:
+        break;
+    }
+    
+    // Reset updating indicator after a short delay
+    setTimeout(() => setIsUpdating(false), 500);
+  };
+  
+  if (!appointment && !appointmentId) {
     return (
-      <View style={styles.errorContainer}>
-        <Ionicons name="alert-circle" size={50} color="#FF3B30" />
-        <Text style={styles.errorTitle}>Appointment Not Found</Text>
-        <Text style={styles.errorText}>Unable to load appointment details</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>Go Back</Text>
-        </TouchableOpacity>
-      </View>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle" size={50} color="#FF3B30" />
+          <Text style={styles.errorTitle}>Appointment Not Found</Text>
+          <Text style={styles.errorText}>Unable to load appointment details</Text>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#0AD476" />
+          <Text style={styles.loadingText}>Loading appointment details...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
   
@@ -55,56 +170,65 @@ export default function AppointmentDetails() {
     }
   };
   
-  const isPast = isDatePast(appointment.date);
-  const statusColor = isPast ? '#8E8E93' : '#0AD476';
-  const statusText = isPast ? 'Completed' : 'Upcoming';
+  const isPast = isDatePast(appointment?.date);
+  const isCancelled = appointment?.status === APPOINTMENT_STATUS.CANCELLED;
+  
+  const getStatusInfo = () => {
+    if (isCancelled) {
+      return { color: '#FF3B30', text: 'Cancelled', icon: 'close-circle' };
+    } else if (isPast) {
+      return { color: '#8E8E93', text: 'Completed', icon: 'checkmark-circle' };
+    } else {
+      return { color: '#0AD476', text: 'Upcoming', icon: 'time' };
+    }
+  };
+  
+  const statusInfo = getStatusInfo();
   
   const handleCancelAppointment = () => {
-    if (isPast) {
+    if (isPast || isCancelled) {
       Toast.show({
         type: 'error',
         text1: 'Cannot Cancel',
-        text2: 'This appointment has already been completed.',
+        text2: isPast ? 'This appointment has already been completed.' : 'This appointment is already cancelled.',
       });
       return;
     }
     
-    Alert.alert(
-      'Cancel Appointment',
-      'Are you sure you want to cancel this appointment? This action cannot be undone.',
-      [
-        {
-          text: 'Keep Appointment',
-          style: 'cancel',
-        },
-        {
-          text: 'Cancel Appointment',
-          style: 'destructive',
-          onPress: confirmCancelAppointment,
-        },
-      ]
-    );
+    setShowCancelModal(true);
   };
   
   const confirmCancelAppointment = async () => {
     try {
       setIsLoading(true);
+      setShowCancelModal(false);
       
-      await DatabaseService.deleteDocument(
-        COLLECTIONS.APPOINTMENTS,
-        appointment.$id
+      const result = await appointmentManager.cancelAppointment(
+        appointment.$id,
+        cancelReason,
+        'patient'
       );
       
-      Toast.show({
-        type: 'success',
-        text1: 'Appointment Cancelled',
-        text2: 'Your appointment has been successfully cancelled.',
-      });
-      
-      setTimeout(() => {
-        router.back();
-      }, 1500);
-      
+      if (result.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Appointment Cancelled',
+          text2: 'Your appointment has been successfully cancelled.',
+        });
+        
+        // Update local state immediately for better UX
+        setAppointment(prev => ({ ...prev, status: APPOINTMENT_STATUS.CANCELLED }));
+        
+        setTimeout(() => {
+          router.back();
+        }, 2000);
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: result.error || 'Failed to cancel appointment.',
+        });
+      }
     } catch (error) {
       console.error('Error cancelling appointment:', error);
       Toast.show({
@@ -114,56 +238,80 @@ export default function AppointmentDetails() {
       });
     } finally {
       setIsLoading(false);
+      setCancelReason('');
     }
   };
   
   const handleReschedule = () => {
-    if (isPast) {
+    if (isPast || isCancelled) {
       Toast.show({
         type: 'error',
         text1: 'Cannot Reschedule',
-        text2: 'This appointment has already been completed.',
+        text2: isPast ? 'This appointment has already been completed.' : 'Cannot reschedule a cancelled appointment.',
       });
       return;
     }
     
     // Navigate to reschedule screen with appointment data
     router.push({
-      pathname: '/book-appointment',
+      pathname: '/appointment/reschedule',
       params: {
-        reschedule: 'true',
         appointmentId: appointment.$id,
         doctorId: appointment.doctor_id,
+        doctorName: appointment.doctor_name,
+        serviceName: appointment.service_name,
+        branchName: appointment.branch_name,
         currentDate: appointment.date,
-        currentTime: appointment.time,
+        currentTimeSlot: appointment.time_slot,
       }
     });
   };
   
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.backBtn}
-          onPress={() => router.back()}
-        >
-          <Ionicons name="arrow-back" size={24} color="#000" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Appointment Details</Text>
-        <View style={styles.placeholder} />
-      </View>
-      
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      <View style={styles.container}>
+        {/* Fixed Header */}
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backBtn}
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#000" />
+          </TouchableOpacity>
+          
+          <View style={styles.headerCenter}>
+            <Text style={styles.headerTitle}>Appointment Details</Text>
+            {isUpdating && (
+              <View style={styles.updateIndicator}>
+                <ActivityIndicator size="small" color="#0AD476" />
+                <Text style={styles.updateText}>Updating...</Text>
+              </View>
+            )}
+          </View>
+          
+          <View style={styles.headerRight} />
+        </View>
+        
+        <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
       {/* Status Badge */}
       <View style={styles.statusContainer}>
-        <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
+        <View style={[styles.statusBadge, { backgroundColor: statusInfo.color }]}>
           <Ionicons 
-            name={isPast ? "checkmark-circle" : "time"} 
+            name={statusInfo.icon} 
             size={16} 
             color="#FFFFFF" 
           />
-          <Text style={styles.statusText}>{statusText}</Text>
+          <Text style={styles.statusText}>{statusInfo.text}</Text>
         </View>
+        
+        {/* Show rescheduled indicator if applicable */}
+        {appointment?.rescheduled_at && (
+          <View style={styles.rescheduledBadge}>
+            <Ionicons name="refresh" size={14} color="#FF9500" />
+            <Text style={styles.rescheduledText}>Rescheduled</Text>
+          </View>
+        )}
       </View>
       
       {/* Appointment Information */}
@@ -176,7 +324,7 @@ export default function AppointmentDetails() {
           </View>
           <View style={styles.infoContent}>
             <Text style={styles.infoLabel}>Date</Text>
-            <Text style={styles.infoValue}>{appointment.date || 'Not specified'}</Text>
+            <Text style={styles.infoValue}>{appointment?.date || 'Not specified'}</Text>
           </View>
         </View>
         
@@ -186,7 +334,7 @@ export default function AppointmentDetails() {
           </View>
           <View style={styles.infoContent}>
             <Text style={styles.infoLabel}>Time</Text>
-            <Text style={styles.infoValue}>{appointment.time || 'Not specified'}</Text>
+            <Text style={styles.infoValue}>{appointment?.time_slot || 'Not specified'}</Text>
           </View>
         </View>
         
@@ -196,7 +344,7 @@ export default function AppointmentDetails() {
           </View>
           <View style={styles.infoContent}>
             <Text style={styles.infoLabel}>Doctor</Text>
-            <Text style={styles.infoValue}>{appointment.doctor_name || 'Not specified'}</Text>
+            <Text style={styles.infoValue}>{appointment?.doctor_name || 'Not specified'}</Text>
           </View>
         </View>
         
@@ -205,8 +353,8 @@ export default function AppointmentDetails() {
             <Ionicons name="medical" size={20} color="#0AD476" />
           </View>
           <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Specialization</Text>
-            <Text style={styles.infoValue}>{appointment.doctor_specialization || 'General Practice'}</Text>
+            <Text style={styles.infoLabel}>Service</Text>
+            <Text style={styles.infoValue}>{appointment?.service_name || 'Not specified'}</Text>
           </View>
         </View>
         
@@ -215,54 +363,70 @@ export default function AppointmentDetails() {
             <Ionicons name="location" size={20} color="#0AD476" />
           </View>
           <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Hospital</Text>
-            <Text style={styles.infoValue}>{appointment.hospital_name || 'Not specified'}</Text>
+            <Text style={styles.infoLabel}>Branch</Text>
+            <Text style={styles.infoValue}>{appointment?.branch_name || 'Not specified'}</Text>
           </View>
         </View>
       </View>
       
-      {/* Patient Information */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Patient Information</Text>
-        
-        <View style={styles.infoRow}>
-          <View style={styles.infoIcon}>
-            <Ionicons name="person-circle" size={20} color="#0AD476" />
-          </View>
-          <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Patient Name</Text>
-            <Text style={styles.infoValue}>{appointment.patient_name || 'Not specified'}</Text>
-          </View>
-        </View>
-        
-        <View style={styles.infoRow}>
-          <View style={styles.infoIcon}>
-            <Ionicons name="call" size={20} color="#0AD476" />
-          </View>
-          <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Phone Number</Text>
-            <Text style={styles.infoValue}>{appointment.patient_phone || 'Not specified'}</Text>
-          </View>
-        </View>
-        
-        <View style={styles.infoRow}>
-          <View style={styles.infoIcon}>
-            <Ionicons name="calendar-number-outline" size={20} color="#0AD476" />
-          </View>
-          <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Age</Text>
-            <Text style={styles.infoValue}>{appointment.patient_age || 'Not specified'}</Text>
-          </View>
-        </View>
-      </View>
-      
-      {/* Notes Section */}
-      {appointment.notes && (
+      {/* Show original appointment details if rescheduled */}
+      {appointment?.rescheduled_at && appointment?.original_date && (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Additional Notes</Text>
-          <View style={styles.notesContainer}>
-            <Text style={styles.notesText}>{appointment.notes}</Text>
+          <Text style={styles.sectionTitle}>Original Appointment</Text>
+          
+          <View style={styles.infoRow}>
+            <View style={styles.infoIcon}>
+              <Ionicons name="calendar-outline" size={20} color="#8E8E93" />
+            </View>
+            <View style={styles.infoContent}>
+              <Text style={styles.infoLabel}>Original Date</Text>
+              <Text style={styles.infoValue}>{appointment.original_date}</Text>
+            </View>
           </View>
+          
+          <View style={styles.infoRow}>
+            <View style={styles.infoIcon}>
+              <Ionicons name="time-outline" size={20} color="#8E8E93" />
+            </View>
+            <View style={styles.infoContent}>
+              <Text style={styles.infoLabel}>Original Time</Text>
+              <Text style={styles.infoValue}>{appointment.original_time_slot}</Text>
+            </View>
+          </View>
+        </View>
+      )}
+      
+      {/* Cancellation details if cancelled */}
+      {isCancelled && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Cancellation Details</Text>
+          
+          <View style={styles.infoRow}>
+            <View style={styles.infoIcon}>
+              <Ionicons name="time" size={20} color="#FF3B30" />
+            </View>
+            <View style={styles.infoContent}>
+              <Text style={styles.infoLabel}>Cancelled At</Text>
+              <Text style={styles.infoValue}>
+                {appointment?.cancelled_at ? 
+                  new Date(appointment.cancelled_at).toLocaleString() : 
+                  'Not specified'
+                }
+              </Text>
+            </View>
+          </View>
+          
+          {appointment?.cancellation_reason && (
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}>
+                <Ionicons name="document-text" size={20} color="#FF3B30" />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Reason</Text>
+                <Text style={styles.infoValue}>{appointment.cancellation_reason}</Text>
+              </View>
+            </View>
+          )}
         </View>
       )}
       
@@ -275,13 +439,13 @@ export default function AppointmentDetails() {
           </View>
           <View style={styles.infoContent}>
             <Text style={styles.infoLabel}>Appointment ID</Text>
-            <Text style={styles.infoValue}>{appointment.$id?.substring(0, 8) || 'N/A'}</Text>
+            <Text style={styles.infoValue}>{appointment?.$id?.substring(0, 8) || 'N/A'}</Text>
           </View>
         </View>
       </View>
       
-      {/* Action Buttons */}
-      {!isPast && (
+      {/* Action Buttons - Only show for upcoming appointments */}
+      {!isPast && !isCancelled && (
         <View style={styles.actionSection}>
           <TouchableOpacity 
             style={styles.rescheduleButton}
@@ -303,68 +467,210 @@ export default function AppointmentDetails() {
         </View>
       )}
       
+      {/* Cancel Appointment Modal */}
+      <Modal
+        visible={showCancelModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowCancelModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Cancel Appointment</Text>
+            <Text style={styles.modalSubtitle}>
+              Are you sure you want to cancel this appointment? This action cannot be undone.
+            </Text>
+            
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Reason for cancellation (optional)</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Please provide a reason..."
+                value={cancelReason}
+                onChangeText={setCancelReason}
+                multiline={true}
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+            </View>
+            
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => {
+                  setShowCancelModal(false);
+                  setCancelReason('');
+                }}
+              >
+                <Text style={styles.modalCancelText}>Keep Appointment</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={styles.modalConfirmButton}
+                onPress={confirmCancelAppointment}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.modalConfirmText}>Cancel Appointment</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      
       <Toast />
+      
+      {/* Bottom padding */}
       <View style={{ height: 50 }} />
-    </ScrollView>
+      </ScrollView>
+      </View>
+    </SafeAreaView>
   );
 }
 
+// MISSING STYLESHEET - ADD THIS:
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
   container: {
     flex: 1,
     backgroundColor: '#F8F9FA',
+  },
+  scrollContent: {
+    flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#666',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginTop: 10,
+    marginBottom: 5,
+    color: '#FF3B30',
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  backButton: {
+    backgroundColor: '#0AD476',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  backButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 50,
-    paddingBottom: 20,
     paddingHorizontal: 20,
-    backgroundColor: '#FFFFFF',
+    paddingVertical: 15,
+    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: '#E0E0E0',
   },
   backBtn: {
-    padding: 8,
+    padding: 5,
+    width: 40,
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#000000',
+    color: '#000',
   },
-  placeholder: {
+  headerRight: {
     width: 40,
   },
+  updateIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  updateText: {
+    fontSize: 12,
+    color: '#0AD476',
+    marginLeft: 4,
+  },
   statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 15,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
+    marginTop: 0,
+    marginBottom: 10,
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
+    marginRight: 10,
   },
   statusText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  rescheduledBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#FFF3E0',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FF9500',
+  },
+  rescheduledText: {
+    color: '#FF9500',
+    fontSize: 10,
     fontWeight: '500',
-    marginLeft: 6,
+    marginLeft: 2,
   },
   section: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
     marginTop: 10,
-    paddingVertical: 20,
     paddingHorizontal: 20,
+    paddingVertical: 15,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
-    color: '#000000',
+    color: '#000',
     marginBottom: 15,
   },
   infoRow: {
@@ -373,108 +679,142 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   infoIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#F0FDF4',
-    justifyContent: 'center',
+    width: 30,
     alignItems: 'center',
-    marginRight: 15,
+    marginTop: 2,
   },
   infoContent: {
     flex: 1,
-    paddingTop: 2,
+    marginLeft: 10,
   },
   infoLabel: {
-    fontSize: 14,
-    color: '#8E8E93',
+    fontSize: 12,
+    color: '#666',
     marginBottom: 2,
+    fontWeight: '500',
   },
   infoValue: {
     fontSize: 16,
-    color: '#000000',
-    fontWeight: '500',
-  },
-  notesContainer: {
-    backgroundColor: '#F8F9FA',
-    padding: 15,
-    borderRadius: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#0AD476',
-  },
-  notesText: {
-    fontSize: 15,
-    color: '#000000',
-    lineHeight: 22,
+    color: '#000',
+    fontWeight: '400',
   },
   actionSection: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
     marginTop: 10,
-    paddingVertical: 20,
     paddingHorizontal: 20,
+    paddingVertical: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
   },
   rescheduleButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F0FDF4',
-    paddingVertical: 15,
+    backgroundColor: '#F0F8FF',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderRadius: 8,
-    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#0AD476',
+    flex: 0.45,
+    justifyContent: 'center',
   },
   rescheduleButtonText: {
     color: '#0AD476',
-    fontSize: 16,
-    fontWeight: '600',
     marginLeft: 8,
+    fontWeight: '500',
+    fontSize: 14,
   },
   cancelButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: '#FFF5F5',
-    paddingVertical: 15,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#FF3B30',
+    flex: 0.45,
+    justifyContent: 'center',
   },
   cancelButtonText: {
     color: '#FF3B30',
-    fontSize: 16,
-    fontWeight: '600',
     marginLeft: 8,
+    fontWeight: '500',
+    fontSize: 14,
   },
-  errorContainer: {
+  modalOverlay: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
   },
-  errorTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#000000',
-    marginTop: 20,
-    marginBottom: 10,
+  modalContent: {
+    backgroundColor: '#fff',
+    margin: 20,
+    padding: 20,
+    borderRadius: 12,
+    width: '90%',
+    maxWidth: 400,
   },
-  errorText: {
-    fontSize: 16,
-    color: '#8E8E93',
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    color: '#000',
     textAlign: 'center',
-    marginBottom: 30,
   },
-  backButton: {
-    backgroundColor: '#0AD476',
-    paddingHorizontal: 30,
-    paddingVertical: 15,
+  modalSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 16,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  inputContainer: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 8,
+    fontWeight: '500',
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
     borderRadius: 8,
+    padding: 12,
+    minHeight: 80,
+    fontSize: 14,
+    textAlignVertical: 'top',
   },
-  backButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  modalCancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#F5F5F5',
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    color: '#666',
+    fontWeight: '500',
+    fontSize: 14,
+  },
+  modalConfirmButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#FF3B30',
+    alignItems: 'center',
+  },
+  modalConfirmText: {
+    color: '#fff',
+    fontWeight: '500',
+    fontSize: 14,
   },
 });
