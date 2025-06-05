@@ -1,41 +1,42 @@
-// configs/AppwriteConfig.jsx
+// configs/AppwriteConfig.jsx - ROBUST VERSION for Expo SDK 53
 
 // Add polyfill at the top
 import 'react-native-url-polyfill/auto';
 
-import { Client, Account, Databases, ID, Query } from 'appwrite';
+import { Client, Account, Databases, ID, Query } from 'react-native-appwrite'; // Use react-native-appwrite instead of appwrite
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Mock localStorage for React Native (alternative approach)
+// Enhanced localStorage polyfill with better error handling
 if (typeof global.localStorage === 'undefined') {
   global.localStorage = {
     getItem: async (key) => {
       try {
-        return await AsyncStorage.getItem(key);
+        const value = await AsyncStorage.getItem(key);
+        return value;
       } catch (error) {
-        console.log('Storage getItem error:', error);
+        console.warn('Storage getItem error:', error);
         return null;
       }
     },
     setItem: async (key, value) => {
       try {
-        await AsyncStorage.setItem(key, value);
+        await AsyncStorage.setItem(key, String(value));
       } catch (error) {
-        console.log('Storage setItem error:', error);
+        console.warn('Storage setItem error:', error);
       }
     },
     removeItem: async (key) => {
       try {
         await AsyncStorage.removeItem(key);
       } catch (error) {
-        console.log('Storage removeItem error:', error);
+        console.warn('Storage removeItem error:', error);
       }
     },
     clear: async () => {
       try {
         await AsyncStorage.clear();
       } catch (error) {
-        console.log('Storage clear error:', error);
+        console.warn('Storage clear error:', error);
       }
     }
   };
@@ -46,21 +47,26 @@ if (typeof global.sessionStorage === 'undefined') {
   global.sessionStorage = global.localStorage;
 }
 
-// Appwrite Client Configuration
-const client = new Client()
+// Appwrite Client Configuration with enhanced error handling
+const client = new Client();
+
+try {
+  client
     .setEndpoint('https://cloud.appwrite.io/v1') // Your Appwrite cloud endpoint
     .setProject('67e0310c000b89e3feee'); // Your Project ID from Appwrite Console
+} catch (error) {
+  console.error('Failed to configure Appwrite client:', error);
+}
 
 // Create instances
 const account = new Account(client);
 const databases = new Databases(client);
 
-// Database Helper Functions
+// Enhanced Database Service with better error handling
 const DatabaseService = {
     // Create a new document in a specific collection
     async createDocument(collectionId, documentData, permissions = []) {
         try {
-          // Ensure the database ID is correctly accessed
           const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
           if (!databaseId) {
             throw new Error('Database ID is not defined in environment variables');
@@ -82,8 +88,13 @@ const DatabaseService = {
     // List documents in a collection with optional queries
     async listDocuments(collectionId, queries = [], limit = 25) {
         try {
+          const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+          if (!databaseId) {
+            throw new Error('Database ID is not defined in environment variables');
+          }
+          
           return await databases.listDocuments(
-            process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID, // Access the environment variable
+            databaseId,
             collectionId,
             queries,
             limit
@@ -97,8 +108,13 @@ const DatabaseService = {
     // Get a specific document by its ID
     async getDocument(collectionId, documentId) {
         try {
+            const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+            if (!databaseId) {
+              throw new Error('Database ID is not defined in environment variables');
+            }
+            
             return await databases.getDocument(
-                process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID,
+                databaseId,
                 collectionId,
                 documentId
             );
@@ -111,8 +127,13 @@ const DatabaseService = {
     // Update a document
     async updateDocument(collectionId, documentId, data, permissions = []) {
         try {
+            const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+            if (!databaseId) {
+              throw new Error('Database ID is not defined in environment variables');
+            }
+            
             return await databases.updateDocument(
-                process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID,
+                databaseId,
                 collectionId,
                 documentId,
                 data,
@@ -127,8 +148,13 @@ const DatabaseService = {
     // Delete a document
     async deleteDocument(collectionId, documentId) {
         try {
+            const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+            if (!databaseId) {
+              throw new Error('Database ID is not defined in environment variables');
+            }
+            
             return await databases.deleteDocument(
-                process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID,
+                databaseId,
                 collectionId,
                 documentId
             );
@@ -140,24 +166,211 @@ const DatabaseService = {
 
     // Advanced query helper
     createQuery(method, field, value) {
-        switch(method) {
-            case 'equal':
-                return Query.equal(field, value);
-            case 'notEqual':
-                return Query.notEqual(field, value);
-            case 'greaterThan':
-                return Query.greaterThan(field, value);
-            case 'lessThan':
-                return Query.lessThan(field, value);
-            case 'search':
-                return Query.search(field, value);
-            default:
-                throw new Error('Invalid query method');
+        try {
+            switch(method) {
+                case 'equal':
+                    return Query.equal(field, value);
+                case 'notEqual':
+                    return Query.notEqual(field, value);
+                case 'greaterThan':
+                    return Query.greaterThan(field, value);
+                case 'lessThan':
+                    return Query.lessThan(field, value);
+                case 'search':
+                    return Query.search(field, value);
+                default:
+                    throw new Error(`Invalid query method: ${method}`);
+            }
+        } catch (error) {
+            console.error('Error creating query:', error);
+            throw error;
         }
     }
 };
 
-// Authentication Service
+// ROBUST Realtime Service with comprehensive error handling
+const RealtimeService = {
+    activeSubscriptions: new Set(),
+    
+    // Subscribe to collection changes with robust error handling
+    subscribeToCollection(collectionId, callback) {
+      try {
+        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+        
+        if (!databaseId) {
+          console.warn('Database ID is not defined, skipping subscription');
+          return null;
+        }
+        
+        console.log('Setting up subscription for collection:', collectionId);
+        
+        const subscription = client.subscribe(
+          `databases.${databaseId}.collections.${collectionId}.documents`,
+          (response) => {
+            try {
+              console.log('Raw realtime response:', JSON.stringify(response, null, 2));
+              
+              // Handle different response formats that might come from Appwrite
+              let processedResponse;
+              
+              if (typeof response === 'string') {
+                try {
+                  // If response is a string, try to parse it
+                  processedResponse = JSON.parse(response);
+                } catch (parseError) {
+                  console.error('Failed to parse response string:', parseError);
+                  console.error('Raw response that failed:', response);
+                  return; // Exit early if we can't parse
+                }
+              } else if (response && typeof response === 'object') {
+                // Response is already an object
+                processedResponse = response;
+              } else {
+                console.warn('Unexpected response type:', typeof response, response);
+                return;
+              }
+              
+              // Safely extract data with fallbacks
+              const safeResponse = {
+                events: Array.isArray(processedResponse.events) ? processedResponse.events : 
+                       Array.isArray(processedResponse.event) ? [processedResponse.event] : [],
+                payload: processedResponse.payload || processedResponse.data || processedResponse,
+                timestamp: processedResponse.timestamp || Date.now()
+              };
+              
+              // Validate that we have the necessary data
+              if (safeResponse.events.length > 0) {
+                console.log('Processed realtime event:', safeResponse);
+                callback(safeResponse);
+              } else {
+                console.log('No valid events found in response');
+              }
+              
+            } catch (callbackError) {
+              console.error('Error in realtime callback:', callbackError);
+              console.error('Response that caused callback error:', response);
+              // Don't throw - just log to prevent crashes
+            }
+          }
+        );
+
+        if (subscription) {
+          this.activeSubscriptions.add(subscription);
+          console.log('Successfully created subscription for collection:', collectionId);
+          
+          // Return a cleanup function
+          return () => {
+            try {
+              subscription();
+              this.activeSubscriptions.delete(subscription);
+              console.log('Unsubscribed from collection:', collectionId);
+            } catch (unsubError) {
+              console.error('Error unsubscribing:', unsubError);
+            }
+          };
+        } else {
+          console.warn('Failed to create subscription - client.subscribe returned null');
+          return null;
+        }
+        
+      } catch (error) {
+        console.error('Error setting up collection subscription:', error);
+        return null;
+      }
+    },
+
+    // Subscribe to specific document changes
+    subscribeToDocument(collectionId, documentId, callback) {
+      try {
+        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+        
+        if (!databaseId) {
+          console.warn('Database ID is not defined, skipping document subscription');
+          return null;
+        }
+        
+        console.log('Setting up document subscription:', documentId);
+        
+        const subscription = client.subscribe(
+          `databases.${databaseId}.collections.${collectionId}.documents.${documentId}`,
+          (response) => {
+            try {
+              console.log('Document realtime response:', JSON.stringify(response, null, 2));
+              
+              let processedResponse;
+              
+              if (typeof response === 'string') {
+                try {
+                  processedResponse = JSON.parse(response);
+                } catch (parseError) {
+                  console.error('Failed to parse document response:', parseError);
+                  return;
+                }
+              } else if (response && typeof response === 'object') {
+                processedResponse = response;
+              } else {
+                console.warn('Unexpected document response type:', typeof response);
+                return;
+              }
+              
+              const safeResponse = {
+                events: Array.isArray(processedResponse.events) ? processedResponse.events : 
+                       Array.isArray(processedResponse.event) ? [processedResponse.event] : [],
+                payload: processedResponse.payload || processedResponse.data || processedResponse,
+                timestamp: processedResponse.timestamp || Date.now()
+              };
+              
+              if (safeResponse.events.length > 0) {
+                callback(safeResponse);
+              }
+              
+            } catch (callbackError) {
+              console.error('Error in document realtime callback:', callbackError);
+            }
+          }
+        );
+
+        if (subscription) {
+          this.activeSubscriptions.add(subscription);
+          
+          return () => {
+            try {
+              subscription();
+              this.activeSubscriptions.delete(subscription);
+              console.log('Unsubscribed from document:', documentId);
+            } catch (unsubError) {
+              console.error('Error unsubscribing from document:', unsubError);
+            }
+          };
+        }
+        
+        return null;
+      } catch (error) {
+        console.error('Error setting up document subscription:', error);
+        return null;
+      }
+    },
+
+    // Safely unsubscribe from all active subscriptions
+    unsubscribeAll() {
+      console.log('Unsubscribing from all realtime subscriptions...');
+      
+      this.activeSubscriptions.forEach(subscription => {
+        try {
+          if (typeof subscription === 'function') {
+            subscription();
+          }
+        } catch (error) {
+          console.error('Error during bulk unsubscribe:', error);
+        }
+      });
+      
+      this.activeSubscriptions.clear();
+      console.log('All subscriptions cleaned up');
+    }
+};
+
+// Enhanced Authentication Service
 const AuthService = {
     // Create a new user account
     async register(email, password, name) {
@@ -202,57 +415,6 @@ const AuthService = {
             console.error('Get current user error:', error);
             return null;
         }
-    }
-};
-
-// Enhanced Realtime Service with JSON error fix
-const RealtimeService = {
-    // Subscribe to collection changes with proper JSON handling
-    subscribeToCollection(collectionId, callback) {
-      try {
-        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
-        
-        if (!databaseId) {
-          console.warn('Database ID is not defined, skipping subscription');
-          return null;
-        }
-        
-        return client.subscribe(
-          `databases.${databaseId}.collections.${collectionId}.documents`,
-          (response) => {
-            try {
-              console.log('Raw subscription response:', response);
-              
-              // Handle different response formats
-              let processedResponse = response;
-              
-              // If response.payload is a string, try to parse it
-              if (response.payload && typeof response.payload === 'string') {
-                try {
-                  processedResponse = {
-                    ...response,
-                    payload: JSON.parse(response.payload)
-                  };
-                } catch (parseError) {
-                  console.warn('Could not parse payload as JSON, using as-is:', parseError);
-                  // Use the response as-is if JSON parsing fails
-                }
-              }
-              
-              // Call the callback with processed response
-              callback(processedResponse);
-              
-            } catch (callbackError) {
-              console.error('Error in realtime callback:', callbackError);
-              console.error('Response that caused error:', response);
-            }
-          }
-        );
-      } catch (error) {
-        console.error('Error subscribing to collection:', error);
-        // Return null instead of throwing to prevent app crashes
-        return null;
-      }
     }
 };
 

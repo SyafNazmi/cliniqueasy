@@ -1,11 +1,17 @@
+// components/AppointmentCard.jsx
 import React from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { doctorImages } from '../constants';
 
-export default function AppointmentCard({ appointment }) {
+export default function AppointmentCard({ appointment, showCancelled = false }) {
   // If no appointment is passed, return null
   if (!appointment) return null;
+  
+  // Filter out cancelled appointments from upcoming schedule unless explicitly shown
+  if (!showCancelled && appointment.status === 'cancelled') {
+    return null;
+  }
   
   // Format time from timeSlot (e.g., "9:00 AM" -> "09:00 - 10:00")
   const formatTimeRange = (timeSlot) => {
@@ -39,7 +45,7 @@ export default function AppointmentCard({ appointment }) {
     
     const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
     if (!parts) return { day: "", month: "" };
-    
+
     return {
       dayName: parts[1].substring(0, 3), // First 3 letters of day name
       day: parts[2],
@@ -77,7 +83,6 @@ export default function AppointmentCard({ appointment }) {
     
     // If we have a mapping and the image exists in doctorImages
     if (imageKey && doctorImages[imageKey]) {
-      // console.log(`Found image for ${doctorName}: ${imageKey}`);
       return doctorImages[imageKey];
     }
     
@@ -97,8 +102,13 @@ export default function AppointmentCard({ appointment }) {
     return require('../assets/images/doctor1.png');
   };
   
-  // Determine background color based on service
+  // Determine background color based on service and status
   const getCardColor = () => {
+    // If cancelled, always use grey/red color
+    if (appointment.status === 'cancelled') {
+      return styles.cardCancelled;
+    }
+    
     if (!appointment.service_name) return styles.cardDefault;
     
     const service = appointment.service_name.toLowerCase();
@@ -112,6 +122,26 @@ export default function AppointmentCard({ appointment }) {
     
     return styles.cardDefault;
   };
+
+  // Get status display info
+  const getStatusInfo = () => {
+    const status = appointment.status?.toLowerCase();
+    
+    switch (status) {
+      case 'cancelled':
+        return { text: 'Cancelled', color: '#FF3B30' };
+      case 'completed':
+        return { text: 'Completed', color: '#8E8E93' };
+      case 'confirmed':
+        return { text: 'Confirmed', color: '#0AD476' };
+      case 'pending':
+        return { text: 'Pending', color: '#FF9500' };
+      default:
+        return { text: 'Booked', color: '#0AD476' };
+    }
+  };
+
+  const statusInfo = getStatusInfo();
 
   return (
     <View style={[styles.card, getCardColor()]}>
@@ -127,7 +157,10 @@ export default function AppointmentCard({ appointment }) {
         <View style={styles.doctorRow}>
           <Image 
             source={getImageSource()} 
-            style={styles.doctorImage} 
+            style={[
+              styles.doctorImage,
+              appointment.status === 'cancelled' && styles.doctorImageCancelled
+            ]} 
             defaultSource={require('../assets/images/doctor1.png')}
           />
           <View style={styles.doctorInfo}>
@@ -170,13 +203,16 @@ export default function AppointmentCard({ appointment }) {
           
           {/* Status */}
           <View style={styles.statusContainer}>
-            <View style={styles.statusBadge}>
-              <Text style={styles.statusText}>{appointment.status || "Booked"}</Text>
+            <View style={[styles.statusBadge, { backgroundColor: statusInfo.color }]}>
+              <Text style={styles.statusText}>{statusInfo.text}</Text>
             </View>
             
-            <TouchableOpacity style={styles.callButton}>
-              <Ionicons name="call" size={18} color="#0AD476" />
-            </TouchableOpacity>
+            {/* Only show call button for non-cancelled appointments */}
+            {appointment.status !== 'cancelled' && (
+              <TouchableOpacity style={styles.callButton}>
+                <Ionicons name="call" size={18} color="#0AD476" />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </View>
@@ -207,6 +243,10 @@ const styles = StyleSheet.create({
   },
   cardVaccination: {
     backgroundColor: '#F59E0B', // Orange color for vaccinations
+  },
+  cardCancelled: {
+    backgroundColor: '#FF3B30', // Red color for cancelled appointments
+    opacity: 0.8,
   },
   dateBadge: {
     width: 60,
@@ -248,6 +288,9 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255, 255, 255, 0.5)',
   },
+  doctorImageCancelled: {
+    opacity: 0.7,
+  },
   doctorInfo: {
     marginLeft: 12,
     flex: 1,
@@ -285,7 +328,6 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   statusBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
     paddingVertical: 5,
     paddingHorizontal: 10,
     borderRadius: 20,

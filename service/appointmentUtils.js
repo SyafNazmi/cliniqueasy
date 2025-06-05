@@ -1,4 +1,4 @@
-// service/appointmentUtils.js with comprehensive status management
+// service/appointmentUtils.js - ENHANCED VERSION for Expo SDK 53
 import { DatabaseService, Query, RealtimeService } from '../configs/AppwriteConfig';
 import { COLLECTIONS } from '../constants';
 
@@ -16,91 +16,404 @@ export class EnhancedAppointmentManager {
   constructor() {
     this.subscriptions = new Map();
     this.listeners = new Map();
+    this.isDestroyed = false;
   }
 
-  // Subscribe to real-time appointment updates with enhanced filtering
-  subscribeToAppointments(callback, options = {}) {
+  // NEW: Get booked slots for a specific doctor and date (with exclusion option)
+  async getBookedSlots(doctorId, date, excludeAppointmentId = null) {
     try {
-      const subscriptionKey = JSON.stringify(options);
+      if (!doctorId || !date) {
+        console.log('Missing doctorId or date for getBookedSlots');
+        return [];
+      }
+
+      // Format the date to match the format stored in database
+      const formattedDate = this.formatDateForQuery(date);
+      console.log('Fetching booked slots for doctor:', doctorId, 'on date:', formattedDate);
+
+      // Build queries
+      const queries = [
+        Query.equal('doctor_id', doctorId),
+        Query.equal('date', formattedDate),
+        Query.notEqual('status', APPOINTMENT_STATUS.CANCELLED) // Exclude cancelled appointments
+      ];
+
+      // Exclude a specific appointment if provided (useful for rescheduling)
+      if (excludeAppointmentId) {
+        queries.push(Query.notEqual('$id', excludeAppointmentId));
+      }
+
+      const response = await DatabaseService.listDocuments(
+        COLLECTIONS.APPOINTMENTS,
+        queries
+      );
+
+      console.log('Found appointments:', response.documents);
+
+      // Extract time slots from the appointments
+      const bookedSlots = response.documents.map(appointment => appointment.time_slot);
+      
+      console.log('Booked time slots:', bookedSlots);
+      return bookedSlots;
+
+    } catch (error) {
+      console.error('Error fetching booked slots:', error);
+      throw error;
+    }
+  }
+
+  // NEW: Check if a specific slot is available (with exclusion option)
+  async checkSlotAvailability(doctorId, date, timeSlot, excludeAppointmentId = null) {
+    try {
+      if (!doctorId || !date || !timeSlot) {
+        console.log('Missing parameters for checkSlotAvailability');
+        return false;
+      }
+
+      const formattedDate = this.formatDateForQuery(date);
+      console.log('Checking availability for:', { doctorId, formattedDate, timeSlot });
+
+      // Build queries
+      const queries = [
+        Query.equal('doctor_id', doctorId),
+        Query.equal('date', formattedDate),
+        Query.equal('time_slot', timeSlot),
+        Query.notEqual('status', APPOINTMENT_STATUS.CANCELLED)
+      ];
+
+      // Exclude a specific appointment if provided (useful for rescheduling)
+      if (excludeAppointmentId) {
+        queries.push(Query.notEqual('$id', excludeAppointmentId));
+      }
+
+      const response = await DatabaseService.listDocuments(
+        COLLECTIONS.APPOINTMENTS,
+        queries
+      );
+
+      const isAvailable = response.documents.length === 0;
+      console.log('Slot availability:', isAvailable);
+      
+      return isAvailable;
+
+    } catch (error) {
+      console.error('Error checking slot availability:', error);
+      return false; // Assume not available on error for safety
+    }
+  }
+
+  // NEW: Helper method to format date consistently for database queries
+  formatDateForQuery(date) {
+    if (typeof date === 'string') {
+      return date;
+    }
+
+    if (date instanceof Date) {
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      
+      return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+    }
+
+    console.error('Invalid date format:', date);
+    return '';
+  }
+
+  // NEW: Helper method to format date for display (same as query format)
+  formatDateForDisplay(date) {
+    return this.formatDateForQuery(date);
+  }
+
+  // NEW: Enhanced reschedule method
+  async rescheduleAppointment(appointmentId, newDate, newTimeSlot, reason = '') {
+    try {
+      if (!appointmentId || !newDate || !newTimeSlot) {
+        return { success: false, error: 'Missing required parameters' };
+      }
+
+      // Get current appointment
+      const currentAppointment = await DatabaseService.getDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId
+      );
+
+      if (!currentAppointment) {
+        return { success: false, error: 'Appointment not found' };
+      }
+
+      if (currentAppointment.status === APPOINTMENT_STATUS.CANCELLED) {
+        return { success: false, error: 'Cannot reschedule a cancelled appointment' };
+      }
+
+      if (currentAppointment.status === APPOINTMENT_STATUS.COMPLETED) {
+        return { success: false, error: 'Cannot reschedule a completed appointment' };
+      }
+
+      // Check if new slot is available (excluding current appointment)
+      const isAvailable = await this.checkSlotAvailability(
+        currentAppointment.doctor_id,
+        newDate,
+        newTimeSlot,
+        appointmentId
+      );
+
+      if (!isAvailable) {
+        return { success: false, error: 'Selected time slot is not available' };
+      }
+
+      const formattedNewDate = this.formatDateForQuery(newDate);
+
+      // Prepare update data
+      const updateData = {
+        date: formattedNewDate,
+        time_slot: newTimeSlot,
+        status: APPOINTMENT_STATUS.RESCHEDULED,
+        rescheduled_at: new Date().toISOString(),
+        reschedule_reason: reason,
+        original_date: currentAppointment.original_date || currentAppointment.date,
+        original_time_slot: currentAppointment.original_time_slot || currentAppointment.time_slot,
+        reschedule_count: (currentAppointment.reschedule_count || 0) + 1
+      };
+
+      const result = await DatabaseService.updateDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId,
+        updateData
+      );
+
+      return { success: true, data: result };
+
+    } catch (error) {
+      console.error('Error rescheduling appointment:', error);
+      return { success: false, error: error.message || 'Failed to reschedule appointment' };
+    }
+  }
+
+  // ROBUST: Subscribe to real-time appointment updates
+  subscribeToAppointments(callback, options = {}) {
+    if (this.isDestroyed) {
+      console.warn('AppointmentManager is destroyed, cannot create new subscriptions');
+      return null;
+    }
+
+    try {
+      const subscriptionKey = `appointments_${JSON.stringify(options)}_${Date.now()}`;
+      
+      // Clean up existing subscription if it exists
+      if (this.subscriptions.has(subscriptionKey)) {
+        this.unsubscribe(subscriptionKey);
+      }
+
+      console.log('Creating appointment subscription with key:', subscriptionKey);
+
+      const unsubscribe = RealtimeService.subscribeToCollection(
+        COLLECTIONS.APPOINTMENTS,
+        (response) => {
+          if (this.isDestroyed) {
+            console.log('Manager destroyed, ignoring realtime event');
+            return;
+          }
+
+          try {
+            console.log('Processing appointment realtime event:', response);
+            
+            const { events, payload } = response;
+            
+            if (!events || !Array.isArray(events) || events.length === 0) {
+              console.log('No valid events in appointment response');
+              return;
+            }
+
+            const eventString = events.join(' ').toLowerCase();
+            console.log('Event string:', eventString);
+            
+            // More robust event detection
+            let eventType = 'unknown';
+            let message = 'Appointment updated';
+            
+            if (eventString.includes('create') || eventString.includes('.create')) {
+              eventType = 'created';
+              message = `New appointment created: ${payload?.status || 'Unknown status'}`;
+            } else if (eventString.includes('update') || eventString.includes('.update')) {
+              eventType = 'updated';
+              const updateType = this.detectUpdateType(payload);
+              message = this.getUpdateMessage(updateType, payload);
+            } else if (eventString.includes('delete') || eventString.includes('.delete')) {
+              eventType = 'deleted';
+              message = 'Appointment deleted';
+            }
+            
+            // Call the callback with processed data
+            const processedEvent = {
+              type: eventType,
+              appointment: payload,
+              updateType: eventType === 'updated' ? this.detectUpdateType(payload) : null,
+              message: message,
+              timestamp: response.timestamp || Date.now()
+            };
+            
+            console.log('Calling callback with processed event:', processedEvent);
+            callback(processedEvent);
+            
+          } catch (eventError) {
+            console.error('Error processing appointment realtime event:', eventError);
+            console.error('Event data that caused error:', { events, payload });
+            
+            // Call callback with error info but don't crash
+            try {
+              callback({
+                type: 'error',
+                appointment: null,
+                message: 'Error processing realtime update',
+                error: eventError.message
+              });
+            } catch (callbackError) {
+              console.error('Error calling error callback:', callbackError);
+            }
+          }
+        }
+      );
+
+      if (unsubscribe) {
+        this.subscriptions.set(subscriptionKey, unsubscribe);
+        console.log('Successfully subscribed to appointments');
+        return subscriptionKey;
+      } else {
+        console.warn('Failed to create appointment subscription');
+        return null;
+      }
+      
+    } catch (error) {
+      console.error('Error setting up appointment subscription:', error);
+      return null;
+    }
+  }
+
+  // ROBUST: Subscribe to specific appointment changes
+  subscribeToAppointment(appointmentId, callback) {
+    if (this.isDestroyed) {
+      console.warn('AppointmentManager is destroyed, cannot create new subscriptions');
+      return null;
+    }
+
+    try {
+      const subscriptionKey = `appointment_${appointmentId}_${Date.now()}`;
       
       if (this.subscriptions.has(subscriptionKey)) {
         this.unsubscribe(subscriptionKey);
       }
 
-      const subscription = RealtimeService.subscribeToCollection(
+      console.log('Creating specific appointment subscription:', appointmentId);
+
+      const unsubscribe = RealtimeService.subscribeToDocument(
         COLLECTIONS.APPOINTMENTS,
+        appointmentId,
         (response) => {
-          console.log('Real-time appointment update:', response);
-          
-          const { events, payload } = response;
-          
-          // Enhanced event handling with status tracking
-          if (events.includes('databases.*.collections.*.documents.*.create')) {
-            callback({ 
-              type: 'created', 
-              appointment: payload,
-              message: `New appointment created: ${payload.status}`
-            });
-          } else if (events.includes('databases.*.collections.*.documents.*.update')) {
-            // Detect what was updated
-            const updateType = this.detectUpdateType(payload);
-            callback({ 
-              type: 'updated', 
-              appointment: payload,
-              updateType: updateType,
-              message: this.getUpdateMessage(updateType, payload)
-            });
-          } else if (events.includes('databases.*.collections.*.documents.*.delete')) {
-            callback({ 
-              type: 'deleted', 
-              appointment: payload,
-              message: 'Appointment deleted'
-            });
+          if (this.isDestroyed) {
+            return;
+          }
+
+          try {
+            console.log('Specific appointment update:', response);
+            
+            const { events, payload } = response;
+            
+            if (events && Array.isArray(events) && events.length > 0) {
+              const eventString = events.join(' ').toLowerCase();
+              const updateType = this.detectUpdateType(payload);
+              
+              callback({
+                type: eventString.includes('update') ? 'updated' : 'general',
+                appointment: payload,
+                updateType: updateType,
+                message: this.getUpdateMessage(updateType, payload),
+                timestamp: response.timestamp || Date.now()
+              });
+            }
+          } catch (eventError) {
+            console.error('Error processing specific appointment event:', eventError);
+            
+            try {
+              callback({
+                type: 'error',
+                appointment: null,
+                message: 'Error processing appointment update',
+                error: eventError.message
+              });
+            } catch (callbackError) {
+              console.error('Error calling appointment error callback:', callbackError);
+            }
           }
         }
       );
 
-      this.subscriptions.set(subscriptionKey, subscription);
-      return subscriptionKey;
+      if (unsubscribe) {
+        this.subscriptions.set(subscriptionKey, unsubscribe);
+        console.log('Successfully subscribed to appointment:', appointmentId);
+        return subscriptionKey;
+      }
+      
+      return null;
     } catch (error) {
-      console.error('Error subscribing to appointments:', error);
-      throw error;
+      console.error('Error subscribing to specific appointment:', error);
+      return null;
     }
   }
 
   // Detect what type of update occurred
   detectUpdateType(appointment) {
-    if (appointment.status === APPOINTMENT_STATUS.CANCELLED) {
-      return 'cancelled';
-    } else if (appointment.rescheduled_at) {
-      return 'rescheduled';
-    } else if (appointment.status === APPOINTMENT_STATUS.CONFIRMED) {
-      return 'confirmed';
-    } else if (appointment.status === APPOINTMENT_STATUS.COMPLETED) {
-      return 'completed';
+    if (!appointment) return 'general_update';
+    
+    try {
+      if (appointment.status === APPOINTMENT_STATUS.CANCELLED) {
+        return 'cancelled';
+      } else if (appointment.rescheduled_at) {
+        return 'rescheduled';
+      } else if (appointment.status === APPOINTMENT_STATUS.CONFIRMED) {
+        return 'confirmed';
+      } else if (appointment.status === APPOINTMENT_STATUS.COMPLETED) {
+        return 'completed';
+      }
+      return 'general_update';
+    } catch (error) {
+      console.error('Error detecting update type:', error);
+      return 'general_update';
     }
-    return 'general_update';
   }
 
   // Get user-friendly message for updates
   getUpdateMessage(updateType, appointment) {
-    switch (updateType) {
-      case 'cancelled':
-        return `Appointment cancelled: ${appointment.date} at ${appointment.time_slot}`;
-      case 'rescheduled':
-        return `Appointment rescheduled to: ${appointment.date} at ${appointment.time_slot}`;
-      case 'confirmed':
-        return `Appointment confirmed: ${appointment.date} at ${appointment.time_slot}`;
-      case 'completed':
-        return `Appointment completed: ${appointment.date} at ${appointment.time_slot}`;
-      default:
-        return 'Appointment updated';
+    try {
+      if (!appointment) return 'Appointment updated';
+      
+      const dateStr = appointment.date || 'Unknown date';
+      const timeStr = appointment.time_slot || 'Unknown time';
+      
+      switch (updateType) {
+        case 'cancelled':
+          return `Appointment cancelled: ${dateStr} at ${timeStr}`;
+        case 'rescheduled':
+          return `Appointment rescheduled to: ${dateStr} at ${timeStr}`;
+        case 'confirmed':
+          return `Appointment confirmed: ${dateStr} at ${timeStr}`;
+        case 'completed':
+          return `Appointment completed: ${dateStr} at ${timeStr}`;
+        default:
+          return 'Appointment updated';
+      }
+    } catch (error) {
+      console.error('Error generating update message:', error);
+      return 'Appointment updated';
     }
   }
 
   async getAppointment(appointmentId) {
     try {
       console.log('📖 Getting appointment:', appointmentId);
+      
+      if (!appointmentId) {
+        throw new Error('Appointment ID is required');
+      }
       
       const appointment = await DatabaseService.getDocument(
         COLLECTIONS.APPOINTMENTS,
@@ -119,11 +432,19 @@ export class EnhancedAppointmentManager {
   // Enhanced cancellation with detailed status tracking
   async cancelAppointment(appointmentId, reason = '', cancelledBy = 'patient') {
     try {
+      if (!appointmentId) {
+        return { success: false, error: 'Appointment ID is required' };
+      }
+
       // First check if appointment can be cancelled
       const currentAppointment = await DatabaseService.getDocument(
         COLLECTIONS.APPOINTMENTS, 
         appointmentId
       );
+
+      if (!currentAppointment) {
+        return { success: false, error: 'Appointment not found' };
+      }
 
       if (currentAppointment.status === APPOINTMENT_STATUS.CANCELLED) {
         return { success: false, error: 'Appointment is already cancelled' };
@@ -133,27 +454,13 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'Cannot cancel a completed appointment' };
       }
 
-      // Check if it's too late to cancel (optional business rule)
-      const appointmentDate = this.parseAppointmentDate(currentAppointment.date, currentAppointment.time_slot);
-      const now = new Date();
-      const timeDiff = appointmentDate.getTime() - now.getTime();
-      const hoursDiff = timeDiff / (1000 * 3600);
-
-      // Example: Cannot cancel within 2 hours of appointment (adjust as needed)
-      if (hoursDiff < 2 && hoursDiff > 0) {
-        return { 
-          success: false, 
-          error: 'Cannot cancel appointment within 2 hours of scheduled time' 
-        };
-      }
-
+      // Only include fields that exist in your database schema
       const updateData = {
         status: APPOINTMENT_STATUS.CANCELLED,
         cancelled_at: new Date().toISOString(),
         cancellation_reason: reason,
-        cancelled_by: cancelledBy,
-        // Keep original appointment data for reference
-        original_status: currentAppointment.status
+        cancelled_by: cancelledBy
+        // Removed original_status since it doesn't exist in your database
       };
 
       const result = await DatabaseService.updateDocument(
@@ -165,361 +472,51 @@ export class EnhancedAppointmentManager {
       return { success: true, data: result };
     } catch (error) {
       console.error('Error cancelling appointment:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Enhanced rescheduling with status management
-  async rescheduleAppointment(appointmentId, newDate, newTimeSlot, reason = '') {
-    try {
-      // Get current appointment
-      const currentAppointment = await DatabaseService.getDocument(
-        COLLECTIONS.APPOINTMENTS, 
-        appointmentId
-      );
-      
-      // Validate appointment can be rescheduled
-      if (currentAppointment.status === APPOINTMENT_STATUS.CANCELLED) {
-        return { success: false, error: 'Cannot reschedule a cancelled appointment' };
-      }
-
-      if (currentAppointment.status === APPOINTMENT_STATUS.COMPLETED) {
-        return { success: false, error: 'Cannot reschedule a completed appointment' };
-      }
-      
-      // Check new slot availability
-      const isAvailable = await this.checkSlotAvailability(
-        currentAppointment.doctor_id, 
-        newDate, 
-        newTimeSlot, 
-        appointmentId
-      );
-      
-      if (!isAvailable) {
-        return { 
-          success: false, 
-          error: 'The selected time slot is not available' 
-        };
-      }
-
-      // Prepare update data
-      const formattedNewDate = this.formatDateForDisplay(newDate);
-      const updateData = {
-        // Update to new date/time
-        date: formattedNewDate,
-        time_slot: newTimeSlot,
-        
-        // Track rescheduling history
-        status: APPOINTMENT_STATUS.RESCHEDULED,
-        rescheduled_at: new Date().toISOString(),
-        reschedule_reason: reason,
-        
-        // Keep original appointment data
-        original_date: currentAppointment.original_date || currentAppointment.date,
-        original_time_slot: currentAppointment.original_time_slot || currentAppointment.time_slot,
-        original_status: currentAppointment.original_status || currentAppointment.status,
-        
-        // Track reschedule count
-        reschedule_count: (currentAppointment.reschedule_count || 0) + 1
-      };
-      
-      const result = await DatabaseService.updateDocument(
-        COLLECTIONS.APPOINTMENTS,
-        appointmentId,
-        updateData
-      );
-      
-      return { success: true, data: result };
-    } catch (error) {
-      console.error('Error rescheduling appointment:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Confirm appointment (useful for clinics)
-  async confirmAppointment(appointmentId, confirmedBy = 'clinic') {
-    try {
-      const result = await DatabaseService.updateDocument(
-        COLLECTIONS.APPOINTMENTS,
-        appointmentId,
-        {
-          status: APPOINTMENT_STATUS.CONFIRMED,
-          confirmed_at: new Date().toISOString(),
-          confirmed_by: confirmedBy
-        }
-      );
-      
-      return { success: true, data: result };
-    } catch (error) {
-      console.error('Error confirming appointment:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Mark appointment as completed
-  async completeAppointment(appointmentId, notes = '', hasPrescription = false) {
-    try {
-      const result = await DatabaseService.updateDocument(
-        COLLECTIONS.APPOINTMENTS,
-        appointmentId,
-        {
-          status: APPOINTMENT_STATUS.COMPLETED,
-          completed_at: new Date().toISOString(),
-          completion_notes: notes,
-          has_prescription: hasPrescription
-        }
-      );
-      
-      return { success: true, data: result };
-    } catch (error) {
-      console.error('Error completing appointment:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Mark as no-show
-  async markNoShow(appointmentId, reason = '') {
-    try {
-      const result = await DatabaseService.updateDocument(
-        COLLECTIONS.APPOINTMENTS,
-        appointmentId,
-        {
-          status: APPOINTMENT_STATUS.NO_SHOW,
-          no_show_at: new Date().toISOString(),
-          no_show_reason: reason
-        }
-      );
-      
-      return { success: true, data: result };
-    } catch (error) {
-      console.error('Error marking no-show:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Enhanced slot availability check with real-time updates
-  async checkSlotAvailability(doctorId, date, timeSlot, excludeAppointmentId = null) {
-    try {
-      const formattedDate = this.formatDateForDisplay(date);
-      
-      const queries = [
-        Query.equal('doctor_id', doctorId),
-        Query.equal('date', formattedDate),
-        Query.equal('time_slot', timeSlot),
-        Query.notEqual('status', APPOINTMENT_STATUS.CANCELLED) // Only exclude cancelled appointments
-      ];
-
-      if (excludeAppointmentId) {
-        queries.push(Query.notEqual('$id', excludeAppointmentId));
-      }
-      
-      const response = await DatabaseService.listDocuments(
-        COLLECTIONS.APPOINTMENTS,
-        queries,
-        1
-      );
-      
-      return response.documents.length === 0;
-    } catch (error) {
-      console.error('Error checking slot availability:', error);
-      return false;
-    }
-  }
-
-  // Get real-time booked slots for a doctor on a specific date
-  async getBookedSlots(doctorId, date, excludeAppointmentId = null) {
-    try {
-      const formattedDate = this.formatDateForDisplay(date);
-      
-      const queries = [
-        Query.equal('doctor_id', doctorId),
-        Query.equal('date', formattedDate),
-        Query.notEqual('status', APPOINTMENT_STATUS.CANCELLED)
-      ];
-
-      // Exclude current appointment when rescheduling
-      if (excludeAppointmentId) {
-        queries.push(Query.notEqual('$id', excludeAppointmentId));
-      }
-      
-      const response = await DatabaseService.listDocuments(
-        COLLECTIONS.APPOINTMENTS,
-        queries,
-        100
-      );
-      
-      return response.documents.map(doc => doc.time_slot).filter(Boolean);
-    } catch (error) {
-      console.error('Error fetching booked slots:', error);
-      return [];
-    }
-  }
-
-  // Get appointments by status with real-time capability
-  async getAppointmentsByStatus(userId, status, limit = 50) {
-    try {
-      const queries = [
-        Query.equal('user_id', userId),
-        Query.equal('status', status),
-        Query.orderDesc('date')
-      ];
-      
-      const response = await DatabaseService.listDocuments(
-        COLLECTIONS.APPOINTMENTS,
-        queries,
-        limit
-      );
-      
-      return response.documents;
-    } catch (error) {
-      console.error('Error fetching appointments by status:', error);
-      return [];
-    }
-  }
-
-  // Get appointment statistics
-  async getAppointmentStats(userId) {
-    try {
-      const allAppointments = await this.getUserAppointments(userId);
-      
-      const stats = {
-        total: allAppointments.length,
-        booked: 0,
-        confirmed: 0,
-        rescheduled: 0,
-        cancelled: 0,
-        completed: 0,
-        noShow: 0
-      };
-
-      allAppointments.forEach(appointment => {
-        switch (appointment.status) {
-          case APPOINTMENT_STATUS.BOOKED:
-            stats.booked++;
-            break;
-          case APPOINTMENT_STATUS.CONFIRMED:
-            stats.confirmed++;
-            break;
-          case APPOINTMENT_STATUS.RESCHEDULED:
-            stats.rescheduled++;
-            break;
-          case APPOINTMENT_STATUS.CANCELLED:
-            stats.cancelled++;
-            break;
-          case APPOINTMENT_STATUS.COMPLETED:
-            stats.completed++;
-            break;
-          case APPOINTMENT_STATUS.NO_SHOW:
-            stats.noShow++;
-            break;
-        }
-      });
-
-      return stats;
-    } catch (error) {
-      console.error('Error getting appointment stats:', error);
-      return null;
-    }
-  }
-
-  // Utility method to parse appointment date and time
-  parseAppointmentDate(dateString, timeSlot) {
-    try {
-      // Parse date like "Monday, 15 Jan 2025"
-      const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
-      if (!parts) throw new Error('Invalid date format');
-      
-      const months = {
-        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-      };
-      
-      const date = new Date(
-        parseInt(parts[4]), // year
-        months[parts[3]], // month
-        parseInt(parts[2]) // day
-      );
-
-      // Parse time slot like "9:30 AM"
-      const timeMatch = timeSlot.match(/(\d+):(\d+)\s*(AM|PM)/i);
-      if (timeMatch) {
-        let hours = parseInt(timeMatch[1]);
-        const minutes = parseInt(timeMatch[2]);
-        const ampm = timeMatch[3].toUpperCase();
-
-        if (ampm === 'PM' && hours !== 12) hours += 12;
-        if (ampm === 'AM' && hours === 12) hours = 0;
-
-        date.setHours(hours, minutes, 0, 0);
-      }
-
-      return date;
-    } catch (error) {
-      console.error('Error parsing appointment date:', error);
-      return new Date();
-    }
-  }
-
-  // Format date for display
-  formatDateForDisplay(date) {
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    
-    return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
-  }
-
-  // Get user appointments with enhanced filtering
-  async getUserAppointments(userId, options = {}) {
-    try {
-      const queries = [Query.equal('user_id', userId)];
-      
-      // Add optional filters
-      if (options.status) {
-        queries.push(Query.equal('status', options.status));
-      }
-      
-      if (options.doctorId) {
-        queries.push(Query.equal('doctor_id', options.doctorId));
-      }
-      
-      if (options.fromDate) {
-        queries.push(Query.greaterThanEqual('date', options.fromDate));
-      }
-      
-      if (options.toDate) {
-        queries.push(Query.lessThanEqual('date', options.toDate));
-      }
-      
-      // Default ordering
-      queries.push(Query.orderDesc('created_at'));
-      
-      const response = await DatabaseService.listDocuments(
-        COLLECTIONS.APPOINTMENTS,
-        queries,
-        options.limit || 100
-      );
-      
-      return response.documents;
-    } catch (error) {
-      console.error('Error fetching user appointments:', error);
-      return [];
+      return { success: false, error: error.message || 'Failed to cancel appointment' };
     }
   }
 
   // Cleanup method
   cleanup() {
-    this.subscriptions.forEach((subscription) => subscription());
+    console.log('Cleaning up appointment manager...');
+    this.isDestroyed = true;
+    
+    let cleanupCount = 0;
+    this.subscriptions.forEach((unsubscribe, key) => {
+      try {
+        if (typeof unsubscribe === 'function') {
+          unsubscribe();
+          cleanupCount++;
+        }
+        console.log('Cleaned up subscription:', key);
+      } catch (error) {
+        console.error('Error cleaning up subscription:', key, error);
+      }
+    });
+    
     this.subscriptions.clear();
     this.listeners.clear();
+    
+    console.log(`Successfully cleaned up ${cleanupCount} subscriptions`);
   }
 
   // Unsubscribe method
   unsubscribe(subscriptionKey) {
-    const subscription = this.subscriptions.get(subscriptionKey);
-    if (subscription) {
-      subscription();
-      this.subscriptions.delete(subscriptionKey);
+    const unsubscribe = this.subscriptions.get(subscriptionKey);
+    if (unsubscribe) {
+      try {
+        if (typeof unsubscribe === 'function') {
+          unsubscribe();
+        }
+        this.subscriptions.delete(subscriptionKey);
+        console.log('Successfully unsubscribed from:', subscriptionKey);
+        return true;
+      } catch (error) {
+        console.error('Error unsubscribing from:', subscriptionKey, error);
+        return false;
+      }
     }
+    return false;
   }
 }
 

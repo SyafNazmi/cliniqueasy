@@ -26,6 +26,8 @@ export default function PastAppointments() {
           100
         );
         
+        console.log('Raw appointments data:', appointmentsResponse.documents); // Debug log
+        
         // Filter and sort past appointments
         const pastAppts = appointmentsResponse.documents
           .filter(app => isDatePast(app.date))
@@ -33,7 +35,6 @@ export default function PastAppointments() {
             if (!a.date || !b.date) return 0;
             
             try {
-              // Parse the full date string more reliably
               const dateA = parseAppointmentDate(a.date);
               const dateB = parseAppointmentDate(b.date);
               
@@ -45,6 +46,7 @@ export default function PastAppointments() {
             }
           });
         
+        console.log('Filtered past appointments:', pastAppts); // Debug log
         setPastAppointments(pastAppts);
       }
     } catch (error) {
@@ -107,6 +109,9 @@ export default function PastAppointments() {
   };
 
   const renderAppointmentItem = (appointment) => {
+    // Debug log to see actual appointment data
+    console.log('Rendering appointment:', appointment);
+    
     return (
       <TouchableOpacity
         key={appointment.$id}
@@ -120,7 +125,7 @@ export default function PastAppointments() {
               {appointment.doctor_name || 'Doctor'}
             </Text>
             <Text style={styles.appointmentSpecialization}>
-              {appointment.doctor_specialization || 'General Practice'}
+              {appointment.doctor_specialization || appointment.service_name || 'General Practice'}
             </Text>
           </View>
           <View style={styles.statusBadge}>
@@ -138,13 +143,13 @@ export default function PastAppointments() {
           <View style={styles.appointmentDetailRow}>
             <Ionicons name="time-outline" size={14} color="#8E8E93" />
             <Text style={styles.appointmentDetailText}>
-              {appointment.time || 'Time not set'}
+              {appointment.time_slot || appointment.time || 'Time not set'}
             </Text>
           </View>
           <View style={styles.appointmentDetailRow}>
             <Ionicons name="location-outline" size={14} color="#8E8E93" />
             <Text style={styles.appointmentDetailText} numberOfLines={1}>
-              {appointment.hospital_name || 'Hospital not specified'}
+              {appointment.branch_name || appointment.hospital_name || 'Location not specified'}
             </Text>
           </View>
         </View>

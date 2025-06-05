@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router'
 import { account, DatabaseService, Query } from '@/configs/AppwriteConfig'
 import { Ionicons } from '@expo/vector-icons'
 import { COLLECTIONS } from '@/constants'
+import { APPOINTMENT_STATUS } from '@/service/appointmentUtils';
 
 export default function UpcomingAppointments() {
   const router = useRouter();
@@ -28,19 +29,25 @@ export default function UpcomingAppointments() {
         
         // Filter and sort upcoming appointments
         const upcomingAppts = appointmentsResponse.documents
-          .filter(app => !isDatePast(app.date))
-          .sort((a, b) => {
+        .filter(app => {
+            // Check if date is not past AND appointment is not cancelled
+            const isNotPast = !isDatePast(app.date);
+            const isNotCancelled = app.status !== APPOINTMENT_STATUS.CANCELLED;
+            
+            return isNotPast && isNotCancelled;
+        })
+        .sort((a, b) => {
             if (!a.date || !b.date) return 0;
             
             try {
-              const dateA = new Date(a.date.split(', ')[1]);
-              const dateB = new Date(b.date.split(', ')[1]);
-              return dateA - dateB; // Earliest first for upcoming
+            const dateA = new Date(a.date.split(', ')[1]);
+            const dateB = new Date(b.date.split(', ')[1]);
+            return dateA - dateB; // Earliest first for upcoming
             } catch (error) {
-              console.error('Error sorting appointments:', error);
-              return 0;
+            console.error('Error sorting appointments:', error);
+            return 0;
             }
-          });
+        });
         
         setUpcomingAppointments(upcomingAppts);
       }
@@ -102,7 +109,7 @@ export default function UpcomingAppointments() {
               {appointment.doctor_name || 'Doctor'}
             </Text>
             <Text style={styles.appointmentSpecialization}>
-              {appointment.doctor_specialization || 'General Practice'}
+              {appointment.doctor_specialization || appointment.service_name || 'General Practice'}
             </Text>
           </View>
           <View style={styles.statusBadge}>
@@ -112,21 +119,21 @@ export default function UpcomingAppointments() {
         
         <View style={styles.appointmentDetails}>
           <View style={styles.appointmentDetailRow}>
-            <Ionicons name="calendar-outline" size={14} color="#666" />
+            <Ionicons name="calendar-outline" size={14} color="#8E8E93" />
             <Text style={styles.appointmentDetailText}>
               {appointment.date || 'Date not set'}
             </Text>
           </View>
           <View style={styles.appointmentDetailRow}>
-            <Ionicons name="time-outline" size={14} color="#666" />
+            <Ionicons name="time-outline" size={14} color="#8E8E93" />
             <Text style={styles.appointmentDetailText}>
-              {appointment.time || 'Time not set'}
+              {appointment.time_slot || appointment.time || 'Time not set'}
             </Text>
           </View>
           <View style={styles.appointmentDetailRow}>
-            <Ionicons name="location-outline" size={14} color="#666" />
+            <Ionicons name="location-outline" size={14} color="#8E8E93" />
             <Text style={styles.appointmentDetailText} numberOfLines={1}>
-              {appointment.hospital_name || 'Hospital not specified'}
+              {appointment.branch_name || appointment.hospital_name || 'Location not specified'}
             </Text>
           </View>
         </View>
@@ -135,7 +142,7 @@ export default function UpcomingAppointments() {
           <Text style={styles.appointmentId}>
             ID: {appointment.$id?.substring(0, 8) || 'N/A'}
           </Text>
-          <Ionicons name="chevron-forward-outline" size={16} color="#0AD476" />
+          <Ionicons name="chevron-forward-outline" size={16} color="#8E8E93" />
         </View>
       </TouchableOpacity>
     );

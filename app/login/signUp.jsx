@@ -2,7 +2,7 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity, Switch } from 'rea
 import React, { useState } from 'react'
 import { useRouter } from 'expo-router';
 import { account } from '../../configs/AppwriteConfig';
-import { ID } from 'appwrite';
+import { ID } from 'react-native-appwrite';
 import Toast from 'react-native-toast-message';
 import { setLocalStorage } from '../../service/Storage';
 import RoleManager from '../../configs/RoleManager';
