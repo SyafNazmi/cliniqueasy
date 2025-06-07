@@ -1,4 +1,4 @@
-// components/QRScannerModal.jsx
+// components/QRScannerModal.jsx - Fixed Version with User Confirmation
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -22,7 +22,7 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
   const [hasPermission, setHasPermission] = useState(null);
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [showManualEntry, setShowManualEntry] = useState(true); // Start with manual entry
+  const [showManualEntry, setShowManualEntry] = useState(true);
   const [cameraAvailable, setCameraAvailable] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [facing, setFacing] = useState('back');
@@ -31,7 +31,6 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
   useEffect(() => {
     (async () => {
       try {
-        // Request camera permission
         const { status } = await Camera.requestCameraPermissionsAsync();
         console.log("Camera permission status:", status);
         setHasPermission(status === 'granted');
@@ -54,38 +53,10 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
     
     if (scanned || loading) return;
     
-    // Set scanned immediately to prevent multiple scans
     setScanned(true);
     setLoading(true);
     
-    try {
-      console.log('Processing QR code:', data);
-      
-      processPrescriptionQR(data)
-        .then(prescriptionMeds => {
-          if (prescriptionMeds && prescriptionMeds.length > 0) {
-            onScanSuccess(prescriptionMeds[0]);
-          } else {
-            throw new Error('No medication data found');
-          }
-        })
-        .catch(error => {
-          console.error('Error processing scanned QR code:', error);
-          Alert.alert('Error', 'Failed to process QR code', [
-            { text: 'OK', onPress: () => setScanned(false) }
-          ]);
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    } catch (error) {
-      console.error('Error handling QR scan:', error);
-      Alert.alert('Error', 'Failed to process QR code', [
-        { text: 'OK', onPress: () => setScanned(false) }
-      ]);
-      setScanned(false);
-      setLoading(false);
-    }
+    processQRCode(data);
   };
 
   // Handle manually entered QR code
@@ -95,13 +66,26 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
       return;
     }
     
+    setLoading(true);
+    processQRCode(qrInput);
+  };
+  
+  // Process QR code and handle multiple medications with user confirmation
+  const processQRCode = async (qrData) => {
     try {
-      setLoading(true);
+      console.log('Processing QR code:', qrData);
       
-      const prescriptionMeds = await processPrescriptionQR(qrInput);
+      const prescriptionMeds = await processPrescriptionQR(qrData);
       
       if (prescriptionMeds && prescriptionMeds.length > 0) {
-        onScanSuccess(prescriptionMeds[0]);
+        console.log(`Found ${prescriptionMeds.length} medications`);
+        
+        // Close the modal first
+        setLoading(false);
+        
+        // Show confirmation dialog with medication details
+        showMedicationConfirmation(prescriptionMeds);
+        
       } else {
         throw new Error('No medication data found');
       }
@@ -110,27 +94,109 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
       Alert.alert(
         'Error',
         'Unable to process prescription data. Please try again.',
-        [{ text: 'OK' }]
+        [{ text: 'OK', onPress: () => setScanned(false) }]
       );
-    } finally {
       setLoading(false);
     }
   };
-  
-  // Process demo QR codes
+
+  // Show detailed medication confirmation dialog
+  const showMedicationConfirmation = (medications) => {
+    const medicationList = medications.map((med, index) => 
+      `${index + 1}. ${med.name} - ${med.dosage} (${med.frequencies})`
+    ).join('\n');
+
+    const message = medications.length > 1 
+      ? `Found ${medications.length} medications:\n\n${medicationList}\n\nWhat would you like to do?`
+      : `Found medication:\n\n${medicationList}\n\nAdd this medication?`;
+
+    if (medications.length > 1) {
+      // Multiple medications - show streamlined options
+      Alert.alert(
+        "Multiple Medications Found",
+        message,
+        [
+          {
+            text: "Add All",
+            onPress: () => {
+              onScanSuccess({
+                medications: medications,
+                totalCount: medications.length,
+                action: 'add_all'
+              });
+              onClose();
+            }
+          },
+          {
+            text: "Review & Edit",
+            onPress: () => {
+              onScanSuccess({
+                medications: medications,
+                totalCount: medications.length,
+                action: 'review_edit'
+              });
+              onClose();
+            }
+          },
+          {
+            text: "Cancel",
+            style: "cancel",
+            onPress: () => {
+              // Don't close the modal, let user try again
+              setLoading(false);
+              setScanned(false);
+            }
+          }
+        ]
+      );
+    } else {
+      // Single medication - show simple confirmation
+      Alert.alert(
+        "Medication Found",
+        message,
+        [
+          {
+            text: "Add Medication",
+            onPress: () => {
+              onScanSuccess({
+                medications: medications,
+                totalCount: 1,
+                action: 'add_single'
+              });
+              onClose();
+            }
+          },
+          {
+            text: "Review & Edit",
+            onPress: () => {
+              onScanSuccess({
+                medications: medications,
+                totalCount: 1,
+                action: 'review_edit'
+              });
+              onClose();
+            }
+          },
+          {
+            text: "Cancel",
+            style: "cancel",
+            onPress: () => {
+              setLoading(false);
+              setScanned(false);
+            }
+          }
+        ]
+      );
+    }
+  };
+
+  // Process demo QR codes with confirmation
   const handleQuickScan = async (demoType) => {
     try {
       setLoading(true);
       const demoQR = `DEMO:${demoType}:APT12345`;
       
-      // Process the QR code
-      const prescriptionMeds = await processPrescriptionQR(demoQR);
-      
-      if (prescriptionMeds && prescriptionMeds.length > 0) {
-        onScanSuccess(prescriptionMeds[0]);
-      } else {
-        throw new Error('No medication data found');
-      }
+      await processQRCode(demoQR);
     } catch (error) {
       console.error('Demo scan error:', error);
       Alert.alert(
@@ -138,7 +204,6 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
         'Demo scan failed. Please try manual entry.',
         [{ text: 'OK' }]
       );
-    } finally {
       setLoading(false);
     }
   };
@@ -183,11 +248,13 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
             barcodeTypes: ['qr'],
           }}
         />
-        {/* Overlay content moved outside CameraView */}
         <View style={styles.scanOverlay}>
           <View style={styles.scannerFrame}>
             <View style={styles.scanLine} />
           </View>
+          <Text style={styles.scanInstructions}>
+            Position QR code within the frame
+          </Text>
           {scanned && (
             <TouchableOpacity
               style={styles.scanAgainButton}
@@ -238,6 +305,7 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="#1a8e2d" />
               <Text style={styles.loadingText}>Processing prescription...</Text>
+              <Text style={styles.loadingSubText}>Analyzing medications...</Text>
             </View>
           ) : showManualEntry ? (
             <View style={styles.manualEntryContainer}>
@@ -261,7 +329,6 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
                 </LinearGradient>
               </TouchableOpacity>
               
-              {/* Only show camera option if Camera is available */}
               {cameraAvailable && (
                 <TouchableOpacity 
                   style={styles.toggleButton}
@@ -274,42 +341,56 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
               
               <View style={styles.divider}>
                 <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>OR</Text>
+                <Text style={styles.dividerText}>OR TRY DEMO</Text>
                 <View style={styles.dividerLine} />
               </View>
               
-              <Text style={styles.demoTitle}>Try Demo Prescriptions:</Text>
+              <Text style={styles.demoTitle}>Demo Prescriptions:</Text>
               <View style={styles.demoButtonsContainer}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <TouchableOpacity
                     style={styles.demoButton}
                     onPress={() => handleQuickScan('blood_pressure')}
                   >
-                    <Text style={styles.demoButtonText}>Blood Pressure</Text>
+                    <Text style={styles.demoButtonText}>Blood Pressure (2 meds)</Text>
                   </TouchableOpacity>
                   
                   <TouchableOpacity
                     style={styles.demoButton}
                     onPress={() => handleQuickScan('diabetes')}
                   >
-                    <Text style={styles.demoButtonText}>Diabetes</Text>
+                    <Text style={styles.demoButtonText}>Diabetes (2 meds)</Text>
                   </TouchableOpacity>
                   
                   <TouchableOpacity
                     style={styles.demoButton}
                     onPress={() => handleQuickScan('infection')}
                   >
-                    <Text style={styles.demoButtonText}>Infection</Text>
+                    <Text style={styles.demoButtonText}>Infection (2 meds)</Text>
                   </TouchableOpacity>
                   
                   <TouchableOpacity
                     style={styles.demoButton}
                     onPress={() => handleQuickScan('cholesterol')}
                   >
-                    <Text style={styles.demoButtonText}>Cholesterol</Text>
+                    <Text style={styles.demoButtonText}>Cholesterol (2 meds)</Text>
                   </TouchableOpacity>
                 </ScrollView>
               </View>
+              
+              <View style={styles.infoBox}>
+                <Ionicons name="information-circle" size={20} color="#1a8e2d" />
+                <Text style={styles.infoText}>
+                  You'll be able to review and edit medication times before adding
+                </Text>
+              </View>
+              
+              <TouchableOpacity 
+                style={styles.skipButton}
+                onPress={onClose}
+              >
+                <Text style={styles.skipButtonText}>Skip and add manually</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <>
@@ -384,6 +465,12 @@ const styles = StyleSheet.create({
     color: '#333',
     textAlign: 'center',
   },
+  loadingSubText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+  },
   manualEntryContainer: {
     padding: 20,
   },
@@ -393,6 +480,109 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     color: '#333',
   },
+  qrInput: {
+    width: '100%',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+    marginBottom: 15,
+  },
+  scanButton: {
+    width: '100%',
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginBottom: 20,
+  },
+  scanButtonGradient: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  toggleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    marginBottom: 15,
+  },
+  toggleButtonText: {
+    color: '#1a8e2d',
+    fontSize: 16,
+    fontWeight: '500',
+    marginLeft: 5,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    marginVertical: 15,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e5e5e5',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#999',
+    fontWeight: '500',
+  },
+  demoTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 10,
+  },
+  demoButtonsContainer: {
+    marginBottom: 15,
+  },
+  demoButton: {
+    backgroundColor: '#f0f0f0',
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  demoButtonText: {
+    color: '#333',
+    fontWeight: '500',
+    fontSize: 14,
+  },
+  infoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e6f7e9',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#1a8e2d20',
+  },
+  infoText: {
+    fontSize: 12,
+    color: '#1a8e2d',
+    marginLeft: 8,
+    flex: 1,
+  },
+  skipButton: {
+    padding: 12,
+    alignItems: 'center',
+  },
+  skipButtonText: {
+    color: '#666',
+    fontWeight: '500',
+  },
+  // Camera Related Styles
   cameraContainer: {
     height: height * 0.6,
     maxHeight: 500,
@@ -425,6 +615,7 @@ const styles = StyleSheet.create({
     borderColor: 'white',
     backgroundColor: 'transparent',
     position: 'relative',
+    borderRadius: 10,
   },
   scanLine: {
     height: 2,
@@ -432,6 +623,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a8e2d',
     position: 'absolute',
     top: '50%',
+    opacity: 0.8,
+  },
+  scanInstructions: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '500',
+    marginTop: 20,
+    textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 15,
   },
   scanAgainButton: {
     marginTop: 20,
@@ -488,6 +691,7 @@ const styles = StyleSheet.create({
     color: '#333',
     textAlign: 'center',
     marginBottom: 20,
+    lineHeight: 22,
   },
   manualEntryButton: {
     paddingVertical: 12,
@@ -498,80 +702,6 @@ const styles = StyleSheet.create({
   manualEntryButtonText: {
     color: 'white',
     fontSize: 16,
-    fontWeight: '500',
-  },
-  toggleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-  },
-  toggleButtonText: {
-    color: '#1a8e2d',
-    fontSize: 16,
-    fontWeight: '500',
-    marginLeft: 5,
-  },
-  qrInput: {
-    width: '100%',
-    backgroundColor: '#f5f5f5',
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    marginBottom: 15,
-  },
-  scanButton: {
-    width: '100%',
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginBottom: 20,
-  },
-  scanButtonGradient: {
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  scanButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    width: '100%',
-    marginVertical: 15,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#e5e5e5',
-  },
-  dividerText: {
-    marginHorizontal: 10,
-    color: '#999',
-    fontWeight: '500',
-  },
-  demoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 10,
-  },
-  demoButtonsContainer: {
-    marginBottom: 10,
-  },
-  demoButton: {
-    backgroundColor: '#f0f0f0',
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-    marginRight: 10,
-  },
-  demoButtonText: {
-    color: '#333',
     fontWeight: '500',
   },
 });
