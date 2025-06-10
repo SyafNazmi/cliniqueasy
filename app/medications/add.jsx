@@ -1,4 +1,4 @@
-// app/medications/add.jsx
+// app/medications/add.jsx - Enhanced Version with Multiple Medication Dropdown
 import { View, Text, ScrollView, TextInput, TouchableOpacity, Switch, StyleSheet, Platform, Dimensions, Alert, Modal, ActivityIndicator } from 'react-native'
 import React, { useState } from 'react'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -66,8 +66,19 @@ const ILLNESS_TYPES = [
     { id: "7", label: "Infection" },
     { id: "8", label: "Blood Pressure" },
     { id: "9", label: "Diabetes" },
-    { id: "10", label: "Other" }
-  ];
+    { id: "10", label: "Hypertension" },
+    { id: "11", label: "Asthma" },
+    { id: "12", label: "Cholesterol" },
+    { id: "13", label: "Anxiety" },
+    { id: "14", label: "Depression" },
+    { id: "15", label: "Thyroid" },
+    { id: "16", label: "Pain Relief" },
+    { id: "17", label: "Inflammation" },
+    { id: "18", label: "Prenatal Care" },
+    { id: "19", label: "Vitamin Deficiency" },
+    { id: "20", label: "Heart Condition" },
+    { id: "21", label: "Other" }
+];
 
 const FREQUENCIES = [
     {
@@ -159,6 +170,11 @@ export default function AddMedicationScreen() {
     // Get params from router if coming from elsewhere
     const params = useLocalSearchParams();
 
+    // NEW: State for multiple medications from prescription
+    const [scannedMedications, setScannedMedications] = useState([]);
+    const [selectedMedicationIndex, setSelectedMedicationIndex] = useState(0);
+    const [showMedicationDropdown, setShowMedicationDropdown] = useState(false);
+
     const [form, setForm] = useState({
         name: params?.name || "",
         type: params?.type || "",
@@ -185,11 +201,42 @@ export default function AddMedicationScreen() {
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [currentTimeIndex, setCurrentTimeIndex] = useState(0);
+    const [loading, setLoading] = useState(false);
 
+    // Enhanced handleScanSuccess to process multiple medications
+    const handleScanSuccess = (scanResult) => {
+        console.log("Scan success with result:", scanResult);
+        
+        const { medications, totalCount, action } = scanResult;
+        
+        // If we have multiple medications, populate the dropdown
+        if (medications && medications.length > 1) {
+            setScannedMedications(medications);
+            setSelectedMedicationIndex(0);
+            // Load the first medication by default
+            handleSingleMedication(medications[0]);
+            setShowQRModal(false);
+            
+            // Show info about multiple medications found
+            Alert.alert(
+                "Multiple Medications Found! 💊",
+                `Found ${medications.length} medications in this prescription. Use the dropdown above to switch between them, or add them all at once.`,
+                [{ text: "Got it!" }]
+            );
+        } else {
+            // Single medication - existing behavior
+            const medication = medications ? medications[0] : scanResult;
+            setScannedMedications([medication]);
+            setSelectedMedicationIndex(0);
+            handleSingleMedication(medication);
+            setShowQRModal(false);
+        }
+    };
 
-    // Handle successful scan
-    const handleScanSuccess = (medication) => {
-        console.log("Scan success with medication:", medication);
+    // Handle single medication (existing functionality)
+    const handleSingleMedication = (medication) => {
+        console.log("Loading medication for editing:", medication);
+        
         // Update form with medication data
         setForm({
             name: medication.name || "",
@@ -212,9 +259,173 @@ export default function AddMedicationScreen() {
         setSelectedIllnessType(medication.illnessType || "");
         setSelectedFrequency(medication.frequencies || "");
         setSelectedDuration(medication.duration || "");
-        
-        // Close modal
-        setShowQRModal(false);
+    };
+
+    // NEW: Handle medication selection from dropdown
+    const handleMedicationSelect = (index) => {
+        setSelectedMedicationIndex(index);
+        handleSingleMedication(scannedMedications[index]);
+        setShowMedicationDropdown(false);
+    };
+
+    // NEW: Add all medications function
+    const handleAddAllMedications = async () => {
+        try {
+            setLoading(true);
+            
+            Alert.alert(
+                "Add All Medications",
+                `Add all ${scannedMedications.length} medications from this prescription?`,
+                [
+                    {
+                        text: "Yes, Add All",
+                        onPress: async () => {
+                            await processAllMedications(scannedMedications);
+                        }
+                    },
+                    {
+                        text: "Cancel",
+                        style: "cancel",
+                        onPress: () => setLoading(false)
+                    }
+                ]
+            );
+        } catch (error) {
+            console.error("Error in handleAddAllMedications:", error);
+            setLoading(false);
+        }
+    };
+    
+    // Process all medications
+    const processAllMedications = async (medications) => {
+        try {
+            let successCount = 0;
+            let failCount = 0;
+            const addedMedications = [];
+            
+            for (const medication of medications) {
+                try {
+                    const medicationData = await prepareMedicationData(medication);
+                    await addMedication(medicationData);
+                    
+                    if (medicationData.reminderEnabled) {
+                        await scheduleMedicationReminder(medicationData);
+                    }
+                    
+                    addedMedications.push(medicationData.name);
+                    successCount++;
+                } catch (error) {
+                    console.error(`Failed to add medication ${medication.name}:`, error);
+                    failCount++;
+                }
+            }
+            
+            if (successCount > 0 && failCount === 0) {
+                const successList = addedMedications.join(', ');
+                Alert.alert(
+                    "Success! 🎉",
+                    `Successfully added all ${successCount} medications:\n\n${successList}`,
+                    [{ text: "OK", onPress: () => router.back() }]
+                );
+            } else if (successCount > 0 && failCount > 0) {
+                Alert.alert(
+                    "Partial Success",
+                    `Added ${successCount} medications successfully. ${failCount} failed.`,
+                    [{ text: "OK", onPress: () => router.back() }]
+                );
+            } else {
+                Alert.alert("Error", "Failed to add medications. Please try again.");
+            }
+            
+        } catch (error) {
+            console.error("Error processing medications:", error);
+            Alert.alert("Error", "Failed to add medications. Please try again.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // NEW: Render medication selection dropdown
+    const renderMedicationSelector = () => {
+        if (scannedMedications.length <= 1) return null;
+
+        return (
+            <View style={styles.medicationSelectorContainer}>
+                <View style={styles.medicationSelectorHeader}>
+                    <View style={styles.medicationSelectorInfo}>
+                        <Ionicons name="medical" size={20} color="#1a8e2d" />
+                        <Text style={styles.medicationSelectorTitle}>
+                            Prescription Medications ({scannedMedications.length})
+                        </Text>
+                    </View>
+                    
+                    <TouchableOpacity
+                        style={styles.addAllButton}
+                        onPress={handleAddAllMedications}
+                    >
+                        <Ionicons name="add-circle" size={16} color="#1a8e2d" />
+                        <Text style={styles.addAllButtonText}>Add All</Text>
+                    </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                    style={styles.medicationDropdownButton}
+                    onPress={() => setShowMedicationDropdown(!showMedicationDropdown)}
+                >
+                    <View style={styles.medicationDropdownInfo}>
+                        <Text style={styles.medicationDropdownLabel}>
+                            Medication {selectedMedicationIndex + 1}:
+                        </Text>
+                        <Text style={styles.medicationDropdownName}>
+                            {scannedMedications[selectedMedicationIndex]?.name || "Select medication"}
+                        </Text>
+                        <Text style={styles.medicationDropdownDosage}>
+                            {scannedMedications[selectedMedicationIndex]?.dosage}
+                        </Text>
+                    </View>
+                    <Ionicons 
+                        name={showMedicationDropdown ? "chevron-up" : "chevron-down"} 
+                        size={20} 
+                        color="#666" 
+                    />
+                </TouchableOpacity>
+
+                {showMedicationDropdown && (
+                    <View style={styles.medicationDropdownMenu}>
+                        <ScrollView style={{ maxHeight: 200 }}>
+                            {scannedMedications.map((medication, index) => (
+                                <TouchableOpacity
+                                    key={index}
+                                    style={[
+                                        styles.medicationDropdownItem,
+                                        selectedMedicationIndex === index && styles.selectedMedicationDropdownItem
+                                    ]}
+                                    onPress={() => handleMedicationSelect(index)}
+                                >
+                                    <View style={styles.medicationDropdownItemContent}>
+                                        <Text style={[
+                                            styles.medicationDropdownItemName,
+                                            selectedMedicationIndex === index && styles.selectedMedicationDropdownItemText
+                                        ]}>
+                                            Medication {index + 1}: {medication.name}
+                                        </Text>
+                                        <Text style={[
+                                            styles.medicationDropdownItemDetails,
+                                            selectedMedicationIndex === index && styles.selectedMedicationDropdownItemText
+                                        ]}>
+                                            {medication.dosage} • {medication.type} • {medication.illnessType}
+                                        </Text>
+                                    </View>
+                                    {selectedMedicationIndex === index && (
+                                        <Ionicons name="checkmark-circle" size={20} color="#1a8e2d" />
+                                    )}
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+            </View>
+        );
     };
 
     // Render medication type options
@@ -254,88 +465,88 @@ export default function AddMedicationScreen() {
     }
 
     const renderIllnessDropdown = () => {
-    return (
-      <View>
-        <TouchableOpacity
-          style={[styles.dropdownButton, errors.illnessType && styles.inputError]}
-          onPress={() => setShowIllnessDropdown(!showIllnessDropdown)}
-        >
-          <Text style={form.illnessType ? styles.dropdownText : styles.dropdownPlaceholder}>
-            {form.illnessType || "Select Illness Type"}
-          </Text>
-          <Ionicons name={showIllnessDropdown ? "chevron-up" : "chevron-down"} size={20} color="#666" />
-        </TouchableOpacity>
-        
-        {errors.illnessType && (
-          <Text style={styles.errorText}>{errors.illnessType}</Text>
-        )}
-        
-        {showIllnessDropdown && (
-          <View style={styles.dropdownMenu}>
-            <ScrollView style={{ maxHeight: 200 }}>
-              {ILLNESS_TYPES.map((illness) => (
+        return (
+            <View>
                 <TouchableOpacity
-                  key={illness.id}
-                  style={[
-                    styles.dropdownItem,
-                    selectedIllnessType === illness.label && styles.selectedDropdownItem
-                  ]}
-                  onPress={() => {
-                    setSelectedIllnessType(illness.label);
-                    setForm({ ...form, illnessType: illness.label });
-                    setShowIllnessDropdown(false);
-                    if (errors.illnessType) {
-                      setErrors({ ...errors, illnessType: "" });
-                    }
-                  }}
+                    style={[styles.dropdownButton, errors.illnessType && styles.inputError]}
+                    onPress={() => setShowIllnessDropdown(!showIllnessDropdown)}
                 >
-                  <Text
-                    style={[
-                      styles.dropdownItemText,
-                      selectedIllnessType === illness.label && styles.selectedDropdownItemText
-                    ]}
-                  >
-                    {illness.label}
-                  </Text>
+                    <Text style={form.illnessType ? styles.dropdownText : styles.dropdownPlaceholder}>
+                        {form.illnessType || "Select Illness Type"}
+                    </Text>
+                    <Ionicons name={showIllnessDropdown ? "chevron-up" : "chevron-down"} size={20} color="#666" />
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-      </View>
-    )
-  }
+                
+                {errors.illnessType && (
+                    <Text style={styles.errorText}>{errors.illnessType}</Text>
+                )}
+                
+                {showIllnessDropdown && (
+                    <View style={styles.dropdownMenu}>
+                        <ScrollView style={{ maxHeight: 200 }}>
+                            {ILLNESS_TYPES.map((illness) => (
+                                <TouchableOpacity
+                                    key={illness.id}
+                                    style={[
+                                        styles.dropdownItem,
+                                        selectedIllnessType === illness.label && styles.selectedDropdownItem
+                                    ]}
+                                    onPress={() => {
+                                        setSelectedIllnessType(illness.label);
+                                        setForm({ ...form, illnessType: illness.label });
+                                        setShowIllnessDropdown(false);
+                                        if (errors.illnessType) {
+                                            setErrors({ ...errors, illnessType: "" });
+                                        }
+                                    }}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.dropdownItemText,
+                                            selectedIllnessType === illness.label && styles.selectedDropdownItemText
+                                        ]}
+                                    >
+                                        {illness.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+            </View>
+        )
+    }
 
     const renderFrequencyOptions = () => {
         return (
             <View style={styles.optionGrid}>
                 {FREQUENCIES.map((freq)=> (
                     <TouchableOpacity 
-                    key={freq.id}
-                    style={[styles.optionCard, selectedFrequency === freq.label && styles.selectedOptionCard]}
-                    onPress={() => {
-                        setSelectedFrequency(freq.label);
-                        setForm({ ...form, frequencies: freq.label, times: freq.times });
-                        if(errors.frequencies) {
-                            setErrors({...errors, frequencies: ""});
-                        }
-                    }}
-                  >
-                    <View 
-                      style={[styles.optionIcon, selectedFrequency === freq.label && styles.selectedOptionIcon]}
+                        key={freq.id}
+                        style={[styles.optionCard, selectedFrequency === freq.label && styles.selectedOptionCard]}
+                        onPress={() => {
+                            setSelectedFrequency(freq.label);
+                            setForm({ ...form, frequencies: freq.label, times: freq.times });
+                            if(errors.frequencies) {
+                                setErrors({...errors, frequencies: ""});
+                            }
+                        }}
                     >
-                      <Ionicons 
-                        name={freq.icon}
-                        size={24}
-                        color={selectedFrequency === freq.label ? "white" : "#666"}
-                      />
-                    </View>
-                    <Text 
-                      style={[styles.optionLabel, selectedFrequency === freq.label && styles.selectedOptionLabel]}
-                    >
-                      {freq.label}
-                    </Text>
-                  </TouchableOpacity>
+                        <View 
+                            style={[styles.optionIcon, selectedFrequency === freq.label && styles.selectedOptionIcon]}
+                        >
+                            <Ionicons 
+                                name={freq.icon}
+                                size={24}
+                                color={selectedFrequency === freq.label ? "white" : "#666"}
+                            />
+                        </View>
+                        <Text 
+                            style={[styles.optionLabel, selectedFrequency === freq.label && styles.selectedOptionLabel]}
+                        >
+                            {freq.label}
+                        </Text>
+                    </TouchableOpacity>
                 ))}
             </View>
         )
@@ -346,820 +557,841 @@ export default function AddMedicationScreen() {
             <View style={styles.optionGrid}>
                 {DURATIONS.map((dur)=> (
                     <TouchableOpacity key={dur.id}
-                    style={[styles.optionCard, selectedDuration === dur.label && styles.selectedOptionCard]}
-                    onPress={() => {
-                        setSelectedDuration(dur.label);
-                        setForm({ ...form, duration: dur.label });
-                        if(errors.duration) {
-                            setErrors({...errors, duration: ""});
-                        }
-                    }}
+                        style={[styles.optionCard, selectedDuration === dur.label && styles.selectedOptionCard]}
+                        onPress={() => {
+                            setSelectedDuration(dur.label);
+                            setForm({ ...form, duration: dur.label });
+                            if(errors.duration) {
+                                setErrors({...errors, duration: ""});
+                            }
+                        }}
                     >
                         <Text
-                         style={[styles.durationNumber, selectedDuration === dur.label && styles.selectedDurationNumber]}
+                            style={[styles.durationNumber, selectedDuration === dur.label && styles.selectedDurationNumber]}
                         >{dur.value > 0 ? dur.value: "∞"}</Text>
                         <Text
-                         style={[styles.optionLabel,
-                         selectedDuration === dur.label && styles.selectedOptionLabel]}
-                         >{dur.label}</Text>
+                            style={[styles.optionLabel,
+                            selectedDuration === dur.label && styles.selectedOptionLabel]}
+                        >{dur.label}</Text>
                     </TouchableOpacity>
                 ))}
             </View>
         );
     };
 
-  const validateForm = () => {
-    const newErrors = {}; 
-    if (!form.name.trim()) {
-        newErrors.name = "Medication name is required";
-    }
-    if (!form.type.trim()) {
-        newErrors.type = "Medication type is required";
-    }
-    if (!form.illnessType.trim()) {
-        newErrors.illnessType = "Illness type is required";
-    }
-    if (!form.dosage.trim()) {
-        newErrors.dosage = "Dosage is required";
-    }
-    if (!form.frequencies.trim()) {
-        newErrors.frequencies = "Frequency is required";
-    }
-    if (!form.duration.trim()) {
-        newErrors.duration = "Duration is required";
-    }
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-}
-
-  const handleSave = async() => {
-    try {
-        if (!validateForm()) {
-            Alert.alert("Error", "Please fill in all required fields correctly!");
-            return;
+    const validateForm = () => {
+        const newErrors = {}; 
+        if (!form.name.trim()) {
+            newErrors.name = "Medication name is required";
         }
+        if (!form.type.trim()) {
+            newErrors.type = "Medication type is required";
+        }
+        if (!form.illnessType.trim()) {
+            newErrors.illnessType = "Illness type is required";
+        }
+        if (!form.dosage.trim()) {
+            newErrors.dosage = "Dosage is required";
+        }
+        if (!form.frequencies.trim()) {
+            newErrors.frequencies = "Frequency is required";
+        }
+        if (!form.duration.trim()) {
+            newErrors.duration = "Duration is required";
+        }
+        setErrors(newErrors);
+        return Object.keys(newErrors).length === 0;
+    }
 
-        if (isSubmitting) return;
-        setIsSubmitting(true);
-
-        // Generate a random color
+    const prepareMedicationData = (medication) => {
         const colorPalette = [
-            '#4CAF50', // Green
-            '#2196F3', // Blue
-            '#9C27B0', // Purple
-            '#FF9800', // Orange
-            '#F44336', // Red
-            '#009688', // Teal
-            '#795548', // Brown
-            '#607D8B', // Blue Grey
-            '#3F51B5', // Indigo
-            '#00BCD4', // Cyan
-            '#8BC34A', // Light Green
-            '#FF5722', // Deep Orange
-            '#673AB7', // Deep Purple
-            '#FFEB3B', // Yellow
-            '#03A9F4'  // Light Blue
+            '#4CAF50', '#2196F3', '#9C27B0', '#FF9800', '#F44336',
+            '#009688', '#795548', '#607D8B', '#3F51B5', '#00BCD4',
+            '#8BC34A', '#FF5722', '#673AB7', '#FFEB3B', '#03A9F4'
         ];
         const randomColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
-
-        const medicationData = {
-            id: Math.random().toString(36).substr(2, 9),
-            ...form,
-            currentSupply: form.currentSupply ? Number(form.currentSupply) : 0,
-            totalSupply: form.currentSupply ? Number(form.currentSupply) : 0,
-            refillAt: form.refillAt ? Number(form.refillAt) : 0,
-            startDate: form.startDate.toISOString(),
-            color: randomColor, 
-        };
-
-        await addMedication(medicationData);
-        // Schedule reminders if enabled
-        if (medicationData.reminderEnabled) {
-            console.log("Scheduling reminders with data:", {
-                reminderEnabled: medicationData.reminderEnabled,
-                times: medicationData.times,
-              });
-              
-              // Ensure reminderEnabled is properly set
-              medicationData.reminderEnabled = form.reminderEnabled === true;
-              
-              // Make sure times array is properly formatted before scheduling
-              if (!Array.isArray(medicationData.times) || medicationData.times.length === 0) {
-                console.error("No medication times found!");
-                // Add default times if needed or show error
-                Alert.alert("Error", "Please add at least one medication time");
-                return;
-              }
-              
-              // Then schedule the notification
-              await scheduleMedicationReminder(medicationData);
+    
+        let medicationTimes = medication.times || ["09:00"];
+        if (!Array.isArray(medicationTimes)) {
+            medicationTimes = [medicationTimes];
         }
+    
+        return {
+            id: Math.random().toString(36).substr(2, 9),
+            name: medication.name || "Unknown Medication",
+            type: medication.type || "Tablet",
+            illnessType: medication.illnessType || "General",
+            dosage: medication.dosage || "As prescribed",
+            frequencies: medication.frequencies || "Once Daily",
+            duration: medication.duration || "30 days",
+            startDate: new Date().toISOString(),
+            times: medicationTimes,
+            notes: medication.notes || "Added from prescription scan",
+            reminderEnabled: true,
+            refillReminder: false,
+            currentSupply: 0,
+            totalSupply: 0,
+            refillAt: 0,
+            color: randomColor,
+        };
+    };
 
-        Alert.alert(
-            "Success",
-            "Medication added successfully",
-            [
-                {
-                    text: "OK",
-                    onPress: () => router.back(),
-                },
-            ],
-            { cancelable: false }
-        );
+    const handleSave = async() => {
+        try {
+            if (!validateForm()) {
+                Alert.alert("Error", "Please fill in all required fields correctly!");
+                return;
+            }
 
-    } catch (error) {
-        console.error("Save error:", error);
-        Alert.alert(
-            "Error",
-            "Failed to save medication, Please try again",
-            [{ text: "OK" }],
-            { cancelable: false }
+            if (isSubmitting) return;
+            setIsSubmitting(true);
+
+            const medicationData = await prepareMedicationData(form);
+            await addMedication(medicationData);
+
+            if (medicationData.reminderEnabled) {
+                medicationData.reminderEnabled = form.reminderEnabled === true;
+                
+                if (!Array.isArray(medicationData.times) || medicationData.times.length === 0) {
+                    console.error("No medication times found!");
+                    Alert.alert("Error", "Please add at least one medication time");
+                    return;
+                }
+                
+                await scheduleMedicationReminder(medicationData);
+            }
+
+            Alert.alert(
+                "Success",
+                "Medication added successfully",
+                [
+                    {
+                        text: "OK",
+                        onPress: () => router.back(),
+                    },
+                ],
+                { cancelable: false }
+            );
+
+        } catch (error) {
+            console.error("Save error:", error);
+            Alert.alert(
+                "Error",
+                "Failed to save medication, Please try again",
+                [{ text: "OK" }],
+                { cancelable: false }
+            );
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    // Loading state for bulk operations
+    if (loading) {
+        return (
+            <View style={styles.container}>
+                <LinearGradient 
+                    colors={["#1a8e2d", "#146922"]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.headerGradient}
+                />
+                <View style={styles.content}>
+                    <View style={styles.header}>
+                        <PageHeader onPress={() => router.back()}/>
+                        <Text style={styles.headerTitle}>Add Medication</Text>
+                    </View>
+                    
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color="#1a8e2d" />
+                        <Text style={styles.loadingText}>Adding medications...</Text>
+                        <Text style={styles.loadingSubText}>Please wait while we process all medications</Text>
+                    </View>
+                </View>
+            </View>
         );
-        
-    } finally {
-        setIsSubmitting(false);
     }
-  };
 
-  return (
-    <View style={styles.container}>
-      <LinearGradient 
-        colors={["#1a8e2d", "#146922"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      />
-      
-      {/* QR Code Scanner Modal */}
-        <QRScannerModal
-            visible={showQRModal}
-            onClose={() => setShowQRModal(false)}
-            onScanSuccess={handleScanSuccess}
-        />
-      
-      {/* Regular Form */}
-      <View style={styles.content}>
-        <View style={styles.header}>
-            <PageHeader onPress={() => router.back()}/>
-            <Text style={styles.headerTitle}>Add Medication</Text>
-        </View>
-        
-        <ScrollView showsVerticalScrollIndicator={false} style={{flex: 1}}
-         contentContainerStyle={styles.formContentContainer}>
-            {/* Option to open QR scanner again */}
-            <TouchableOpacity 
-              style={styles.scanPrescriptionButton}
-              onPress={() => setShowQRModal(true)}
-            >
-              <Ionicons name="qr-code" size={24} color="#1a8e2d" />
-              <Text style={styles.scanPrescriptionText}>Scan Prescription QR</Text>
-            </TouchableOpacity>
+    return (
+        <View style={styles.container}>
+            <LinearGradient 
+                colors={["#1a8e2d", "#146922"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.headerGradient}
+            />
             
-            <View style={styles.section}>
-                {/* basic informations */}
-                <View style={styles.inputContainer}>
-                    <TextInput style={[styles.mainInput, errors.name && styles.inputError]}
-                     placeholder='Medication Name' placeholderTextColor={'#999'}
-                     value={form.name}
-                     onChangeText={(text) =>{
-                        setForm({...form, name:text})
-                        if(errors.name){
-                            setErrors({...errors, name: "" })
-                        }
-                     }}
-                     />
-                     {errors.name && (
-                        <Text style={styles.errorText}>{errors.name}</Text>
-                     )}
+            {/* QR Code Scanner Modal */}
+            <QRScannerModal
+                visible={showQRModal}
+                onClose={() => setShowQRModal(false)}
+                onScanSuccess={handleScanSuccess}
+            />
+            
+            {/* Regular Form */}
+            <View style={styles.content}>
+                <View style={styles.header}>
+                    <PageHeader onPress={() => router.back()}/>
+                    <Text style={styles.headerTitle}>Add Medication</Text>
                 </View>
                 
-                {/* Type selection section */}
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Medication Type</Text>
-                    {errors.type && (
-                        <Text style={styles.errorText}>{errors.type}</Text>
-                    )}
-                    {renderMedicationTypes()}
-                    <Text style={styles.sectionTitle}>Illness Type</Text>
-                    {renderIllnessDropdown()}
-                </View>
-                
-                <View style={styles.inputContainer}>
-                    <TextInput style={[styles.mainInput, errors.dosage && styles.inputError]}
-                    placeholder='Dosage e.g(500mg)' placeholderTextColor={'#999'}
-                    value={form.dosage}
-                     onChangeText={(text) =>{
-                        setForm({...form, dosage:text})
-                        if(errors.dosage){
-                            setErrors({...errors, dosage: "" })
-                        }
-                     }}
-                    />
-                    {errors.dosage && (
-                        <Text style={styles.errorText}>{errors.dosage}</Text>
-                     )}
-                </View>
-            </View>
-            {/* Schedule */}
-            <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>How Often?</Text>
-                    {/* frequency option */}
-                    {errors.frequencies && (
-                        <Text style={styles.errorText}>{errors.frequencies}</Text>
-                    )}
-                    {renderFrequencyOptions()}
-                    <Text style={styles.sectionTitle}>For How Long?</Text>
-                    {/* duration option */}
-                    {renderDurationOptions()}
-                    {errors.duration && (
-                        <Text style={styles.errorText}>{errors.duration}</Text>
-                    )}
-
-                    <TouchableOpacity style={styles.dateButton}
-                     onPress={() => setShowDatePicker(true)}
+                <ScrollView showsVerticalScrollIndicator={false} style={{flex: 1}}
+                    contentContainerStyle={styles.formContentContainer}>
+                    
+                    {/* Option to open QR scanner again */}
+                    <TouchableOpacity 
+                        style={styles.scanPrescriptionButton}
+                        onPress={() => setShowQRModal(true)}
                     >
-                        <View style={styles.dateIconContainer}>
-                            <Ionicons name='calendar' size={20} color={"#1a8e2d"} />
-                        </View>
-                        <Text style={styles.dateButtonText}>Starts: {form.startDate.toLocaleDateString()}</Text>
-                        <Ionicons name='chevron-forward' size={20} color={"#666"}/>
+                        <Ionicons name="qr-code" size={24} color="#1a8e2d" />
+                        <Text style={styles.scanPrescriptionText}>Scan Prescription QR</Text>
                     </TouchableOpacity>
-                    {showDatePicker && (
-                    <DateTimePicker value={form.startDate} mode='date'
-                        onChange={(event, date) => {
-                            setShowDatePicker(false);
-                            if(date) setForm({...form, startDate: date });
-                        }}
-                    />  
-                    )}
 
-                    {form.frequencies && form.frequencies !== 'As Needed' && (
-                        <View style={styles.timesContainer}>
-                            <Text style={styles.timesTitle}>Medication Times</Text>
-                            {form.times.map((time, index) => (
-                                <TouchableOpacity
-                                    key={index}
-                                    style={styles.timeButton}
-                                    onPress={() => {
-                                        setCurrentTimeIndex(index);
-                                        setShowTimePicker(true);
-                                    }}
-                                >
-                                    <View style={styles.timesIconContainer}>
-                                    <Ionicons 
-                                        name='time-outline' 
-                                        size={20} 
-                                        color={'#1a8e2d'}/>
-                                    </View>
-                                    <Text style={styles.timeButtonText}>{time}</Text>
-                                    <Ionicons 
-                                        name='chevron-forward' 
-                                        size={20} 
-                                        color={"#666"}/>
-                                </TouchableOpacity>
-                            ))}
+                    {/* NEW: Multiple Medication Selector */}
+                    {renderMedicationSelector()}
+                    
+                    <View style={styles.section}>
+                        {/* basic informations */}
+                        <View style={styles.inputContainer}>
+                            <TextInput style={[styles.mainInput, errors.name && styles.inputError]}
+                                placeholder='Medication Name' placeholderTextColor={'#999'}
+                                value={form.name}
+                                onChangeText={(text) =>{
+                                    setForm({...form, name:text})
+                                    if(errors.name){
+                                        setErrors({...errors, name: "" })
+                                    }
+                                }}
+                            />
+                            {errors.name && (
+                                <Text style={styles.errorText}>{errors.name}</Text>
+                            )}
                         </View>
-                    )}
-
-                    {showTimePicker && (
-                    <DateTimePicker mode='time' value={(()=>{
-                        const [hours, minutes] = form.times[currentTimeIndex].split(":").map(Number);
-                        const date = new Date();
-                        date.setHours(hours, minutes, 0,0);
-                        return date;
-                    })()}
-                        onChange={(event, date) => {
-                            setShowTimePicker(false);
-                            if (date) {
-                                const newTime = date.toLocaleTimeString('default', {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    hour12: false,
-                                });
-                                setForm((prev) => ({
-                                    ...prev,
-                                    times: prev.times.map((t,i)=>(i===currentTimeIndex ? newTime : t))
-                                }))
-                            }
-                        }}
-                    />
-                    )}
-            </View>
-            
-            {/* Reminders */}
-            <View style={styles.section}>
-                <View style={styles.card}>
-                <View style={styles.switchRow}>
-                    <View style={styles.switchLabelContainer}>
-                        <View style={styles.iconContainer}>
-                            <Ionicons name='notifications' size={20} color={'#1a8e2d'}/>
+                        
+                        {/* Type selection section */}
+                        <View style={styles.section}>
+                            <Text style={styles.sectionTitle}>Medication Type</Text>
+                            {errors.type && (
+                                <Text style={styles.errorText}>{errors.type}</Text>
+                            )}
+                            {renderMedicationTypes()}
+                            <Text style={styles.sectionTitle}>Illness Type</Text>
+                            {renderIllnessDropdown()}
                         </View>
-                        <View style={styles.switchTextContainer}>
-                            <Text style={styles.switchLabel}>Reminders</Text>
-                            <Text style={styles.switchSubLabel}>Get Notified When It's Time to Take Medications</Text>
+                        
+                        <View style={styles.inputContainer}>
+                            <TextInput style={[styles.mainInput, errors.dosage && styles.inputError]}
+                                placeholder='Dosage e.g(500mg)' placeholderTextColor={'#999'}
+                                value={form.dosage}
+                                onChangeText={(text) =>{
+                                    setForm({...form, dosage:text})
+                                    if(errors.dosage){
+                                        setErrors({...errors, dosage: "" })
+                                    }
+                                }}
+                            />
+                            {errors.dosage && (
+                                <Text style={styles.errorText}>{errors.dosage}</Text>
+                            )}
                         </View>
                     </View>
-                    <Switch 
-                        value={form.reminderEnabled}
-                        trackColor={{false: '#ddd', true: '#1a8e2d'}} 
-                        thumbColor={'white'}
-                        onValueChange={(value) =>
-                            setForm({ ...form, reminderEnabled: value })
-                        }
-                    />
-                </View>
-                </View>
-            </View>
-            {/* Notes */}
-            <View style={styles.section}>
-                <View style={styles.textAreaContainer}>
-                    <TextInput style={styles.textArea}
-                    placeholder='Add Notes or special instructions...' placeholderTextColor='#999'
-                    value={form.notes}
-                    onChangeText={(text) => setForm({ ...form, notes: text })}
-                    multiline
-                    numberOfLines={4}
-                    textAlignVertical='top'
-                    />
-                </View>
-            </View>
-        </ScrollView>
+                    {/* Schedule */}
+                    <View style={styles.section}>
+                        <Text style={styles.sectionTitle}>How Often?</Text>
+                        {/* frequency option */}
+                        {errors.frequencies && (
+                            <Text style={styles.errorText}>{errors.frequencies}</Text>
+                        )}
+                        {renderFrequencyOptions()}
+                        <Text style={styles.sectionTitle}>For How Long?</Text>
+                        {/* duration option */}
+                        {renderDurationOptions()}
+                        {errors.duration && (
+                            <Text style={styles.errorText}>{errors.duration}</Text>
+                        )}
 
-        <View style={styles.footer}>
-            <TouchableOpacity style={[styles.saveButton,
-                isSubmitting && styles.saveButtonDisabled,
-            ]} onPress={() => handleSave()}>
-                <LinearGradient
-                 colors={["#1a8e2d", "#146922"]}
-                 style={styles.saveButtonGradient}
-                 start={{ x: 0, y: 0 }}
-                 end={{ x: 1, y: 1 }}
-                >
-                <Text style={styles.saveButtonText}>{ isSubmitting ? "Adding..." : "Add Medication"}</Text>
-                </LinearGradient>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelButton}
-             onPress={() => router.back()}
-             disabled={isSubmitting}
-            >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
+                        <TouchableOpacity style={styles.dateButton}
+                            onPress={() => setShowDatePicker(true)}
+                        >
+                            <View style={styles.dateIconContainer}>
+                                <Ionicons name='calendar' size={20} color={"#1a8e2d"} />
+                            </View>
+                            <Text style={styles.dateButtonText}>Starts: {form.startDate.toLocaleDateString()}</Text>
+                            <Ionicons name='chevron-forward' size={20} color={"#666"}/>
+                        </TouchableOpacity>
+                        {showDatePicker && (
+                            <DateTimePicker value={form.startDate} mode='date'
+                                onChange={(event, date) => {
+                                    setShowDatePicker(false);
+                                    if(date) setForm({...form, startDate: date });
+                                }}
+                            />  
+                        )}
+
+                        {form.frequencies && form.frequencies !== 'As Needed' && (
+                            <View style={styles.timesContainer}>
+                                <Text style={styles.timesTitle}>Medication Times</Text>
+                                {form.times.map((time, index) => (
+                                    <TouchableOpacity
+                                        key={index}
+                                        style={styles.timeButton}
+                                        onPress={() => {
+                                            setCurrentTimeIndex(index);
+                                            setShowTimePicker(true);
+                                        }}
+                                    >
+                                        <View style={styles.timesIconContainer}>
+                                            <Ionicons 
+                                                name='time-outline' 
+                                                size={20} 
+                                                color={'#1a8e2d'}/>
+                                        </View>
+                                        <Text style={styles.timeButtonText}>{time}</Text>
+                                        <Ionicons 
+                                            name='chevron-forward' 
+                                            size={20} 
+                                            color={"#666"}/>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
+
+                        {showTimePicker && (
+                            <DateTimePicker mode='time' value={(()=>{
+                                const [hours, minutes] = form.times[currentTimeIndex].split(":").map(Number);
+                                const date = new Date();
+                                date.setHours(hours, minutes, 0,0);
+                                return date;
+                            })()}
+                                onChange={(event, date) => {
+                                    setShowTimePicker(false);
+                                    if (date) {
+                                        const newTime = date.toLocaleTimeString('default', {
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            hour12: false,
+                                        });
+                                        setForm((prev) => ({
+                                            ...prev,
+                                            times: prev.times.map((t,i)=>(i===currentTimeIndex ? newTime : t))
+                                        }))
+                                    }
+                                }}
+                            />
+                        )}
+                    </View>
+                    
+                    {/* Reminders */}
+                    <View style={styles.section}>
+                        <View style={styles.card}>
+                            <View style={styles.switchRow}>
+                                <View style={styles.switchLabelContainer}>
+                                    <View style={styles.iconContainer}>
+                                        <Ionicons name='notifications' size={20} color={'#1a8e2d'}/>
+                                    </View>
+                                    <View style={styles.switchTextContainer}>
+                                        <Text style={styles.switchLabel}>Reminders</Text>
+                                        <Text style={styles.switchSubLabel}>Get Notified When It's Time to Take Medications</Text>
+                                    </View>
+                                </View>
+                                <Switch 
+                                    value={form.reminderEnabled}
+                                    trackColor={{false: '#ddd', true: '#1a8e2d'}} 
+                                    thumbColor={'white'}
+                                    onValueChange={(value) =>
+                                        setForm({ ...form, reminderEnabled: value })
+                                    }
+                                />
+                            </View>
+                        </View>
+                    </View>
+                    {/* Notes */}
+                    <View style={styles.section}>
+                        <View style={styles.textAreaContainer}>
+                            <TextInput style={styles.textArea}
+                                placeholder='Add Notes or special instructions...' placeholderTextColor='#999'
+                                value={form.notes}
+                                onChangeText={(text) => setForm({ ...form, notes: text })}
+                                multiline
+                                numberOfLines={4}
+                                textAlignVertical='top'
+                            />
+                        </View>
+                    </View>
+                </ScrollView>
+
+                <View style={styles.footer}>
+                    <TouchableOpacity style={[styles.saveButton,
+                        isSubmitting && styles.saveButtonDisabled,
+                    ]} onPress={() => handleSave()}>
+                        <LinearGradient
+                            colors={["#1a8e2d", "#146922"]}
+                            style={styles.saveButtonGradient}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                        >
+                            <Text style={styles.saveButtonText}>{ isSubmitting ? "Adding..." : "Add Medication"}</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.cancelButton}
+                        onPress={() => router.back()}
+                        disabled={isSubmitting}
+                    >
+                        <Text style={styles.cancelButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
         </View>
-      </View>
-    </View>
-  );
+    );
 }
 
 const styles = StyleSheet.create({
     container: {
-      flex: 1,
-      backgroundColor: '#fff',
+        flex: 1,
+        backgroundColor: '#fff',
     },
     headerGradient: {
-      height: Platform.OS === 'ios' ? 120 : 100,
-      width: '100%',
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
+        height: Platform.OS === 'ios' ? 120 : 100,
+        width: '100%',
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
     },
     content: {
-      flex: 1,
-      paddingTop: Platform.OS === 'ios' ? 50 : 30,
+        flex: 1,
+        paddingTop: Platform.OS === 'ios' ? 50 : 30,
     },
     header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 20,
-      marginBottom: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        marginBottom: 20,
     },
     headerTitle: {
-      fontSize: 20,
-      fontWeight: 'bold',
-      color: 'white',
-      marginLeft: 15,
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: 'white',
+        marginLeft: 15,
     },
     formContentContainer: {
-      paddingHorizontal: 20,
-      paddingBottom: 150,
-    },
-    section: {
-      marginBottom: 20,
-    },
-    sectionTitle: {
-      fontSize: 18,
-      fontWeight: 'bold',
-      marginBottom: 15,
-      color: '#333',
-    },
-    inputContainer: {
-      marginBottom: 15,
-    },
-    mainInput: {
-      backgroundColor: '#f5f5f5',
-      borderRadius: 10,
-      padding: 12,
-      fontSize: 16,
-      borderWidth: 1,
-      borderColor: '#e5e5e5',
-    },
-    inputError: {
-      borderColor: 'red',
-    },
-    errorText: {
-      color: 'red',
-      fontSize: 12,
-      marginTop: 5,
-    },
-    optionGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      marginBottom: 20,
-      justifyContent: 'space-between',
-    },
-    optionCard: {
-      width: width / 4 - 15,
-      height: 90,
-      backgroundColor: '#f5f5f5',
-      borderRadius: 10,
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginBottom: 10,
-      padding: 10,
-      borderWidth: 1,
-      borderColor: '#e5e5e5',
-    },
-    selectedOptionCard: {
-      borderColor: '#1a8e2d',
-      backgroundColor: '#e6f7e9',
-    },
-    optionIcon: {
-      width: 40,
-      height: 40,
-      backgroundColor: '#e5e5e5',
-      borderRadius: 20,
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginBottom: 5,
-    },
-    selectedOptionIcon: {
-      backgroundColor: '#1a8e2d',
-    },
-    durationNumber: {
-      fontSize: 20,
-      fontWeight: 'bold',
-      color: '#666',
-      marginBottom: 5,
-    },
-    selectedDurationNumber: {
-      color: '#1a8e2d',
-    },
-    optionLabel: {
-      fontSize: 12,
-      textAlign: 'center',
-      color: '#666',
-    },
-    selectedOptionLabel: {
-      color: '#1a8e2d',
-      fontWeight: 'bold',
-    },
-    // Illness Type
-    dropdownButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      backgroundColor: '#f5f5f5',
-      borderRadius: 10,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: '#e5e5e5',
-      marginBottom: 5,
-    },
-    dropdownText: {
-      fontSize: 16,
-      color: '#333',
-    },
-    dropdownPlaceholder: {
-      fontSize: 16,
-      color: '#999',
-    },
-    dropdownMenu: {
-      backgroundColor: 'white',
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: '#e5e5e5',
-      marginBottom: 15,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
-      elevation: 3,
-      zIndex: 10,
-    },
-    dropdownItem: {
-      padding: 12,
-      borderBottomWidth: 1,
-      borderBottomColor: '#f0f0f0',
-    },
-    selectedDropdownItem: {
-      backgroundColor: '#e6f7e9',
-    },
-    dropdownItemText: {
-      fontSize: 16,
-      color: '#333',
-    },
-    selectedDropdownItemText: {
-      color: '#1a8e2d',
-      fontWeight: 'bold',
-    },
-    dateButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#f5f5f5',
-      borderRadius: 10,
-      padding: 12,
-      marginBottom: 15,
-      borderWidth: 1,
-      borderColor: '#e5e5e5',
-    },
-    dateIconContainer: {
-      marginRight: 10,
-    },
-    dateButtonText: {
-      flex: 1,
-      fontSize: 16,
-      color: '#333',
-    },
-    timesContainer: {
-      marginTop: 10,
-    },
-    timesTitle: {
-      fontSize: 16,
-      fontWeight: 'bold',
-      marginBottom: 10,
-      color: '#333',
-    },
-    timeButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#f5f5f5',
-      borderRadius: 10,
-      padding: 12,
-      marginBottom: 10,
-      borderWidth: 1,
-      borderColor: '#e5e5e5',
-    },
-    timesIconContainer: {
-      marginRight: 10,
-    },
-    timeButtonText: {
-      flex: 1,
-      fontSize: 16,
-      color: '#333',
-    },
-    card: {
-      backgroundColor: '#f5f5f5',
-      borderRadius: 10,
-      padding: 15,
-      marginBottom: 15,
-      borderWidth: 1,
-      borderColor: '#e5e5e5',
-    },
-    switchRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    switchLabelContainer: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      flex: 1,
-    },
-    iconContainer: {
-      width: 36,
-      height: 36,
-      backgroundColor: '#e5e5e5',
-      borderRadius: 18,
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginRight: 10,
-    },
-    switchTextContainer: {
-      flex: 1,
-    },
-    switchLabel: {
-      fontSize: 16,
-      fontWeight: 'bold',
-      color: '#333',
-    },
-    switchSubLabel: {
-      fontSize: 12,
-      color: '#666',
-      marginTop: 3,
-    },
-    textAreaContainer: {
-      backgroundColor: '#f5f5f5',
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: '#e5e5e5',
-      marginBottom: 20,
-    },
-    textArea: {
-      padding: 12,
-      height: 100,
-      fontSize: 16,
-    },
-    footer: {
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
-      backgroundColor: 'white',
-      paddingHorizontal: 20,
-      paddingVertical: 15,
-      borderTopWidth: 1,
-      borderTopColor: '#e5e5e5',
-    },
-    saveButton: {
-      borderRadius: 10,
-      marginBottom: 10,
-      overflow: 'hidden',
-    },
-    saveButtonDisabled: {
-      opacity: 0.7,
-    },
-    saveButtonGradient: {
-      paddingVertical: 15,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    saveButtonText: {
-      color: 'white',
-      fontSize: 16,
-      fontWeight: 'bold',
-    },
-    cancelButton: {
-      paddingVertical: 15,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    cancelButtonText: {
-      color: '#666',
-      fontSize: 16,
-    },
-    // QR Scanner Modal Styles
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    modalContainer: {
-      width: '90%',
-      maxHeight: '80%',
-      backgroundColor: 'white',
-      borderRadius: 15,
-      overflow: 'hidden',
-    },
-    modalHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      padding: 15,
-      borderBottomWidth: 1,
-      borderBottomColor: '#e5e5e5',
-    },
-    modalTitle: {
-      fontSize: 18,
-      fontWeight: 'bold',
-      color: '#333',
-    },
-    closeButton: {
-      padding: 5,
-    },
-    qrContent: {
-      padding: 20,
-      alignItems: 'center',
-    },
-    qrImageContainer: {
-      width: 200,
-      height: 200,
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginBottom: 20,
-      borderWidth: 2,
-      borderColor: '#e5e5e5',
-      borderRadius: 10,
-      overflow: 'hidden',
-    },
-    fakeScannerView: {
-      width: '100%',
-      height: '100%',
-      justifyContent: 'center',
-      alignItems: 'center',
-      backgroundColor: '#f5f5f5',
-    },
-    scanLine: {
-      position: 'absolute',
-      height: 2,
-      width: '100%',
-      backgroundColor: '#1a8e2d',
-      opacity: 0.7,
-    },
-    enterManuallyText: {
-      fontSize: 16,
-      fontWeight: '600',
-      marginBottom: 10,
-      color: '#333',
-    },
-    qrInput: {
-      width: '100%',
-      backgroundColor: '#f5f5f5',
-      borderRadius: 10,
-      padding: 12,
-      fontSize: 16,
-      borderWidth: 1,
-      borderColor: '#e5e5e5',
-      marginBottom: 15,
-    },
-    scanButton: {
-      width: '100%',
-      borderRadius: 10,
-      overflow: 'hidden',
-      marginBottom: 20,
-    },
-    scanButtonGradient: {
-      paddingVertical: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    scanButtonText: {
-      color: 'white',
-      fontSize: 16,
-      fontWeight: 'bold',
-    },
-    divider: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      width: '100%',
-      marginVertical: 15,
-    },
-    dividerLine: {
-      flex: 1,
-      height: 1,
-      backgroundColor: '#e5e5e5',
-    },
-    dividerText: {
-      marginHorizontal: 10,
-      color: '#999',
-      fontWeight: '500',
-    },
-    demoButtonsContainer: {
-      width: '100%',
-      marginBottom: 15,
-    },
-    demoButton: {
-      backgroundColor: '#f0f0f0',
-      padding: 12,
-      borderRadius: 10,
-      alignItems: 'center',
-      marginBottom: 8,
-    },
-    demoButtonText: {
-      color: '#333',
-      fontWeight: '500',
-    },
-    skipButton: {
-      padding: 12,
-    },
-    skipButtonText: {
-      color: '#666',
-      fontWeight: '500',
+        paddingHorizontal: 20,
+        paddingBottom: 150,
     },
     loadingContainer: {
-      padding: 40,
-      alignItems: 'center',
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 40,
     },
     loadingText: {
-      marginTop: 15,
-      fontSize: 16,
-      color: '#333',
+        marginTop: 15,
+        fontSize: 16,
+        color: '#333',
+        textAlign: 'center',
     },
+    loadingSubText: {
+        marginTop: 8,
+        fontSize: 14,
+        color: '#666',
+        textAlign: 'center',
+    },
+    section: {
+        marginBottom: 20,
+    },
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 15,
+        color: '#333',
+    },
+    inputContainer: {
+        marginBottom: 15,
+    },
+    mainInput: {
+        backgroundColor: '#f5f5f5',
+        borderRadius: 10,
+        padding: 12,
+        fontSize: 16,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+    },
+    inputError: {
+        borderColor: 'red',
+    },
+    errorText: {
+        color: 'red',
+        fontSize: 12,
+        marginTop: 5,
+    },
+    optionGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginBottom: 20,
+        justifyContent: 'space-between',
+    },
+    optionCard: {
+        width: width / 4 - 15,
+        height: 90,
+        backgroundColor: '#f5f5f5',
+        borderRadius: 10,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 10,
+        padding: 10,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+    },
+    selectedOptionCard: {
+        borderColor: '#1a8e2d',
+        backgroundColor: '#e6f7e9',
+    },
+    optionIcon: {
+        width: 40,
+        height: 40,
+        backgroundColor: '#e5e5e5',
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 5,
+    },
+    selectedOptionIcon: {
+        backgroundColor: '#1a8e2d',
+    },
+    durationNumber: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#666',
+        marginBottom: 5,
+    },
+    selectedDurationNumber: {
+        color: '#1a8e2d',
+    },
+    optionLabel: {
+        fontSize: 12,
+        textAlign: 'center',
+        color: '#666',
+    },
+    selectedOptionLabel: {
+        color: '#1a8e2d',
+        fontWeight: 'bold',
+    },
+    // Illness Type Dropdown
+    dropdownButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: '#f5f5f5',
+        borderRadius: 10,
+        padding: 12,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+        marginBottom: 5,
+    },
+    dropdownText: {
+        fontSize: 16,
+        color: '#333',
+    },
+    dropdownPlaceholder: {
+        fontSize: 16,
+        color: '#999',
+    },
+    dropdownMenu: {
+        backgroundColor: 'white',
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+        marginBottom: 15,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+        zIndex: 10,
+    },
+    dropdownItem: {
+        padding: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f0f0f0',
+    },
+    selectedDropdownItem: {
+        backgroundColor: '#e6f7e9',
+    },
+    dropdownItemText: {
+        fontSize: 16,
+        color: '#333',
+    },
+    selectedDropdownItemText: {
+        color: '#1a8e2d',
+        fontWeight: 'bold',
+    },
+    // NEW: Multiple Medication Selector Styles
+    medicationSelectorContainer: {
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#e6f7e9',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    medicationSelectorHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 15,
+        backgroundColor: '#f8fdf9',
+        borderTopLeftRadius: 12,
+        borderTopRightRadius: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e6f7e9',
+    },
+    medicationSelectorInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    medicationSelectorTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#1a8e2d',
+        marginLeft: 8,
+    },
+    addAllButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#e6f7e9',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#1a8e2d20',
+    },
+    addAllButtonText: {
+        color: '#1a8e2d',
+        fontWeight: '600',
+        fontSize: 12,
+        marginLeft: 4,
+    },
+    medicationDropdownButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 15,
+        backgroundColor: 'white',
+    },
+    medicationDropdownInfo: {
+        flex: 1,
+    },
+    medicationDropdownLabel: {
+        fontSize: 12,
+        color: '#666',
+        marginBottom: 2,
+    },
+    medicationDropdownName: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#333',
+        marginBottom: 2,
+    },
+    medicationDropdownDosage: {
+        fontSize: 14,
+        color: '#1a8e2d',
+        fontWeight: '500',
+    },
+    medicationDropdownMenu: {
+        backgroundColor: 'white',
+        borderTopWidth: 1,
+        borderTopColor: '#f0f0f0',
+        borderBottomLeftRadius: 12,
+        borderBottomRightRadius: 12,
+    },
+    medicationDropdownItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f8f8f8',
+    },
+    selectedMedicationDropdownItem: {
+        backgroundColor: '#f8fdf9',
+        borderBottomColor: '#e6f7e9',
+    },
+    medicationDropdownItemContent: {
+        flex: 1,
+    },
+    medicationDropdownItemName: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#333',
+        marginBottom: 3,
+    },
+    medicationDropdownItemDetails: {
+        fontSize: 13,
+        color: '#666',
+    },
+    selectedMedicationDropdownItemText: {
+        color: '#1a8e2d',
+    },
+    // Date and Time Pickers
+    dateButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#f5f5f5',
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 15,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+    },
+    dateIconContainer: {
+        marginRight: 10,
+    },
+    dateButtonText: {
+        flex: 1,
+        fontSize: 16,
+        color: '#333',
+    },
+    timesContainer: {
+        marginTop: 10,
+    },
+    timesTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        marginBottom: 10,
+        color: '#333',
+    },
+    timeButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#f5f5f5',
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 10,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+    },
+    timesIconContainer: {
+        marginRight: 10,
+    },
+    timeButtonText: {
+        flex: 1,
+        fontSize: 16,
+        color: '#333',
+    },
+    // Reminders Card
+    card: {
+        backgroundColor: '#f5f5f5',
+        borderRadius: 10,
+        padding: 15,
+        marginBottom: 15,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+    },
+    switchRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    switchLabelContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    iconContainer: {
+        width: 36,
+        height: 36,
+        backgroundColor: '#e5e5e5',
+        borderRadius: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    switchTextContainer: {
+        flex: 1,
+    },
+    switchLabel: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#333',
+    },
+    switchSubLabel: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 3,
+    },
+    // Notes Section
+    textAreaContainer: {
+        backgroundColor: '#f5f5f5',
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+        marginBottom: 20,
+    },
+    textArea: {
+        padding: 12,
+        height: 100,
+        fontSize: 16,
+    },
+    // Footer Actions
+    footer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'white',
+        paddingHorizontal: 20,
+        paddingVertical: 15,
+        borderTopWidth: 1,
+        borderTopColor: '#e5e5e5',
+    },
+    saveButton: {
+        borderRadius: 10,
+        marginBottom: 10,
+        overflow: 'hidden',
+    },
+    saveButtonDisabled: {
+        opacity: 0.7,
+    },
+    saveButtonGradient: {
+        paddingVertical: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    saveButtonText: {
+        color: 'white',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    cancelButton: {
+        paddingVertical: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cancelButtonText: {
+        color: '#666',
+        fontSize: 16,
+    },
+    // QR Scanner Button
     scanPrescriptionButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: '#e6f7e9',
-      borderRadius: 10,
-      padding: 15,
-      marginBottom: 20,
-      borderWidth: 1,
-      borderColor: '#1a8e2d20',
-      justifyContent: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#e6f7e9',
+        borderRadius: 10,
+        padding: 15,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#1a8e2d20',
+        justifyContent: 'center',
     },
     scanPrescriptionText: {
-      color: '#1a8e2d',
-      fontWeight: 'bold',
-      fontSize: 16,
-      marginLeft: 10,
+        color: '#1a8e2d',
+        fontWeight: 'bold',
+        fontSize: 16,
+        marginLeft: 10,
     },
-  });
+});
