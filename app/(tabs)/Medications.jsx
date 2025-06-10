@@ -1,4 +1,4 @@
-// app/(tabs)/Medications.jsx
+// app/(tabs)/Medications.jsx - Updated with new quick actions
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Dimensions, Modal, AppState } from 'react-native';
 import React, { act, useCallback, useEffect, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,11 +8,11 @@ import { Link, useFocusEffect, useRouter } from 'expo-router';
 import { getMedications, getDoseHistory, getTodaysDoses, recordDose } from '../../service/Storage';
 import { registerForPushnotificationsAsync, resetAllMedicationReminders, scheduleMedicationReminder } from '../../service/Notification';
 
-
 const {width} = Dimensions.get("window");
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
+// Updated QUICK_ACTIONS with new Medical Reports and Health Trend Analysis
 const QUICK_ACTIONS = [
     {
         icon: "add-circle-outline",
@@ -29,20 +29,21 @@ const QUICK_ACTIONS = [
         gradient: ["#2196F3", "#1976D2"],
     },
     {
-        icon: "time-outline",
-        label: "History \nLog",
-        route: "/history",
+        icon: "document-text-outline",
+        label: "Medical \nReports",
+        route: "/medications/medical-reports",
         color: "#C2185B",
         gradient: ["#E91E63", "#C2185B"],
     },
     {
-        icon: "medical-outline",
-        label: "Refill \nTracker",
-        route: "/refill",
+        icon: "analytics-outline",
+        label: "Health Trend \nAnalysis",
+        route: "/medications/health-trends",
         color: "#E64A19",
         gradient: ["#FF5722", "#E64A19"],
     },
 ];
+
 interface CircularProgressProps {
     progress: number;
     totalDoses: number;
@@ -252,7 +253,6 @@ export default function Medications() {
       }, [loadMedicationData])
     );
 
-
     const handleTakeDose = async (medication, timeIndex = 0) => {
       try {
         // Create a dose ID that includes the time index
@@ -376,7 +376,7 @@ export default function Medications() {
             </View>
         </View>
 
-        {/* Today Medicine Section */}
+        {/* Today Medicine Section - Rest of the component remains the same */}
         <View style={{paddingHorizontal: 20}}> 
             <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Today's Schedule</Text>
@@ -456,7 +456,7 @@ export default function Medications() {
             </TouchableOpacity>
         </View>
 
-        {/* Display Notification Section */}
+        {/* Display Notification Section - Rest remains the same */}
         <Modal 
           visible={showNotifications} 
           transparent={true} 
@@ -500,6 +500,7 @@ export default function Medications() {
   );
 }
 
+// Styles remain the same as original...
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -770,7 +771,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    // backgroundColor: "#E8F5E9",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 15,

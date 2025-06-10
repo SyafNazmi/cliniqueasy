@@ -1,4 +1,4 @@
-// app/medications/add.jsx - Complete Enhanced Version
+// app/medications/add.jsx - Enhanced Version with Multiple Medication Dropdown
 import { View, Text, ScrollView, TextInput, TouchableOpacity, Switch, StyleSheet, Platform, Dimensions, Alert, Modal, ActivityIndicator } from 'react-native'
 import React, { useState } from 'react'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -170,6 +170,11 @@ export default function AddMedicationScreen() {
     // Get params from router if coming from elsewhere
     const params = useLocalSearchParams();
 
+    // NEW: State for multiple medications from prescription
+    const [scannedMedications, setScannedMedications] = useState([]);
+    const [selectedMedicationIndex, setSelectedMedicationIndex] = useState(0);
+    const [showMedicationDropdown, setShowMedicationDropdown] = useState(false);
+
     const [form, setForm] = useState({
         name: params?.name || "",
         type: params?.type || "",
@@ -204,115 +209,28 @@ export default function AddMedicationScreen() {
         
         const { medications, totalCount, action } = scanResult;
         
-        switch (action) {
-            case 'add_all':
-                // User confirmed to add all medications automatically
-                handleAddAllMedications(medications);
-                break;
-                
-            case 'add_single':
-                // User confirmed to add single medication or selected one from multiple
-                handleSingleMedication(medications[0]);
-                setShowQRModal(false);
-                break;
-                
-            case 'review_edit':
-                // User wants to review and edit before adding
-                handleReviewAndEdit(medications);
-                break;
-                
-            default:
-                // Fallback to old behavior for backward compatibility
-                if (medications && medications.length > 1) {
-                    Alert.alert(
-                        "Multiple Medications Found",
-                        `Found ${medications.length} medications. What would you like to do?`,
-                        [
-                            {
-                                text: "Add All",
-                                onPress: () => handleAddAllMedications(medications)
-                            },
-                            {
-                                text: "Review & Edit",
-                                onPress: () => handleReviewAndEdit(medications)
-                            },
-                            {
-                                text: "Cancel",
-                                style: "cancel",
-                                onPress: () => setShowQRModal(false)
-                            }
-                        ]
-                    );
-                } else {
-                    const medication = medications ? medications[0] : scanResult;
-                    handleSingleMedication(medication);
-                    setShowQRModal(false);
-                }
-                break;
-        }
-    };
-    
-    // New function to handle review and edit flow
-    const handleReviewAndEdit = (medications) => {
-        if (medications.length > 1) {
-            // For multiple medications, let user choose which one to edit
-            const medicationOptions = medications.map((med, index) => ({
-                text: `Edit: ${med.name} - ${med.dosage}`,
-                onPress: () => {
-                    handleSingleMedication(med);
-                    setShowQRModal(false);
-                }
-            }));
-            
-            medicationOptions.push({
-                text: "Cancel",
-                style: "cancel",
-                onPress: () => setShowQRModal(false)
-            });
-            
-            Alert.alert(
-                "Choose Medication to Edit",
-                "Select which medication you want to review and modify:",
-                medicationOptions
-            );
-        } else {
-            // Single medication - load it for editing
+        // If we have multiple medications, populate the dropdown
+        if (medications && medications.length > 1) {
+            setScannedMedications(medications);
+            setSelectedMedicationIndex(0);
+            // Load the first medication by default
             handleSingleMedication(medications[0]);
             setShowQRModal(false);
             
-            // Show info that they can now edit
-            setTimeout(() => {
-                Alert.alert(
-                    "Review Medication",
-                    "Medication details loaded. You can now modify the dosage, timing, and other details before saving.",
-                    [{ text: "OK" }]
-                );
-            }, 500);
+            // Show info about multiple medications found
+            Alert.alert(
+                "Multiple Medications Found! 💊",
+                `Found ${medications.length} medications in this prescription. Use the dropdown above to switch between them, or add them all at once.`,
+                [{ text: "Got it!" }]
+            );
+        } else {
+            // Single medication - existing behavior
+            const medication = medications ? medications[0] : scanResult;
+            setScannedMedications([medication]);
+            setSelectedMedicationIndex(0);
+            handleSingleMedication(medication);
+            setShowQRModal(false);
         }
-    };
-
-
-    // Show medication selector for choosing one from multiple
-    const showMedicationSelector = (medications) => {
-        const medicationOptions = medications.map((med, index) => ({
-            text: `${med.name} - ${med.dosage} (${med.illnessType})`,
-            onPress: () => {
-                handleSingleMedication(med);
-                setShowQRModal(false);
-            }
-        }));
-        
-        medicationOptions.push({
-            text: "Cancel",
-            style: "cancel",
-            onPress: () => setShowQRModal(false)
-        });
-        
-        Alert.alert(
-            "Select Medication",
-            "Choose which medication to add:",
-            medicationOptions
-        );
     };
 
     // Handle single medication (existing functionality)
@@ -342,34 +260,33 @@ export default function AddMedicationScreen() {
         setSelectedFrequency(medication.frequencies || "");
         setSelectedDuration(medication.duration || "");
     };
-    
-    // Enhanced handleAddAllMedications with better user feedback
-    const handleAddAllMedications = async (medications) => {
+
+    // NEW: Handle medication selection from dropdown
+    const handleMedicationSelect = (index) => {
+        setSelectedMedicationIndex(index);
+        handleSingleMedication(scannedMedications[index]);
+        setShowMedicationDropdown(false);
+    };
+
+    // NEW: Add all medications function
+    const handleAddAllMedications = async () => {
         try {
             setLoading(true);
             
-            // Show confirmation with medication list
-            const medicationList = medications.map((med, index) => 
-                `${index + 1}. ${med.name} - ${med.dosage}`
-            ).join('\n');
-            
             Alert.alert(
-                "Confirm Add All Medications",
-                `You are about to add ${medications.length} medications:\n\n${medicationList}\n\nContinue?`,
+                "Add All Medications",
+                `Add all ${scannedMedications.length} medications from this prescription?`,
                 [
                     {
                         text: "Yes, Add All",
                         onPress: async () => {
-                            await processAllMedications(medications);
+                            await processAllMedications(scannedMedications);
                         }
                     },
                     {
                         text: "Cancel",
                         style: "cancel",
-                        onPress: () => {
-                            setLoading(false);
-                            setShowQRModal(false);
-                        }
+                        onPress: () => setLoading(false)
                     }
                 ]
             );
@@ -379,20 +296,18 @@ export default function AddMedicationScreen() {
         }
     };
     
-    // Separate function to actually process all medications
+    // Process all medications
     const processAllMedications = async (medications) => {
         try {
             let successCount = 0;
             let failCount = 0;
             const addedMedications = [];
             
-            // Add each medication individually
             for (const medication of medications) {
                 try {
                     const medicationData = await prepareMedicationData(medication);
                     await addMedication(medicationData);
                     
-                    // Schedule reminders if enabled
                     if (medicationData.reminderEnabled) {
                         await scheduleMedicationReminder(medicationData);
                     }
@@ -405,27 +320,21 @@ export default function AddMedicationScreen() {
                 }
             }
             
-            // Show detailed result
             if (successCount > 0 && failCount === 0) {
                 const successList = addedMedications.join(', ');
                 Alert.alert(
                     "Success! 🎉",
-                    `Successfully added all ${successCount} medications:\n\n${successList}\n\nReminders have been set up automatically.`,
+                    `Successfully added all ${successCount} medications:\n\n${successList}`,
                     [{ text: "OK", onPress: () => router.back() }]
                 );
             } else if (successCount > 0 && failCount > 0) {
-                const successList = addedMedications.join(', ');
                 Alert.alert(
                     "Partial Success",
-                    `Added ${successCount} medications successfully:\n${successList}\n\n${failCount} medications failed to add. Please try adding them manually.`,
+                    `Added ${successCount} medications successfully. ${failCount} failed.`,
                     [{ text: "OK", onPress: () => router.back() }]
                 );
             } else {
-                Alert.alert(
-                    "Error",
-                    "Failed to add any medications. Please try adding them manually.",
-                    [{ text: "OK" }]
-                );
+                Alert.alert("Error", "Failed to add medications. Please try again.");
             }
             
         } catch (error) {
@@ -433,43 +342,90 @@ export default function AddMedicationScreen() {
             Alert.alert("Error", "Failed to add medications. Please try again.");
         } finally {
             setLoading(false);
-            setShowQRModal(false);
         }
     };
-    
-    // Enhanced prepareMedicationData with validation
-    const prepareMedicationData = (medication) => {
-        const colorPalette = [
-            '#4CAF50', '#2196F3', '#9C27B0', '#FF9800', '#F44336',
-            '#009688', '#795548', '#607D8B', '#3F51B5', '#00BCD4',
-            '#8BC34A', '#FF5722', '#673AB7', '#FFEB3B', '#03A9F4'
-        ];
-        const randomColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
-    
-        // Ensure times is a proper array
-        let medicationTimes = medication.times || ["09:00"];
-        if (!Array.isArray(medicationTimes)) {
-            medicationTimes = [medicationTimes];
-        }
-    
-        return {
-            id: Math.random().toString(36).substr(2, 9),
-            name: medication.name || "Unknown Medication",
-            type: medication.type || "Tablet",
-            illnessType: medication.illnessType || "General",
-            dosage: medication.dosage || "As prescribed",
-            frequencies: medication.frequencies || "Once Daily",
-            duration: medication.duration || "30 days",
-            startDate: new Date().toISOString(),
-            times: medicationTimes,
-            notes: medication.notes || "Added from prescription scan",
-            reminderEnabled: true, // Always enable reminders for scanned medications
-            refillReminder: false,
-            currentSupply: 0,
-            totalSupply: 0,
-            refillAt: 0,
-            color: randomColor,
-        };
+
+    // NEW: Render medication selection dropdown
+    const renderMedicationSelector = () => {
+        if (scannedMedications.length <= 1) return null;
+
+        return (
+            <View style={styles.medicationSelectorContainer}>
+                <View style={styles.medicationSelectorHeader}>
+                    <View style={styles.medicationSelectorInfo}>
+                        <Ionicons name="medical" size={20} color="#1a8e2d" />
+                        <Text style={styles.medicationSelectorTitle}>
+                            Prescription Medications ({scannedMedications.length})
+                        </Text>
+                    </View>
+                    
+                    <TouchableOpacity
+                        style={styles.addAllButton}
+                        onPress={handleAddAllMedications}
+                    >
+                        <Ionicons name="add-circle" size={16} color="#1a8e2d" />
+                        <Text style={styles.addAllButtonText}>Add All</Text>
+                    </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                    style={styles.medicationDropdownButton}
+                    onPress={() => setShowMedicationDropdown(!showMedicationDropdown)}
+                >
+                    <View style={styles.medicationDropdownInfo}>
+                        <Text style={styles.medicationDropdownLabel}>
+                            Medication {selectedMedicationIndex + 1}:
+                        </Text>
+                        <Text style={styles.medicationDropdownName}>
+                            {scannedMedications[selectedMedicationIndex]?.name || "Select medication"}
+                        </Text>
+                        <Text style={styles.medicationDropdownDosage}>
+                            {scannedMedications[selectedMedicationIndex]?.dosage}
+                        </Text>
+                    </View>
+                    <Ionicons 
+                        name={showMedicationDropdown ? "chevron-up" : "chevron-down"} 
+                        size={20} 
+                        color="#666" 
+                    />
+                </TouchableOpacity>
+
+                {showMedicationDropdown && (
+                    <View style={styles.medicationDropdownMenu}>
+                        <ScrollView style={{ maxHeight: 200 }}>
+                            {scannedMedications.map((medication, index) => (
+                                <TouchableOpacity
+                                    key={index}
+                                    style={[
+                                        styles.medicationDropdownItem,
+                                        selectedMedicationIndex === index && styles.selectedMedicationDropdownItem
+                                    ]}
+                                    onPress={() => handleMedicationSelect(index)}
+                                >
+                                    <View style={styles.medicationDropdownItemContent}>
+                                        <Text style={[
+                                            styles.medicationDropdownItemName,
+                                            selectedMedicationIndex === index && styles.selectedMedicationDropdownItemText
+                                        ]}>
+                                            Medication {index + 1}: {medication.name}
+                                        </Text>
+                                        <Text style={[
+                                            styles.medicationDropdownItemDetails,
+                                            selectedMedicationIndex === index && styles.selectedMedicationDropdownItemText
+                                        ]}>
+                                            {medication.dosage} • {medication.type} • {medication.illnessType}
+                                        </Text>
+                                    </View>
+                                    {selectedMedicationIndex === index && (
+                                        <Ionicons name="checkmark-circle" size={20} color="#1a8e2d" />
+                                    )}
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+            </View>
+        );
     };
 
     // Render medication type options
@@ -647,6 +603,39 @@ export default function AddMedicationScreen() {
         return Object.keys(newErrors).length === 0;
     }
 
+    const prepareMedicationData = (medication) => {
+        const colorPalette = [
+            '#4CAF50', '#2196F3', '#9C27B0', '#FF9800', '#F44336',
+            '#009688', '#795548', '#607D8B', '#3F51B5', '#00BCD4',
+            '#8BC34A', '#FF5722', '#673AB7', '#FFEB3B', '#03A9F4'
+        ];
+        const randomColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
+    
+        let medicationTimes = medication.times || ["09:00"];
+        if (!Array.isArray(medicationTimes)) {
+            medicationTimes = [medicationTimes];
+        }
+    
+        return {
+            id: Math.random().toString(36).substr(2, 9),
+            name: medication.name || "Unknown Medication",
+            type: medication.type || "Tablet",
+            illnessType: medication.illnessType || "General",
+            dosage: medication.dosage || "As prescribed",
+            frequencies: medication.frequencies || "Once Daily",
+            duration: medication.duration || "30 days",
+            startDate: new Date().toISOString(),
+            times: medicationTimes,
+            notes: medication.notes || "Added from prescription scan",
+            reminderEnabled: true,
+            refillReminder: false,
+            currentSupply: 0,
+            totalSupply: 0,
+            refillAt: 0,
+            color: randomColor,
+        };
+    };
+
     const handleSave = async() => {
         try {
             if (!validateForm()) {
@@ -660,24 +649,15 @@ export default function AddMedicationScreen() {
             const medicationData = await prepareMedicationData(form);
             await addMedication(medicationData);
 
-            // Schedule reminders if enabled
             if (medicationData.reminderEnabled) {
-                console.log("Scheduling reminders with data:", {
-                    reminderEnabled: medicationData.reminderEnabled,
-                    times: medicationData.times,
-                });
-                
-                // Ensure reminderEnabled is properly set
                 medicationData.reminderEnabled = form.reminderEnabled === true;
                 
-                // Make sure times array is properly formatted before scheduling
                 if (!Array.isArray(medicationData.times) || medicationData.times.length === 0) {
                     console.error("No medication times found!");
                     Alert.alert("Error", "Please add at least one medication time");
                     return;
                 }
                 
-                // Then schedule the notification
                 await scheduleMedicationReminder(medicationData);
             }
 
@@ -757,6 +737,7 @@ export default function AddMedicationScreen() {
                 
                 <ScrollView showsVerticalScrollIndicator={false} style={{flex: 1}}
                     contentContainerStyle={styles.formContentContainer}>
+                    
                     {/* Option to open QR scanner again */}
                     <TouchableOpacity 
                         style={styles.scanPrescriptionButton}
@@ -765,6 +746,9 @@ export default function AddMedicationScreen() {
                         <Ionicons name="qr-code" size={24} color="#1a8e2d" />
                         <Text style={styles.scanPrescriptionText}>Scan Prescription QR</Text>
                     </TouchableOpacity>
+
+                    {/* NEW: Multiple Medication Selector */}
+                    {renderMedicationSelector()}
                     
                     <View style={styles.section}>
                         {/* basic informations */}
@@ -1140,6 +1124,118 @@ const styles = StyleSheet.create({
     selectedDropdownItemText: {
         color: '#1a8e2d',
         fontWeight: 'bold',
+    },
+    // NEW: Multiple Medication Selector Styles
+    medicationSelectorContainer: {
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#e6f7e9',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    medicationSelectorHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 15,
+        backgroundColor: '#f8fdf9',
+        borderTopLeftRadius: 12,
+        borderTopRightRadius: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e6f7e9',
+    },
+    medicationSelectorInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    medicationSelectorTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#1a8e2d',
+        marginLeft: 8,
+    },
+    addAllButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#e6f7e9',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#1a8e2d20',
+    },
+    addAllButtonText: {
+        color: '#1a8e2d',
+        fontWeight: '600',
+        fontSize: 12,
+        marginLeft: 4,
+    },
+    medicationDropdownButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 15,
+        backgroundColor: 'white',
+    },
+    medicationDropdownInfo: {
+        flex: 1,
+    },
+    medicationDropdownLabel: {
+        fontSize: 12,
+        color: '#666',
+        marginBottom: 2,
+    },
+    medicationDropdownName: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#333',
+        marginBottom: 2,
+    },
+    medicationDropdownDosage: {
+        fontSize: 14,
+        color: '#1a8e2d',
+        fontWeight: '500',
+    },
+    medicationDropdownMenu: {
+        backgroundColor: 'white',
+        borderTopWidth: 1,
+        borderTopColor: '#f0f0f0',
+        borderBottomLeftRadius: 12,
+        borderBottomRightRadius: 12,
+    },
+    medicationDropdownItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f8f8f8',
+    },
+    selectedMedicationDropdownItem: {
+        backgroundColor: '#f8fdf9',
+        borderBottomColor: '#e6f7e9',
+    },
+    medicationDropdownItemContent: {
+        flex: 1,
+    },
+    medicationDropdownItemName: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#333',
+        marginBottom: 3,
+    },
+    medicationDropdownItemDetails: {
+        fontSize: 13,
+        color: '#666',
+    },
+    selectedMedicationDropdownItemText: {
+        color: '#1a8e2d',
     },
     // Date and Time Pickers
     dateButton: {
