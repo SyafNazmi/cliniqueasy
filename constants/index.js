@@ -21,6 +21,17 @@ export { COLORS } from '../constants/Colors';
  */
 export const GenderOptions = ["Male", "Female", "Other"];
 
+export const PROFILE_TYPES = {
+  OWNER: 'owner',
+  FAMILY_MEMBER: 'family_member'
+};
+
+// You can also add validation helpers
+export const PROFILE_TYPE_OPTIONS = [
+  { label: 'Owner', value: PROFILE_TYPES.OWNER },
+  { label: 'Family Member', value: PROFILE_TYPES.FAMILY_MEMBER }
+];
+
 /**
  * Default Patient Form Values
  */

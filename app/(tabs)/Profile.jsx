@@ -7,13 +7,14 @@ import { getLocalStorage, clearUserData } from '@/service/Storage'
 import { useAuth } from '@/app/_layout';
 import Toast from 'react-native-toast-message'
 import { Ionicons } from '@expo/vector-icons'
-import { COLLECTIONS } from '@/constants'
+import { COLLECTIONS, PROFILE_TYPES } from '@/constants'
 
 export default function Profile() {
   const router = useRouter();
   const [profile, setProfile] = useState(null);
   const [appointments, setAppointments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [familyMemberCount, setFamilyMemberCount] = useState(0);
   const { logout } = useAuth();
 
   const parseAppointmentDate = (dateString) => {
@@ -43,7 +44,56 @@ export default function Profile() {
 
   useEffect(() => {
     loadProfileAndAppointments();
+    loadFamilyMemberCount();
   }, []);
+
+  const loadFamilyMemberCount = async () => {
+  try {
+    const user = await account.get();
+    
+    // First try to get profiles with profileType (new data structure)
+    let queries = [
+      DatabaseService.createQuery('equal', 'userId', user.$id),
+      DatabaseService.createQuery('equal', 'profileType', PROFILE_TYPES.FAMILY_MEMBER)
+    ];
+
+    let response = await DatabaseService.listDocuments(
+      COLLECTIONS.PATIENT_PROFILES,
+      queries,
+      100
+    );
+
+    let familyMemberCount = response.documents?.length || 0;
+
+    // If no results with profileType, fall back to legacy method
+    if (familyMemberCount === 0) {
+      console.log('No profiles found with profileType, checking legacy data for count...');
+      
+      // Get all profiles for this user (legacy method)
+      const legacyQueries = [
+        DatabaseService.createQuery('equal', 'userId', user.$id)
+      ];
+
+      const legacyResponse = await DatabaseService.listDocuments(
+        COLLECTIONS.PATIENT_PROFILES,
+        legacyQueries,
+        100
+      );
+
+      // Filter out user's own profile by email (legacy method)
+      const familyMembers = (legacyResponse.documents || []).filter(profile => {
+        return profile.email !== user.email;
+      });
+
+      familyMemberCount = familyMembers.length;
+    }
+    
+    setFamilyMemberCount(familyMemberCount);
+  } catch (error) {
+    console.error('Error loading family member count:', error);
+    setFamilyMemberCount(0);
+  }
+};
 
   const loadProfileAndAppointments = async () => {
     try {
@@ -256,7 +306,34 @@ export default function Profile() {
           </View>
           <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
         </TouchableOpacity>
-      </View>
+
+        {/* Add Family Member Link */}
+        <TouchableOpacity 
+          style={[styles.menuItem, styles.familyButtonWithCount]}
+          onPress={() => router.push('/profile/family-members')}
+        >
+        <View style={styles.menuItemLeft}>
+          <View style={styles.iconContainer}>
+            <Ionicons name="people" size={20} color="#0AD476" />
+            {familyMemberCount > 0 && (
+              <View style={styles.familyCountBadge}>
+                <Text style={styles.familyCountText}>{familyMemberCount}</Text>
+              </View>
+            )}
+          </View>
+              <View>
+                <Text style={styles.menuItemText}>Family Members</Text>
+                <Text style={styles.menuItemSubtext}>
+                  {familyMemberCount === 0 
+                    ? "Add family members to your account" 
+                    : `Manage ${familyMemberCount} family member${familyMemberCount !== 1 ? 's' : ''}`
+                  }
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
+          </TouchableOpacity>
+          </View>
 
       {/* Appointments Summary */}
       <View style={styles.section}>
