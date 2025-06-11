@@ -1,10 +1,10 @@
-// components/AppointmentCard.jsx
+// components/AppointmentCard.jsx - ENHANCED with family member support
 import React from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { doctorImages } from '../constants';
 
-export default function AppointmentCard({ appointment, showCancelled = false }) {
+export default function AppointmentCard({ appointment, showCancelled = false, currentUserId }) {
   // If no appointment is passed, return null
   if (!appointment) return null;
   
@@ -12,6 +12,11 @@ export default function AppointmentCard({ appointment, showCancelled = false }) 
   if (!showCancelled && appointment.status === 'cancelled') {
     return null;
   }
+  
+  // NEW: Check if this is a family booking
+  const isFamilyBooking = appointment.is_family_booking || false;
+  const patientName = appointment.patient_name || 'Unknown Patient';
+  const isBookedByCurrentUser = appointment.user_id === currentUserId;
   
   // Format time from timeSlot (e.g., "9:00 AM" -> "09:00 - 10:00")
   const formatTimeRange = (timeSlot) => {
@@ -153,6 +158,22 @@ export default function AppointmentCard({ appointment, showCancelled = false }) 
       </View>
       
       <View style={styles.cardContent}>
+        {/* NEW: Patient Information Header (only show if family booking or patient name differs) */}
+        {(isFamilyBooking || (patientName && patientName !== 'Unknown Patient')) && (
+          <View style={styles.patientHeader}>
+            <View style={styles.patientInfo}>
+              <Ionicons 
+                name={isFamilyBooking ? "people" : "person"} 
+                size={14} 
+                color="rgba(255, 255, 255, 0.9)" 
+              />
+              <Text style={styles.patientName}>
+                {isFamilyBooking ? `${patientName} (Family)` : patientName}
+              </Text>
+            </View>
+          </View>
+        )}
+        
         {/* Doctor info */}
         <View style={styles.doctorRow}>
           <Image 
@@ -274,6 +295,23 @@ const styles = StyleSheet.create({
   cardContent: {
     flex: 1,
     padding: 15,
+  },
+  // NEW: Patient header styles
+  patientHeader: {
+    marginBottom: 10,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  patientInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  patientName: {
+    color: 'rgba(255, 255, 255, 0.95)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginLeft: 6,
   },
   doctorRow: {
     flexDirection: 'row',
