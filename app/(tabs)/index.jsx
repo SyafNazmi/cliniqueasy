@@ -1,7 +1,6 @@
 import { View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, StyleSheet } from 'react-native'
 import React, { useEffect, useState } from 'react'
 import Header from "../../components/Header";
-import SearchBar from '../../components/SearchBar';
 import AppointmentCard from '../../components/AppointmentCard';
 import DoctorSpeciality from '../../components/DoctorSpeciality';
 import NearbyHospitals from '../../components/NearbyHospitals';
@@ -281,10 +280,10 @@ const styles = StyleSheet.create({
   },
   content: { 
     padding: 16, 
-    marginTop: 50 // Reduced from higher value since no search bar
+    marginTop: 50
   },
   
-  // Enhanced Summary Cards - Better spacing
+  // Enhanced Summary Cards
   enhancedSummaryContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -361,7 +360,7 @@ const styles = StyleSheet.create({
 
   // Fixed section spacing
   sectionContainer: { 
-    marginTop: 5, // Reduced from 25 to minimize gap
+    marginTop: 5, 
   },
   sectionHeader: { 
     flexDirection: 'row', 
@@ -411,10 +410,10 @@ const styles = StyleSheet.create({
   
   // Better section spacing for other components
   doctorSpecialitySection: {
-    marginTop: 20, // Good spacing from appointments
+    marginTop: 20,
   },
   nearbyHospitalsSection: {
-    marginTop: 25,
+    marginTop: 30,
     marginBottom: 20,
   },
   sectionHeaderRow: {
@@ -424,7 +423,7 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
 
-  // Rest of your existing styles...
+  
   loadingContainer: {
     height: 150,
     justifyContent: 'center',
