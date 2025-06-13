@@ -1,4 +1,4 @@
-// app/appointment/appointmentBooking.jsx
+// app/appointment/appointmentBooking.jsx - Modified with Family Booking Support
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -9,14 +9,15 @@ import {
   Alert, 
   Image, 
   StyleSheet,
-  ScrollView
+  ScrollView,
+  Modal // NEW: Added Modal import
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { DatabaseService, AuthService, Query, RealtimeService } from '../../configs/AppwriteConfig';
-import { doctorImages, COLLECTIONS, getDoctorsForBranch } from '../../constants';
+import { DatabaseService, AuthService, Query, RealtimeService, account } from '../../configs/AppwriteConfig'; // NEW: Added account import
+import { doctorImages, COLLECTIONS, getDoctorsForBranch, PROFILE_TYPES } from '../../constants'; // NEW: Added PROFILE_TYPES import
 import PageHeader from '../../components/PageHeader';
 import { appointmentManager, APPOINTMENT_STATUS } from '../../service/appointmentUtils';
-
+import { Ionicons } from '@expo/vector-icons';
 
 const AppointmentBooking = () => {
   const router = useRouter();
@@ -43,6 +44,11 @@ const AppointmentBooking = () => {
   const [bookedSlots, setBookedSlots] = useState({});
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [realtimeSubscription, setRealtimeSubscription] = useState(null);
+  // FAMILY BOOKING STATES
+  const [availableProfiles, setAvailableProfiles] = useState([]);
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [showPatientModal, setShowPatientModal] = useState(false);
+  const [loadingProfiles, setLoadingProfiles] = useState(true);
   
   // Service details based on service ID - matching the format in your constants
   const serviceDetails = {
@@ -76,6 +82,47 @@ const AppointmentBooking = () => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     
     return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+  };
+
+  // NEW: Load available profiles for family booking - MOVED OUTSIDE useEffect
+  const loadAvailableProfiles = async () => {
+    try {
+      setLoadingProfiles(true);
+      const user = await account.get();
+      
+      // Get all profiles for this user
+      const response = await DatabaseService.listDocuments(
+        COLLECTIONS.PATIENT_PROFILES,
+        [DatabaseService.createQuery('equal', 'userId', user.$id)],
+        100
+      );
+
+      const allProfiles = response.documents || [];
+      
+      // Create display profiles with enhanced logic
+      const profiles = allProfiles.map(profile => ({
+        ...profile,
+        displayName: profile.fullName || 'Unnamed',
+        isOwner: profile.email === user.email || profile.profileType === PROFILE_TYPES.OWNER
+      }));
+
+      console.log('Available profiles for booking:', profiles);
+      setAvailableProfiles(profiles);
+      
+      // Auto-select owner profile if available
+      const ownerProfile = profiles.find(p => p.isOwner);
+      if (ownerProfile) {
+        setSelectedPatient(ownerProfile);
+      } else if (profiles.length > 0) {
+        setSelectedPatient(profiles[0]);
+      }
+
+    } catch (error) {
+      console.error('Error loading profiles:', error);
+      Alert.alert('Error', 'Failed to load family profiles. Please try again.');
+    } finally {
+      setLoadingProfiles(false);
+    }
   };
 
   // Fetch booked appointments for a specific doctor and date
@@ -146,6 +193,9 @@ const AppointmentBooking = () => {
   useEffect(() => {
     // Subscribe to real-time updates when component mounts
     subscribeToAppointments();
+    
+    // NEW: Load available profiles for family booking
+    loadAvailableProfiles();
     
     // Load service data from the database or use fallback
     const getServiceData = async () => {
@@ -311,9 +361,10 @@ const AppointmentBooking = () => {
     setSelectedTimeSlot(timeSlot);
   };
 
+  // UPDATED: Enhanced booking function with family member support
   const handleBooking = async () => {
-    if (!selectedDoctor || !selectedDate || !selectedTimeSlot) {
-      Alert.alert('Incomplete Selection', 'Please select doctor, date and time slot');
+    if (!selectedDoctor || !selectedDate || !selectedTimeSlot || !selectedPatient) {
+      Alert.alert('Incomplete Selection', 'Please select doctor, patient, date and time slot');
       return;
     }
   
@@ -336,7 +387,7 @@ const AppointmentBooking = () => {
       const currentUser = await AuthService.getCurrentUser();
       const formattedDate = formatDate(selectedDate);
       
-      // Enhanced appointment object with new status constant
+      // UPDATED: Enhanced appointment object with family booking support
       const appointment = {
         user_id: currentUser.$id,
         doctor_id: selectedDoctor.$id,
@@ -347,18 +398,22 @@ const AppointmentBooking = () => {
         service_id: service_id,
         date: formattedDate,
         time_slot: selectedTimeSlot,
-        status: APPOINTMENT_STATUS.BOOKED, // Use the new constant instead of 'Booked'
+        status: APPOINTMENT_STATUS.BOOKED,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(), // ADD this
-        has_prescription: false, // ADD this
-        reschedule_count: 0 // ADD this
+        updated_at: new Date().toISOString(),
+        has_prescription: false,
+        reschedule_count: 0,
+        // NEW: Family booking fields
+        patient_id: selectedPatient.$id,
+        patient_name: selectedPatient.fullName || selectedPatient.displayName,
+        is_family_booking: !selectedPatient.isOwner
       };
       
-      console.log('Creating appointment with enhanced data:', appointment);
+      console.log('Creating appointment with family booking data:', appointment);
       
       const result = await DatabaseService.createDocument(COLLECTIONS.APPOINTMENTS, appointment);
       
-      // Navigate to success page (keep your existing navigation)
+      // Navigate to success page with enhanced parameters
       router.push({
         pathname: '/appointment/success',
         params: {
@@ -367,7 +422,9 @@ const AppointmentBooking = () => {
           serviceName: serviceName,
           branchName: branchName,
           date: formattedDate,
-          timeSlot: selectedTimeSlot
+          timeSlot: selectedTimeSlot,
+          patientName: selectedPatient.fullName || selectedPatient.displayName,
+          isFamilyBooking: !selectedPatient.isOwner ? 'true' : 'false'
         }
       });
     } catch (err) {
@@ -376,11 +433,79 @@ const AppointmentBooking = () => {
     }
   };
 
-  if (isLoading) {
+  // NEW: Patient Selection Modal Component
+  const PatientSelectorModal = () => (
+    <Modal
+      visible={showPatientModal}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowPatientModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Select Patient</Text>
+            <TouchableOpacity onPress={() => setShowPatientModal(false)}>
+              <Ionicons name="close" size={24} color="#666" />
+            </TouchableOpacity>
+          </View>
+          
+          <ScrollView style={styles.profilesList}>
+            {availableProfiles.map((profile) => (
+              <TouchableOpacity
+                key={profile.$id}
+                style={[
+                  styles.profileOption,
+                  selectedPatient?.$id === profile.$id && styles.selectedProfileOption
+                ]}
+                onPress={() => {
+                  setSelectedPatient(profile);
+                  setShowPatientModal(false);
+                }}
+              >
+                <View style={styles.profileIcon}>
+                  <Ionicons 
+                    name={profile.isOwner ? "person" : "people"} 
+                    size={20} 
+                    color={profile.isOwner ? "#007AFF" : "#0AD476"} 
+                  />
+                </View>
+                <View style={styles.profileInfo}>
+                  <Text style={styles.profileName}>{profile.displayName}</Text>
+                  <Text style={styles.profileType}>
+                    {profile.isOwner ? 'You' : 'Family Member'}
+                  </Text>
+                  {profile.age && (
+                    <Text style={styles.profileAge}>Age: {profile.age}</Text>
+                  )}
+                </View>
+                {selectedPatient?.$id === profile.$id && (
+                  <Ionicons name="checkmark-circle" size={24} color="#0AD476" />
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          
+          <TouchableOpacity 
+            style={styles.addFamilyMemberButton}
+            onPress={() => {
+              setShowPatientModal(false);
+              router.push('/profile/add-family-member');
+            }}
+          >
+            <Ionicons name="add" size={20} color="#0AD476" />
+            <Text style={styles.addFamilyMemberText}>Add Family Member</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  if (isLoading || loadingProfiles) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#0AD476" />
-        <Text>Loading Doctors...</Text>
+        <Text>Loading...</Text>
       </SafeAreaView>
     );
   }
@@ -439,6 +564,36 @@ const AppointmentBooking = () => {
             </View>
           )}
         </View>
+
+        {/* NEW: Patient Selection Section */}
+        {availableProfiles.length > 0 && (
+          <View style={styles.patientSection}>
+            <Text style={styles.sectionTitle}>APPOINTMENT FOR</Text>
+            <TouchableOpacity 
+              style={styles.patientSelector}
+              onPress={() => setShowPatientModal(true)}
+            >
+              <View style={styles.patientInfo}>
+                <View style={styles.patientIcon}>
+                  <Ionicons 
+                    name={selectedPatient?.isOwner ? "person" : "people"} 
+                    size={20} 
+                    color={selectedPatient?.isOwner ? "#007AFF" : "#0AD476"} 
+                  />
+                </View>
+                <View>
+                  <Text style={styles.patientName}>
+                    {selectedPatient?.displayName || 'Select Patient'}
+                  </Text>
+                  <Text style={styles.patientType}>
+                    {selectedPatient?.isOwner ? 'You' : 'Family Member'}
+                  </Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-down" size={20} color="#666" />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {doctors.length === 0 ? (
           <View style={styles.noDoctorsContainer}>
@@ -562,17 +717,22 @@ const AppointmentBooking = () => {
         )}
       </ScrollView>
 
-      {/* Continue Button - Only show if doctors are available */}
+      {/* Patient Selector Modal */}
+      <PatientSelectorModal />
+
+      {/* UPDATED: Continue Button with patient validation */}
       {doctors.length > 0 && (
         <TouchableOpacity 
           style={[
             styles.continueButton,
-            (!selectedDoctor || !selectedDate || !selectedTimeSlot) && styles.disabledButton
+            (!selectedDoctor || !selectedDate || !selectedTimeSlot || !selectedPatient) && styles.disabledButton
           ]}
           onPress={handleBooking}
-          disabled={!selectedDoctor || !selectedDate || !selectedTimeSlot}
+          disabled={!selectedDoctor || !selectedDate || !selectedTimeSlot || !selectedPatient}
         >
-          <Text style={styles.continueButtonText}>Book Appointment</Text>
+          <Text style={styles.continueButtonText}>
+            Book Appointment {selectedPatient && `for ${selectedPatient.displayName}`}
+          </Text>
         </TouchableOpacity>
       )}
     </SafeAreaView>
@@ -648,6 +808,124 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ffdddd',
     marginTop: 10,
+  },
+  // NEW: Patient selection styles
+  patientSection: {
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  patientSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8f9fa',
+    padding: 15,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  patientInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  patientIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  patientName: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  patientType: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  profilesList: {
+    maxHeight: 400,
+  },
+  profileOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  selectedProfileOption: {
+    backgroundColor: '#f0f8ff',
+  },
+  profileIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f8f9fa',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+  },
+  profileInfo: {
+    flex: 1,
+  },
+  profileName: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  profileType: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2,
+  },
+  profileAge: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
+  },
+  addFamilyMemberButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    margin: 20,
+    backgroundColor: '#f0f8ff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#0AD476',
+  },
+  addFamilyMemberText: {
+    color: '#0AD476',
+    fontWeight: '500',
+    marginLeft: 8,
   },
   sectionTitle: {
     fontSize: 14,

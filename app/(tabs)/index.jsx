@@ -1,12 +1,12 @@
 import { View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, StyleSheet } from 'react-native'
 import React, { useEffect, useState } from 'react'
 import Header from "../../components/Header";
-import SearchBar from '../../components/SearchBar';
 import AppointmentCard from '../../components/AppointmentCard';
 import DoctorSpeciality from '../../components/DoctorSpeciality';
 import NearbyHospitals from '../../components/NearbyHospitals';
 import { router, useRouter } from 'expo-router';
 import { AuthService, DatabaseService, Query } from '../../configs/AppwriteConfig';
+import { COLLECTIONS } from '../../constants'; // Import COLLECTIONS constant
 import { Ionicons } from '@expo/vector-icons';
 
 export default function HomeScreen() {
@@ -14,6 +14,12 @@ export default function HomeScreen() {
   const [appointments, setAppointments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState(null);
+  // NEW: Add family booking stats
+  const [familyBookingStats, setFamilyBookingStats] = useState({
+    total: 0,
+    family: 0,
+    own: 0
+  });
 
   useEffect(() => {
     const fetchUserAndAppointments = async () => {
@@ -27,12 +33,23 @@ export default function HomeScreen() {
         // Fetch user's appointments from Appwrite
         if (currentUser) {
           const response = await DatabaseService.listDocuments(
-            '67e0332c0001131d71ec', // Appointments collection ID
+            COLLECTIONS.APPOINTMENTS, // Use constant instead of hardcoded ID
             [Query.equal('user_id', currentUser.$id)],
             100 // Limit
           );
           
-          setAppointments(response.documents);
+          const appointmentDocuments = response.documents || [];
+          setAppointments(appointmentDocuments);
+          
+          // NEW: Calculate family booking stats
+          const familyBookings = appointmentDocuments.filter(apt => apt.is_family_booking === true);
+          const ownBookings = appointmentDocuments.filter(apt => apt.is_family_booking !== true); // Handle undefined/false/null
+          
+          setFamilyBookingStats({
+            total: appointmentDocuments.length,
+            family: familyBookings.length,
+            own: ownBookings.length
+          });
         }
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -44,8 +61,14 @@ export default function HomeScreen() {
     fetchUserAndAppointments();
   }, []);
 
-  // Find upcoming appointments (today or in the future)
+  // Find upcoming appointments (today or in the future) - ENHANCED
   const upcomingAppointments = appointments.filter(appointment => {
+    // First check if appointment is cancelled or completed
+    const status = appointment.status?.toLowerCase();
+    if (status === 'cancelled' || status === 'completed') {
+      return false;
+    }
+    
     // Parse the appointment date
     const parts = appointment.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
     if (!parts) return false;
@@ -100,100 +123,153 @@ export default function HomeScreen() {
     return dateA - dateB;
   });
 
+  // NEW: Calculate family booking info for upcoming appointments
+  const upcomingFamilyBookings = sortedUpcomingAppointments.filter(apt => apt.is_family_booking === true);
+  const hasUpcomingFamilyBookings = upcomingFamilyBookings.length > 0;
+
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Header />
-        <SearchBar setSearchText={(value) => console.log(value)} />
-        
-        {/* Upcoming Appointments Section */}
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.titleContainer}>
-              <Text style={styles.sectionTitle}>Upcoming Schedule</Text>
-              <View style={styles.countBadge}>
-                <Text style={styles.countBadgeText}>
-                  {sortedUpcomingAppointments.length}
-                </Text>
+  <ScrollView style={styles.container}>
+    <View style={styles.content}>
+      <Header />
+      {/* REMOVED: SearchBar component */}
+      
+      {/* ENHANCED: Appointment Summary Cards - Better spacing */}
+      {familyBookingStats.total > 0 && (
+        <View style={styles.enhancedSummaryContainer}>
+          {/* Your Appointments Card */}
+          <TouchableOpacity 
+            style={[styles.summaryCard, styles.yourAppointmentsCard]}
+            onPress={() => router.push('/appointment?filter=own')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.summaryCardHeader}>
+              <View style={[styles.summaryIconContainer, styles.yourAppointmentsIcon]}>
+                <Ionicons name="person" size={20} color="#007AFF" />
               </View>
+              <Text style={styles.summaryNumber}>{familyBookingStats.own}</Text>
             </View>
-            
-            <TouchableOpacity 
-              onPress={() => router.push('/appointment')}
-              style={styles.seeAllButton}
-            >
-              <Text style={styles.seeAllText}>See All</Text>
-            </TouchableOpacity>
+            <Text style={styles.summaryLabel}>Your Appointments</Text>
+            <View style={styles.summaryProgress}>
+              <View style={[
+                styles.progressBar, 
+                styles.yourAppointmentsProgress,
+                { width: `${familyBookingStats.total > 0 ? (familyBookingStats.own / familyBookingStats.total) * 100 : 0}%` }
+              ]} />
+            </View>
+          </TouchableOpacity>
+
+          {/* Family Appointments Card */}
+          <TouchableOpacity 
+            style={[styles.summaryCard, styles.familyAppointmentsCard]}
+            onPress={() => router.push('/appointment?filter=family')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.summaryCardHeader}>
+              <View style={[styles.summaryIconContainer, styles.familyAppointmentsIcon]}>
+                <Ionicons name="people" size={20} color="#0AD476" />
+              </View>
+              <Text style={styles.summaryNumber}>{familyBookingStats.family}</Text>
+            </View>
+            <Text style={styles.summaryLabel}>Family Appointments</Text>
+            <View style={styles.summaryProgress}>
+              <View style={[
+                styles.progressBar, 
+                styles.familyAppointmentsProgress,
+                { width: `${familyBookingStats.total > 0 ? (familyBookingStats.family / familyBookingStats.total) * 100 : 0}%` }
+              ]} />
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
+      
+      {/* FIXED: Upcoming Appointments Section - Removed extra marginTop */}
+      <View style={styles.sectionContainer}>
+        <View style={styles.sectionHeader}>
+          <View style={styles.titleContainer}>
+            <Text style={styles.sectionTitle}>Upcoming Schedule</Text>
+            <View style={styles.countBadge}>
+              <Text style={styles.countBadgeText}>
+                {sortedUpcomingAppointments.length}
+              </Text>
+            </View>
+            {/* Family indicator */}
+            {hasUpcomingFamilyBookings && (
+              <View style={styles.familyIndicator}>
+                <Ionicons name="people" size={12} color="#0AD476" />
+              </View>
+            )}
           </View>
           
-          {isLoading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#0AD476" />
-            </View>
-          ) : sortedUpcomingAppointments.length > 0 ? (
-            <View>
-              {/* Show first upcoming appointment */}
-              <AppointmentCard appointment={sortedUpcomingAppointments[0]} />
-              
-              {/* If there are more appointments, show a message */}
-              {sortedUpcomingAppointments.length > 1 && (
-                <TouchableOpacity 
-                  onPress={() => router.push('/appointment')}
-                  style={styles.moreAppointmentsButton}
-                >
-                  <Ionicons name="calendar-outline" size={16} color="#0AD476" />
-                  <Text style={styles.moreAppointmentsText}>
-                    {sortedUpcomingAppointments.length - 1} more appointment{sortedUpcomingAppointments.length > 2 ? 's' : ''}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          ) : (
-            <View style={styles.noAppointmentsContainer}>
-              <Ionicons name="calendar-outline" size={40} color="#d1d5db" />
-              <Text style={styles.noAppointmentsTitle}>No upcoming appointments</Text>
-              <Text style={styles.noAppointmentsText}>Schedule your next appointment</Text>
-              <TouchableOpacity 
-                onPress={() => router.push('/appointment/appointmentBooking')}
-                style={styles.bookAppointmentButton}
-              >
-                <Text style={styles.bookAppointmentText}>Book Appointment</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-
-        <View style={{ marginTop: 25 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-            <Text style={{ fontSize: 20, fontWeight: 'bold' }}>Doctor Speciality</Text>
-            <TouchableOpacity>
-              <Text style={{ color: '#0AD476' }}>See All</Text>
-            </TouchableOpacity>
-          </View>
-          <DoctorSpeciality />
+          <TouchableOpacity 
+            onPress={() => router.push('/appointment')}
+            style={styles.seeAllButton}
+          >
+            <Text style={styles.seeAllText}>See All</Text>
+          </TouchableOpacity>
         </View>
         
-        <View style={{ marginTop: 25, marginBottom: 20 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-            <Text style={{ fontSize: 20, fontWeight: 'bold' }}>Nearby Hospitals</Text>
-            <TouchableOpacity onPress={()=>router.push('/hospitals-list')}>
-              <Text style={{ color: '#0AD476' }}>See All</Text>
+        {/* Rest of your appointment content... */}
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#0AD476" />
+          </View>
+        ) : sortedUpcomingAppointments.length > 0 ? (
+          <View>
+            <AppointmentCard 
+              appointment={sortedUpcomingAppointments[0]} 
+              currentUserId={user?.$id}
+            />
+            
+            {sortedUpcomingAppointments.length > 1 && (
+              <TouchableOpacity 
+                onPress={() => router.push('/appointment')}
+                style={styles.moreAppointmentsButton}
+              >
+                <Ionicons name="calendar-outline" size={16} color="#0AD476" />
+                <Text style={styles.moreAppointmentsText}>
+                  {sortedUpcomingAppointments.length - 1} more appointment{sortedUpcomingAppointments.length > 2 ? 's' : ''}
+                  {hasUpcomingFamilyBookings && ' (including family)'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        ) : (
+          <View style={styles.noAppointmentsContainer}>
+            <Ionicons name="calendar-outline" size={40} color="#d1d5db" />
+            <Text style={styles.noAppointmentsTitle}>No upcoming appointments</Text>
+            <Text style={styles.noAppointmentsText}>Schedule your next appointment for you or your family</Text>
+            <TouchableOpacity 
+              onPress={() => router.push('/appointment/appointmentBooking')}
+              style={styles.bookAppointmentButton}
+            >
+              <Text style={styles.bookAppointmentText}>Book Appointment</Text>
             </TouchableOpacity>
           </View>
-          <NearbyHospitals />
-        </View>
+        )}
       </View>
 
-          {/* Testing the prescription flow */}
-          <View>
-            <TouchableOpacity
-              style={styles.testButton}
-              onPress={() => router.push('/testing/prescription-flow')}
-            >
-              <Text style={styles.testButtonText}>Test Prescription Flow</Text>
-            </TouchableOpacity>
-          </View>
-    </ScrollView>
+      {/* Rest of your sections with better spacing */}
+      <View style={styles.doctorSpecialitySection}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>Doctor Speciality</Text>
+          <TouchableOpacity>
+            <Text style={styles.seeAllText}>See All</Text>
+          </TouchableOpacity>
+        </View>
+        <DoctorSpeciality />
+      </View>
+      
+      <View style={styles.nearbyHospitalsSection}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>Nearby Hospitals</Text>
+          <TouchableOpacity onPress={()=>router.push('/hospitals-list')}>
+            <Text style={styles.seeAllText}>See All</Text>
+          </TouchableOpacity>
+        </View>
+        <NearbyHospitals />
+      </View>
+    </View>
+  </ScrollView>
   )
 }
 
@@ -204,10 +280,87 @@ const styles = StyleSheet.create({
   },
   content: { 
     padding: 16, 
-    marginTop: 50 
+    marginTop: 50
   },
+  
+  // Enhanced Summary Cards
+  enhancedSummaryContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20, // Reduced gap
+    marginTop: 15, // Small top margin for breathing room
+    gap: 12,
+  },
+  summaryCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16, // Slightly reduced padding
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    borderWidth: 2,
+  },
+  yourAppointmentsCard: {
+    borderColor: '#E3F2FD',
+    backgroundColor: '#FAFBFF',
+  },
+  familyAppointmentsCard: {
+    borderColor: '#E8F5E8',
+    backgroundColor: '#FAFFFE',
+  },
+  summaryCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10, // Reduced spacing
+  },
+  summaryIconContainer: {
+    width: 36, // Slightly smaller
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  yourAppointmentsIcon: {
+    backgroundColor: '#E3F2FD',
+  },
+  familyAppointmentsIcon: {
+    backgroundColor: '#E8F5E8',
+  },
+  summaryNumber: {
+    fontSize: 24, // Slightly smaller
+    fontWeight: 'bold',
+    color: '#1a1a1a',
+  },
+  summaryLabel: {
+    fontSize: 13, // Slightly smaller
+    color: '#666',
+    fontWeight: '500',
+    marginBottom: 8,
+  },
+  summaryProgress: {
+    height: 3, // Thinner progress bar
+    backgroundColor: '#f0f0f0',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  yourAppointmentsProgress: {
+    backgroundColor: '#007AFF',
+  },
+  familyAppointmentsProgress: {
+    backgroundColor: '#0AD476',
+  },
+
+  // Fixed section spacing
   sectionContainer: { 
-    marginTop: 25 
+    marginTop: 5, 
   },
   sectionHeader: { 
     flexDirection: 'row', 
@@ -234,7 +387,17 @@ const styles = StyleSheet.create({
   },
   countBadgeText: { 
     color: 'white', 
-    fontWeight: 'bold' 
+    fontWeight: 'bold',
+    fontSize: 12
+  },
+  familyIndicator: {
+    backgroundColor: '#dcfce7',
+    borderRadius: 10,
+    marginLeft: 6,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   seeAllButton: {
     paddingVertical: 4,
@@ -244,6 +407,23 @@ const styles = StyleSheet.create({
     color: '#0AD476',
     fontWeight: '600'
   },
+  
+  // Better section spacing for other components
+  doctorSpecialitySection: {
+    marginTop: 20,
+  },
+  nearbyHospitalsSection: {
+    marginTop: 30,
+    marginBottom: 20,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+
+  
   loadingContainer: {
     height: 150,
     justifyContent: 'center',
@@ -296,21 +476,5 @@ const styles = StyleSheet.create({
   bookAppointmentText: { 
     color: 'white',
     fontWeight: 'bold',
-  },
-  testButton: { 
-    flexDirection: 'row',
-    alignItems: 'center', 
-    justifyContent: 'center',
-    marginTop: 10, 
-    paddingVertical: 12,
-    backgroundColor: '#f0fff4',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#d1fae5',
-  },
-  testButtonText: { 
-    color: '#0AD476',
-    fontWeight: '600',
-    marginLeft: 6,
   },
 });

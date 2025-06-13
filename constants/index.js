@@ -77,29 +77,31 @@ export const IdentificationTypes = [
   "Voter ID Card",
 ];
 
+// Updated RegionsData with correct hospital counts
 export const RegionsData = [
   {
     region_id: "tawau",
     name: "Tawau",
-    hospitalsCount: 1,
+    hospitalsCount: 4, // Updated count
     imagePath: "tawau-region"
   },
   {
     region_id: "semporna",
     name: "Semporna",
-    hospitalsCount: 1,
+    hospitalsCount: 4, // Updated count
     imagePath: "semporna-region"
   },
   {
     region_id: "kota_kinabalu",
     name: "Kota Kinabalu",
-    hospitalsCount: 1,
+    hospitalsCount: 5, // Updated count
     imagePath: "kk-region"
   }
 ];
 
-
+// Enhanced BranchesData with more clinics per region
 export const BranchesData = [
+  // TAWAU REGION CLINICS
   {
     branch_id: "1",
     region_id: "tawau",
@@ -114,6 +116,47 @@ export const BranchesData = [
     imagePath: "polyclinic-fajar"
   },
   {
+    branch_id: "4",
+    region_id: "tawau",
+    name: "Tawau Medical Centre",
+    address: "Jalan Dunlop, 91000 Tawau, Sabah",
+    latitude: 4.245,
+    longitude: 117.895,
+    phone: "+60 89-777888",
+    operatingHours: "7:00 AM - 11:00 PM (Daily)",
+    openingTime: "07:00 AM",
+    closingTime: "11:00 PM",
+    imagePath: "tawau-medical"
+  },
+  {
+    branch_id: "5",
+    region_id: "tawau",
+    name: "Klinik Kesihatan Tawau",
+    address: "Jalan Hospital, 91000 Tawau, Sabah",
+    latitude: 4.240,
+    longitude: 117.888,
+    phone: "+60 89-555666",
+    operatingHours: "8:00 AM - 4:30 PM (Mon-Fri)",
+    openingTime: "08:00 AM",
+    closingTime: "04:30 PM",
+    imagePath: "klinik-kesihatan-tawau"
+  },
+  {
+    branch_id: "6",
+    region_id: "tawau",
+    name: "Permai Polyclinics Megah Jaya",
+    address: "Lot 45, Jalan Cheras, Taman Kinabutan, 91000 Tawau, Sabah",
+    latitude: 4.248,
+    longitude: 117.892,
+    phone: "+60 89-333444",
+    operatingHours: "9:00 AM - 9:00 PM (Mon-Sat), 10:00 AM - 6:00 PM (Sun)",
+    openingTime: "09:00 AM",
+    closingTime: "09:00 PM",
+    imagePath: "polyclinic-megahjaya-tawau"
+  },
+
+  // SEMPORNA REGION CLINICS
+  {
     branch_id: "2",
     region_id: "semporna",
     name: "Permai Polyclinics Semporna",
@@ -127,9 +170,50 @@ export const BranchesData = [
     imagePath: "polyclinic-semporna"
   },
   {
+    branch_id: "7",
+    region_id: "semporna",
+    name: "Klinik Kesihatan Semporna",
+    address: "Jalan Hospital, 91300 Semporna, Sabah",
+    latitude: 4.483,
+    longitude: 118.607,
+    phone: "+60 89-781234",
+    operatingHours: "8:00 AM - 4:30 PM (Mon-Fri)",
+    openingTime: "08:00 AM",
+    closingTime: "04:30 PM",
+    imagePath: "klinik-kesihatan-semporna"
+  },
+  {
+    branch_id: "8",
+    region_id: "semporna",
+    name: "Permai Polyclinics Semporna II",
+    address: "Block B, Lot 12, Jalan Kastam, 91300 Semporna, Sabah",
+    latitude: 4.487,
+    longitude: 118.611,
+    phone: "+60 89-567890",
+    operatingHours: "9:00 AM - 8:00 PM (Mon-Sat), 10:00 AM - 4:00 PM (Sun)",
+    openingTime: "09:00 AM",
+    closingTime: "08:00 PM",
+    imagePath: "semporna-family"
+  },
+  {
+    branch_id: "9",
+    region_id: "semporna",
+    name: "Klinik Warisan Semporna",
+    address: "F1-0，Bandar Mutiara, Jalan Hospital, 91308 Semporna, Sabah",
+    latitude: 4.481,
+    longitude: 118.605,
+    phone: "+60 89-445566",
+    operatingHours: "8:30 AM - 5:30 PM (Mon-Fri), 9:00 AM - 1:00 PM (Sat)",
+    openingTime: "08:30 AM",
+    closingTime: "05:30 PM",
+    imagePath: "klinik-warisan-semporna"
+  },
+
+  // KOTA KINABALU REGION CLINICS
+  {
     branch_id: "3",
     region_id: "kota_kinabalu",
-    name: "Cyber City",
+    name: "Permai Cyber City",
     address: "B10-1, Ground Floor Block B, Kepayan Perdana Commercial Centre, Jalan Lintas, 88200 Kota Kinabalu, Sabah",
     latitude: 5.980,
     longitude: 116.073,
@@ -138,19 +222,86 @@ export const BranchesData = [
     openingTime: "08:00 AM",
     closingTime: "06:00 PM",
     imagePath: "polyclinic-cybercity"
+  },
+  {
+    branch_id: "10",
+    region_id: "kota_kinabalu",
+    name: "Permai Asia City",
+    address: "Karung Berkunci 2029, 88586 Kota Kinabalu, Sabah",
+    latitude: 5.978,
+    longitude: 116.075,
+    phone: "+60 88-324600",
+    operatingHours: "24 Hours (Emergency), 8:00 AM - 5:00 PM (Outpatient)",
+    openingTime: "24 Hours",
+    closingTime: "24 Hours",
+    imagePath: "permai-asiacity"
+  },
+  {
+    branch_id: "11",
+    region_id: "kota_kinabalu",
+    name: "Permai Jalan Pantai",
+    address: "Jalan Damai Luyang, Likas, 88400 Kota Kinabalu, Sabah",
+    latitude: 5.985,
+    longitude: 116.080,
+    phone: "+60 88-428600",
+    operatingHours: "8:00 AM - 4:30 PM (Mon-Fri)",
+    openingTime: "08:00 AM",
+    closingTime: "04:30 PM",
+    imagePath: "permai-jalan-pantai"
+  },
+  {
+    branch_id: "12",
+    region_id: "kota_kinabalu",
+    name: "Permai Api Api",
+    address: "Lorong Bersatu, Off Jalan Damai, Luyang, 88300 Kota Kinabalu, Sabah",
+    latitude: 5.982,
+    longitude: 116.078,
+    phone: "+60 88-211333",
+    operatingHours: "24 Hours (Emergency), 8:00 AM - 10:00 PM (Outpatient)",
+    openingTime: "08:00 AM",
+    closingTime: "10:00 PM",
+    imagePath: "permai-api-api"
+  },
+  {
+    branch_id: "13",
+    region_id: "kota_kinabalu",
+    name: "Permai Putatan",
+    address: "Riverson, 1, Jalan Damai Luyang, 88300 Kota Kinabalu, Sabah",
+    latitude: 5.983,
+    longitude: 116.076,
+    phone: "+60 88-518911",
+    operatingHours: "24 Hours (Emergency), 8:00 AM - 8:00 PM (Specialist)",
+    openingTime: "08:00 AM",
+    closingTime: "08:00 PM",
+    imagePath: "permai-putatan"
   }
 ];
 
+// Enhanced clinicsImages with new clinic images
 export const clinicsImages = {
   // Region images
   'tawau-region': require('../assets/images/tawau.jpeg'),
   'semporna-region': require('../assets/images/semporna.jpg'),
   'kk-region': require('../assets/images/kota-kinabalu.jpg'),
   
-  // Clinic images
+  // Tawau region clinic images
   'polyclinic-fajar': require('../assets/images/polyclinic-fajar.jpg'),
+  'tawau-medical': require('../assets/images/polyclinic-KMITawau.png'),
+  'klinik-kesihatan-tawau': require('../assets/images/pusatkesihatan-tawau.jpg'),
+  'polyclinic-megahjaya-tawau': require('../assets/images/polyclinic-megahjaya.jpg'),
+
+  // Semporna region clinic images
   'polyclinic-semporna': require('../assets/images/polyclinic-semporna.jpeg'),
+  'klinik-kesihatan-semporna': require('../assets/images/pusatkesihatan-semporna.jpg'),
+  'semporna-family': require('../assets/images/polyclinic-semporna2.jpg'),
+  'klinik-warisan-semporna': require('../assets/images/clinic-warisansemporna.jpg'),
+
+  // KK region clinic images
   'polyclinic-cybercity': require('../assets/images/polyclinic-kk.jpg'),
+  'permai-asiacity': require('../assets/images/polyclinic-asiacity.jpg'), 
+  'permai-jalan-pantai': require('../assets/images/polyclinic-jlnpantai.jpeg'), 
+  'permai-api-api': require('../assets/images/polyclinic-apiapi.jpg'), 
+  'permai-putatan': require('../assets/images/polyclinic-putatan.jpg'),
 };
 
 /**
@@ -181,10 +332,51 @@ export const ServicesData = [
 ];
 
 /**
- * Doctors Data
+ * Enhanced search function for regions
+ */
+export const searchRegions = (regions, searchQuery) => {
+  if (!searchQuery.trim()) return regions;
+  
+  const query = searchQuery.toLowerCase().trim();
+  
+  return regions.filter(region => 
+    region.name.toLowerCase().includes(query) ||
+    region.region_id.toLowerCase().includes(query)
+  );
+};
+
+/**
+ * Enhanced search function for clinics
+ */
+export const searchClinics = (clinics, searchQuery) => {
+  if (!searchQuery.trim()) return clinics;
+  
+  const query = searchQuery.toLowerCase().trim();
+  
+  return clinics.filter(clinic => 
+    clinic.name.toLowerCase().includes(query) ||
+    clinic.address.toLowerCase().includes(query) ||
+    clinic.phone.includes(query.replace(/\s+/g, '')) || // Remove spaces for phone search
+    clinic.operatingHours.toLowerCase().includes(query)
+  );
+};
+
+/**
+ * Function to get clinics by region with enhanced filtering
+ */
+export const getClinicsByRegion = (regionId, searchQuery = '') => {
+  const regionClinics = BranchesData.filter(branch => branch.region_id === regionId);
+  
+  if (!searchQuery.trim()) return regionClinics;
+  
+  return searchClinics(regionClinics, searchQuery);
+};
+
+/**
+ * Doctors Data - Enhanced with more doctors for new clinics
  */
 export const DoctorsData = [
-  // Branch 1 doctors
+  // Branch 1 doctors (Permai Polyclinics Fajar)
   {
     name: "Leila Cameron",
     specialty: "Pediatrics",
@@ -213,7 +405,7 @@ export const DoctorsData = [
     image: "doctor-wong.png"
   },
   
-  // Branch 2 doctors
+  // Branch 2 doctors (Permai Polyclinics Semporna)
   {
     name: "David Livingston",
     specialty: "Orthopedics",
@@ -242,7 +434,7 @@ export const DoctorsData = [
     image: "doctor-chen.png"
   },
   
-  // Branch 3 doctors
+  // Branch 3 doctors (Cyber City)
   {
     name: "John Green",
     specialty: "Cardiology",
@@ -269,6 +461,58 @@ export const DoctorsData = [
     qualifications: ["MD", "PhD", "Psychiatry Specialist"],
     availability: ["Wednesday", "Thursday", "Friday"],
     image: "doctor-ahmad.png"
+  },
+
+  // New doctors for additional clinics
+  // Branch 4 doctors (Tawau Medical Centre)
+  {
+    name: "Dr. Siti Aminah",
+    specialty: "Internal Medicine",
+    branchId: "4",
+    contact: "+60 89-777999",
+    qualifications: ["MD", "MBBS", "Internal Medicine"],
+    availability: ["Monday", "Tuesday", "Wednesday", "Friday"],
+    image: "doctor-sarah.png"
+  },
+  {
+    name: "Dr. James Lim",
+    specialty: "Emergency Medicine",
+    branchId: "4",
+    contact: "+60 89-777888",
+    qualifications: ["MD", "Emergency Medicine Specialist"],
+    availability: ["Daily"],
+    image: "doctor1.png"
+  },
+
+  // Branch 5 doctors (Klinik Kesihatan Tawau)
+  {
+    name: "Dr. Fatimah Ali",
+    specialty: "Family Medicine",
+    branchId: "5",
+    contact: "+60 89-555777",
+    qualifications: ["MD", "MBBS", "Family Medicine"],
+    availability: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+    image: "doctor2.png"
+  },
+
+  // Branch 10 doctors (Queen Elizabeth Hospital)
+  {
+    name: "Dr. Richard Teo",
+    specialty: "Surgery",
+    branchId: "10",
+    contact: "+60 88-324650",
+    qualifications: ["MD", "MBBS", "General Surgery"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor3.png"
+  },
+  {
+    name: "Dr. Priya Sharma",
+    specialty: "Emergency Medicine",
+    branchId: "10",
+    contact: "+60 88-324600",
+    qualifications: ["MD", "Emergency Medicine"],
+    availability: ["Daily"],
+    image: "doctor-emma.png"
   }
 ];
 
@@ -284,6 +528,7 @@ export const doctorImages = {
   "doctor-wong.png": require("../assets/images/doctor-wong.png"),
 };
 
+// Rest of the existing functions remain the same...
 export async function createDoctorDocument(doctor) {
   const { DatabaseService } = await import('../configs/AppwriteConfig');
   try {
@@ -591,5 +836,90 @@ export async function resetBranches() {
   } catch (error) {
     console.error("Error during branch reset process:", error);
     return false;
+  }
+}
+
+/**
+ * Check and add any missing branches to database
+ */
+export async function checkAndAddMissingBranches() {
+  try {
+    console.log("Checking for missing branches...");
+    
+    // Get existing branches
+    const existingBranches = await DatabaseService.listDocuments(COLLECTIONS.BRANCHES, [], 100);
+    const existingBranchIds = new Set(existingBranches.documents.map(b => b.branch_id));
+    
+    // Find missing branches
+    const missingBranches = BranchesData.filter(b => !existingBranchIds.has(b.branch_id));
+    
+    if (missingBranches.length > 0) {
+      console.log(`Found ${missingBranches.length} missing branches. Adding them...`);
+      
+      // Add missing branches
+      for (const branch of missingBranches) {
+        try {
+          const { branch_id, ...branchData } = branch;
+          const branchToCreate = {
+            ...branchData,
+            branch_id: branch.branch_id
+          };
+          
+          await DatabaseService.createDocument(COLLECTIONS.BRANCHES, branchToCreate);
+          console.log(`✅ Added branch: ${branch.name}`);
+        } catch (error) {
+          console.error(`❌ Failed to add branch ${branch.name}:`, error);
+        }
+      }
+      return { success: true, added: missingBranches.length };
+    } else {
+      console.log("No missing branches found.");
+      return { success: true, added: 0 };
+    }
+  } catch (error) {
+    console.error("Error checking/adding branches:", error);
+    return { success: false, error };
+  }
+}
+
+/**
+ * Update region hospital counts based on actual branches in database
+ */
+export async function updateRegionHospitalCounts() {
+  try {
+    console.log("Updating region hospital counts...");
+    
+    // Get all branches
+    const allBranches = await DatabaseService.listDocuments(COLLECTIONS.BRANCHES, [], 100);
+    
+    // Count branches per region
+    const regionCounts = {};
+    allBranches.documents.forEach(branch => {
+      regionCounts[branch.region_id] = (regionCounts[branch.region_id] || 0) + 1;
+    });
+    
+    console.log("Branch counts per region:", regionCounts);
+    
+    // Get all regions
+    const regions = await DatabaseService.listDocuments(COLLECTIONS.REGIONS, [], 100);
+    
+    // Update each region's hospital count if needed
+    for (const region of regions.documents) {
+      const actualCount = regionCounts[region.region_id] || 0;
+      if (region.hospitalsCount !== actualCount) {
+        console.log(`Updating ${region.name}: ${region.hospitalsCount} → ${actualCount} clinics`);
+        
+        await DatabaseService.updateDocument(
+          COLLECTIONS.REGIONS,
+          region.$id,
+          { hospitalsCount: actualCount }
+        );
+      }
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error("Error updating region counts:", error);
+    return { success: false, error };
   }
 }
