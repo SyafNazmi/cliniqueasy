@@ -7,13 +7,114 @@
  * @returns {Promise<Array>} - Array of medications from the prescription
  */
 
-// service/PrescriptionScanner.js
+// service/PrescriptionScanner.js - FIXED VERSION
 import { DatabaseService, Query } from '../configs/AppwriteConfig';
 
 // Collection IDs
 const PRESCRIPTION_COLLECTION_ID = '6824b4cd000e65702ee3'; // Prescriptions collection
 const PRESCRIPTION_MEDICATIONS_COLLECTION_ID = '6824b57b0008686a86b3'; // Prescription medications
 const APPOINTMENTS_COLLECTION_ID = '67e0332c0001131d71ec'; // Appointments
+
+/**
+ * Add a new prescription with medications
+ * @param {string} appointmentId - The appointment ID
+ * @param {Array} medications - Array of medication objects
+ * @param {string} doctorNotes - Doctor's notes
+ * @returns {Promise<Object>} - Created prescription
+ */
+export const addPrescription = async (appointmentId, medications, doctorNotes = '') => {
+  try {
+    console.log('Creating prescription for appointment:', appointmentId);
+    
+    // 1. Create the main prescription record
+    const prescriptionData = {
+      appointment_id: appointmentId,
+      doctor_notes: doctorNotes,
+      status: 'Active',
+      issued_date: new Date().toISOString().split('T')[0], // Format: YYYY-MM-DD
+      reference_code: generateReferenceCode()
+    };
+    
+    const prescription = await DatabaseService.createDocument(
+      PRESCRIPTION_COLLECTION_ID,
+      prescriptionData
+    );
+    
+    console.log('Created prescription:', prescription.$id);
+    
+    // 2. Add each medication to the prescription
+    for (const medication of medications) {
+      const medicationData = {
+        prescription_id: prescription.$id,
+        name: medication.name,
+        type: medication.type,
+        dosage: medication.dosage,
+        frequencies: medication.frequencies,
+        duration: medication.duration,
+        illness_type: medication.illnessType || '',
+        notes: medication.notes || '',
+        times: JSON.stringify(medication.times || ['09:00']) // Store as JSON string
+      };
+      
+      await DatabaseService.createDocument(
+        PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+        medicationData
+      );
+    }
+    
+    console.log(`Added ${medications.length} medications to prescription`);
+    
+    return prescription;
+  } catch (error) {
+    console.error('Error creating prescription:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get prescriptions and medications for an appointment
+ * @param {string} appointmentId - The appointment ID
+ * @returns {Promise<Object>} - Object containing prescription and medications
+ */
+export const getPrescriptions = async (appointmentId) => {
+  try {
+    console.log('Getting prescriptions for appointment:', appointmentId);
+    
+    // 1. Find prescriptions for this appointment
+    const prescriptionsResponse = await DatabaseService.listDocuments(
+      PRESCRIPTION_COLLECTION_ID,
+      [Query.equal('appointment_id', appointmentId)]
+    );
+    
+    if (!prescriptionsResponse.documents || prescriptionsResponse.documents.length === 0) {
+      console.log('No prescriptions found for appointment:', appointmentId);
+      return {
+        prescription: null,
+        medications: []
+      };
+    }
+    
+    // 2. Get the most recent prescription
+    const prescription = prescriptionsResponse.documents[0];
+    console.log('Found prescription:', prescription.$id);
+    
+    // 3. Get all medications for this prescription
+    const medicationsResponse = await DatabaseService.listDocuments(
+      PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+      [Query.equal('prescription_id', prescription.$id)]
+    );
+    
+    console.log(`Found ${medicationsResponse.total} medications`);
+    
+    return {
+      prescription: prescription,
+      medications: medicationsResponse.documents || []
+    };
+  } catch (error) {
+    console.error('Error getting prescriptions:', error);
+    throw error;
+  }
+};
 
 /**
  * Get prescriptions and medications for an appointment
@@ -275,3 +376,38 @@ export const processPrescriptionQR = async (qrData) => {
       }
     ];
   };
+
+/**
+ * Helper function to parse times array from database
+ * @param {string|Array} times - Times data from database
+ * @returns {Array} - Parsed times array
+ */
+const parseTimesArray = (times) => {
+  try {
+    if (Array.isArray(times)) {
+      return times;
+    }
+    if (typeof times === 'string') {
+      // Try to parse as JSON first
+      if (times.startsWith('[') && times.endsWith(']')) {
+        return JSON.parse(times);
+      }
+      // If it's a single time as string, return as array
+      return [times];
+    }
+    return ['09:00']; // Default fallback
+  } catch (error) {
+    console.error('Error parsing times array:', error);
+    return ['09:00']; // Default fallback
+  }
+};
+
+/**
+ * Generate a unique reference code for prescriptions
+ * @returns {string} - Reference code
+ */
+const generateReferenceCode = () => {
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.random().toString(36).substr(2, 4).toUpperCase();
+  return `RX${timestamp}${random}`;
+};
