@@ -1,129 +1,106 @@
-// app/doctor/appointments/index.jsx - ENHANCED VERSION WITH ADVANCED FILTERS
-import React, { useState, useEffect } from 'react';
+// app/doctor/prescriptions/index.jsx - ENHANCED VERSION WITH OPTIMIZED CARDS & ADVANCED FILTERS
+import React, { useEffect, useState } from 'react';
 import { 
   View, 
   Text, 
   StyleSheet, 
-  TouchableOpacity, 
   ScrollView, 
+  TouchableOpacity, 
   ActivityIndicator, 
   Alert, 
+  StatusBar, 
   TextInput,
   FlatList,
   RefreshControl,
-  Modal,
-  Dimensions
+  Dimensions,
+  Modal
 } from 'react-native';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import PageHeader from '../../../components/PageHeader';
 import { DatabaseService, Query } from '../../../configs/AppwriteConfig';
 import { getLocalStorage } from '../../../service/Storage';
-import { COLLECTIONS } from '../../../constants';
+
+const APPOINTMENTS_COLLECTION_ID = '67e0332c0001131d71ec';
+const USERS_COLLECTION_ID = '67e032ec0025cf1956ff';
+const BRANCHES_COLLECTION_ID = '67f68c760039e7d1a61d';
+const REGIONS_COLLECTION_ID = '6807cb05000906569d69'; // Your actual regions collection ID
 
 const { width } = Dimensions.get('window');
 
-const APPOINTMENT_STATUS = {
-  BOOKED: 'Booked',
-  CONFIRMED: 'Confirmed',
-  RESCHEDULED: 'Rescheduled',
-  CANCELLED: 'Cancelled',
-  COMPLETED: 'Completed',
-  NO_SHOW: 'No Show'
-};
-
-export default function EnhancedAppointmentsManagement() {
+export default function EnhancedDoctorPrescriptions() {
   const [allAppointments, setAllAppointments] = useState([]);
   const [filteredAppointments, setFilteredAppointments] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState('all'); // 'all', 'upcoming', 'past', 'today'
   const [patientNames, setPatientNames] = useState({});
   const [branchNames, setBranchNames] = useState({});
-  const [serviceNames, setServiceNames] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [user, setUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState('all');
   const [showFilterModal, setShowFilterModal] = useState(false);
   
   // Advanced filter states
   const [selectedServices, setSelectedServices] = useState([]);
-  const [selectedRegions, setSelectedRegions] = useState([]);
-  const [selectedStatuses, setSelectedStatuses] = useState([]);
-  const [selectedDateRange, setSelectedDateRange] = useState('all');
+  const [selectedDateRange, setSelectedDateRange] = useState('all'); // all, today, week, month, custom
   const [customDateFrom, setCustomDateFrom] = useState('');
   const [customDateTo, setCustomDateTo] = useState('');
   
-  const [availableServices, setAvailableServices] = useState([]);
-  const [availableRegions, setAvailableRegions] = useState([]);
   const [statsData, setStatsData] = useState({
     total: 0,
-    upcoming: 0,
     completed: 0,
-    cancelled: 0,
+    pending: 0,
     today: 0
   });
 
+  const [availableServices, setAvailableServices] = useState([]);
+
   useEffect(() => {
-    loadAppointments();
+    loadData();
   }, []);
 
   useEffect(() => {
     filterAppointments();
-  }, [allAppointments, searchQuery, filter, selectedServices, selectedRegions, selectedStatuses, selectedDateRange, customDateFrom, customDateTo]);
+  }, [allAppointments, searchQuery, activeFilter, selectedServices, selectedDateRange, customDateFrom, customDateTo]);
 
-  const loadAppointments = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
       
       const userData = await getLocalStorage('userDetail');
-      if (!userData?.uid) {
-        Alert.alert('Error', 'User data not found');
-        return;
-      }
+      setUser(userData);
 
-      const appointmentsResponse = await DatabaseService.listDocuments(
-        COLLECTIONS.APPOINTMENTS,
-        []
-      );
+      const appointmentsResponse = await DatabaseService.listDocuments(APPOINTMENTS_COLLECTION_ID, []);
+      let appointments = appointmentsResponse.documents || [];
       
-      let allAppointments = appointmentsResponse.documents || [];
-      
-      // Sort appointments by date
-      allAppointments.sort((a, b) => {
-        try {
-          const dateA = parseAppointmentDate(a.date);
-          const dateB = parseAppointmentDate(b.date);
-          
-          if (dateA.getTime() === dateB.getTime()) {
-            return convert12HourTo24Hour(a.time_slot || '').localeCompare(
-              convert12HourTo24Hour(b.time_slot || '')
-            );
-          }
-          
-          return dateB - dateA;
-        } catch (error) {
-          return 0;
-        }
+      appointments.sort((a, b) => {
+        const dateA = parseAppointmentDate(a.date);
+        const dateB = parseAppointmentDate(b.date);
+        return dateB - dateA;
       });
       
-      setAllAppointments(allAppointments);
-      await fetchPatientNames(allAppointments);
-      await fetchBranchNames(allAppointments);
-      await fetchServiceNames(allAppointments);
-      extractAvailableOptions(allAppointments);
-      calculateStats(allAppointments);
-      
+      setAllAppointments(appointments);
+      await fetchPatientNames(appointments);
+      await fetchBranchNames(appointments);
+      calculateStats(appointments);
+      extractAvailableServices(appointments);
+
     } catch (error) {
-      console.error('Error loading appointments:', error);
-      Alert.alert('Error', 'Failed to load appointments');
+      console.error('Error loading prescription data:', error);
+      Alert.alert('Error', 'Failed to load prescription data');
     } finally {
       setLoading(false);
     }
   };
 
+  const extractAvailableServices = (appointments) => {
+    const services = [...new Set(appointments.map(apt => apt.service_name).filter(Boolean))];
+    setAvailableServices(services.sort());
+  };
+
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadAppointments();
+    await loadData();
     setRefreshing(false);
   };
 
@@ -149,27 +126,6 @@ export default function EnhancedAppointmentsManagement() {
     return months[monthName] || 0;
   };
 
-  const convert12HourTo24Hour = (timeString) => {
-    try {
-      if (!timeString) return '';
-      
-      const [time, modifier] = timeString.split(' ');
-      let [hours, minutes] = time.split(':');
-      
-      hours = parseInt(hours);
-      
-      if (modifier === 'PM' && hours < 12) {
-        hours += 12;
-      } else if (modifier === 'AM' && hours === 12) {
-        hours = 0;
-      }
-      
-      return `${hours.toString().padStart(2, '0')}:${minutes}`;
-    } catch (e) {
-      return timeString;
-    }
-  };
-
   const fetchPatientNames = async (appointments) => {
     try {
       const userIds = [...new Set(appointments.map(apt => apt.user_id))];
@@ -178,7 +134,7 @@ export default function EnhancedAppointmentsManagement() {
       for (const userId of userIds) {
         try {
           const usersResponse = await DatabaseService.listDocuments(
-            COLLECTIONS.PATIENT_PROFILES,
+            USERS_COLLECTION_ID,
             [Query.equal('userId', userId)]
           );
           
@@ -199,7 +155,7 @@ export default function EnhancedAppointmentsManagement() {
       
       setPatientNames(nameMap);
     } catch (error) {
-      console.error('Error fetching patient names:', error);
+      console.error("Error in fetchPatientNames:", error);
     }
   };
 
@@ -208,35 +164,43 @@ export default function EnhancedAppointmentsManagement() {
       const branchIds = [...new Set(appointments.map(apt => apt.branch_id).filter(Boolean))];
       const branchMap = {};
       
+      console.log('Branch IDs found in appointments:', branchIds);
+      
       // First, get all unique region IDs from branches
       const regionIds = new Set();
       
       for (const branchId of branchIds) {
         try {
           const branchResponse = await DatabaseService.listDocuments(
-            COLLECTIONS.BRANCHES,
+            BRANCHES_COLLECTION_ID,
             [Query.equal('branch_id', branchId)]
           );
           
           if (branchResponse.documents && branchResponse.documents.length > 0) {
             const branch = branchResponse.documents[0];
+            console.log(`Branch ${branchId} found with region_id:`, branch.region_id);
             if (branch.region_id) {
               regionIds.add(branch.region_id);
             }
+          } else {
+            console.log(`No branch found with branch_id: ${branchId}`);
           }
         } catch (error) {
           console.error(`Error fetching branch ${branchId}:`, error);
         }
       }
       
+      console.log('Region IDs to fetch:', [...regionIds]);
+      
       // Fetch region names
       const regionMap = await fetchRegionNames([...regionIds]);
+      console.log('Region map:', regionMap);
       
       // Now fetch branch details with region names
       for (const branchId of branchIds) {
         try {
           const branchResponse = await DatabaseService.listDocuments(
-            COLLECTIONS.BRANCHES,
+            BRANCHES_COLLECTION_ID,
             [Query.equal('branch_id', branchId)]
           );
           
@@ -244,19 +208,18 @@ export default function EnhancedAppointmentsManagement() {
             const branch = branchResponse.documents[0];
             branchMap[branchId] = {
               name: branch.name || 'Unknown Branch',
-              region: regionMap[branch.region_id] || branch.region_id || 'Unknown Region',
-              regionId: branch.region_id
+              region: regionMap[branch.region_id] || branch.region_id || 'Unknown Region'
             };
           }
         } catch (error) {
           branchMap[branchId] = {
             name: 'Unknown Branch',
-            region: 'Unknown Region',
-            regionId: null
+            region: 'Unknown Region'
           };
         }
       }
       
+      console.log('Final branch map:', branchMap);
       setBranchNames(branchMap);
     } catch (error) {
       console.error('Error fetching branch names:', error);
@@ -269,10 +232,11 @@ export default function EnhancedAppointmentsManagement() {
     if (regionIds.length === 0) return regionMap;
     
     try {
+      // Fetch regions from your regions collection
       for (const regionId of regionIds) {
         try {
           const regionResponse = await DatabaseService.listDocuments(
-            COLLECTIONS.REGIONS,
+            REGIONS_COLLECTION_ID,
             [Query.equal('region_id', regionId)]
           );
           
@@ -280,7 +244,7 @@ export default function EnhancedAppointmentsManagement() {
             const region = regionResponse.documents[0];
             regionMap[regionId] = region.name || regionId;
           } else {
-            // Fallback to hardcoded regions
+            // Fallback to hardcoded regions from your constants
             const hardcodedRegions = {
               'tawau': 'Tawau',
               'semporna': 'Semporna', 
@@ -290,6 +254,7 @@ export default function EnhancedAppointmentsManagement() {
           }
         } catch (error) {
           console.error(`Error fetching region ${regionId}:`, error);
+          // Fallback to hardcoded regions
           const hardcodedRegions = {
             'tawau': 'Tawau',
             'semporna': 'Semporna', 
@@ -300,6 +265,8 @@ export default function EnhancedAppointmentsManagement() {
       }
     } catch (error) {
       console.error('Error in fetchRegionNames:', error);
+      
+      // Fallback to hardcoded mapping based on your RegionsData
       const hardcodedRegions = {
         'tawau': 'Tawau',
         'semporna': 'Semporna', 
@@ -314,59 +281,14 @@ export default function EnhancedAppointmentsManagement() {
     return regionMap;
   };
 
-  const fetchServiceNames = async (appointments) => {
-    try {
-      const serviceIds = [...new Set(appointments.map(apt => apt.service_id).filter(Boolean))];
-      const serviceMap = {};
-      
-      for (const serviceId of serviceIds) {
-        try {
-          const serviceResponse = await DatabaseService.listDocuments(
-            COLLECTIONS.SERVICES,
-            [Query.equal('service_id', serviceId)]
-          );
-          
-          if (serviceResponse.documents && serviceResponse.documents.length > 0) {
-            const service = serviceResponse.documents[0];
-            serviceMap[serviceId] = service.name || 'Unknown Service';
-          } else {
-            serviceMap[serviceId] = 'Unknown Service';
-          }
-        } catch (error) {
-          serviceMap[serviceId] = 'Unknown Service';
-        }
-      }
-      
-      setServiceNames(serviceMap);
-    } catch (error) {
-      console.error('Error fetching service names:', error);
-    }
-  };
-
-  const extractAvailableOptions = (appointments) => {
-    // Extract unique services
-    const services = [...new Set(appointments.map(apt => apt.service_name).filter(Boolean))];
-    setAvailableServices(services.sort());
-    
-    // Extract unique regions from branch info
-    const regions = [...new Set(
-      appointments.map(apt => {
-        const branchInfo = getBranchInfo(apt.branch_id);
-        return branchInfo.region;
-      }).filter(region => region && region !== 'Unknown Region')
-    )];
-    setAvailableRegions(regions.sort());
-  };
-
   const calculateStats = (appointments) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const stats = {
       total: appointments.length,
-      upcoming: 0,
       completed: 0,
-      cancelled: 0,
+      pending: 0,
       today: 0
     };
 
@@ -374,16 +296,12 @@ export default function EnhancedAppointmentsManagement() {
       const aptDate = parseAppointmentDate(apt.date);
       aptDate.setHours(0, 0, 0, 0);
 
-      // Count by status
-      if (apt.status === APPOINTMENT_STATUS.COMPLETED) {
+      if (apt.has_prescription) {
         stats.completed++;
-      } else if (apt.status === APPOINTMENT_STATUS.CANCELLED) {
-        stats.cancelled++;
-      } else if (aptDate >= today) {
-        stats.upcoming++;
+      } else {
+        stats.pending++;
       }
 
-      // Count today's appointments
       if (aptDate.getTime() === today.getTime()) {
         stats.today++;
       }
@@ -429,22 +347,14 @@ export default function EnhancedAppointmentsManagement() {
 
   const filterAppointments = () => {
     let filtered = allAppointments;
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
 
-    // Apply main filter
-    switch (filter) {
-      case 'upcoming':
-        filtered = filtered.filter(apt => {
-          const aptDate = parseAppointmentDate(apt.date);
-          return aptDate >= now && apt.status !== APPOINTMENT_STATUS.CANCELLED;
-        });
+    // Apply status filter
+    switch (activeFilter) {
+      case 'completed':
+        filtered = filtered.filter(apt => apt.has_prescription);
         break;
-      case 'past':
-        filtered = filtered.filter(apt => {
-          const aptDate = parseAppointmentDate(apt.date);
-          return aptDate < now;
-        });
+      case 'pending':
+        filtered = filtered.filter(apt => !apt.has_prescription);
         break;
       case 'today':
         const today = new Date();
@@ -464,21 +374,6 @@ export default function EnhancedAppointmentsManagement() {
       );
     }
 
-    // Apply region filter
-    if (selectedRegions.length > 0) {
-      filtered = filtered.filter(apt => {
-        const branchInfo = getBranchInfo(apt.branch_id);
-        return selectedRegions.includes(branchInfo.region);
-      });
-    }
-
-    // Apply status filter
-    if (selectedStatuses.length > 0) {
-      filtered = filtered.filter(apt => 
-        selectedStatuses.includes(apt.status || APPOINTMENT_STATUS.BOOKED)
-      );
-    }
-
     // Apply date range filter
     if (selectedDateRange !== 'all') {
       filtered = filtered.filter(apt => 
@@ -494,13 +389,11 @@ export default function EnhancedAppointmentsManagement() {
         const serviceName = (apt.service_name || '').toLowerCase();
         const appointmentId = apt.$id.toLowerCase();
         const branchName = getBranchInfo(apt.branch_id).name.toLowerCase();
-        const status = (apt.status || '').toLowerCase();
         
         return patientName.includes(query) || 
                serviceName.includes(query) || 
                appointmentId.includes(query) ||
-               branchName.includes(query) ||
-               status.includes(query);
+               branchName.includes(query);
       });
     }
 
@@ -513,73 +406,88 @@ export default function EnhancedAppointmentsManagement() {
   };
 
   const getBranchInfo = (branchId) => {
-    return branchNames[branchId] || { name: 'Unknown Branch', region: 'Unknown Region', regionId: null };
+    return branchNames[branchId] || { name: 'Unknown Branch', region: 'Unknown Region' };
   };
 
-  const getStatusInfo = (status) => {
-    switch (status) {
-      case APPOINTMENT_STATUS.CONFIRMED:
-        return { color: '#0AD476', bgColor: '#F0FDF4', text: 'Confirmed', icon: 'checkmark-circle' };
-      case APPOINTMENT_STATUS.COMPLETED:
-        return { color: '#3B82F6', bgColor: '#EFF6FF', text: 'Completed', icon: 'checkmark-done-circle' };
-      case APPOINTMENT_STATUS.CANCELLED:
-        return { color: '#EF4444', bgColor: '#FEF2F2', text: 'Cancelled', icon: 'close-circle' };
-      case APPOINTMENT_STATUS.RESCHEDULED:
-        return { color: '#F59E0B', bgColor: '#FFFBEB', text: 'Rescheduled', icon: 'refresh-circle' };
-      case APPOINTMENT_STATUS.NO_SHOW:
-        return { color: '#8B5CF6', bgColor: '#F5F3FF', text: 'No Show', icon: 'alert-circle' };
-      default:
-        return { color: '#6B7280', bgColor: '#F9FAFB', text: 'Booked', icon: 'calendar' };
+  const getStatusInfo = (hasPrescription) => {
+    if (hasPrescription) {
+      return {
+        color: '#0AD476',
+        bgColor: '#F0FDF4',
+        text: 'Completed',
+        icon: 'checkmark-circle'
+      };
+    } else {
+      return {
+        color: '#FF9500',
+        bgColor: '#FFF8E1',
+        text: 'Pending',
+        icon: 'time'
+      };
     }
+  };
+
+  const handleAddPrescription = (appointmentId) => {
+    router.push({
+      pathname: '/doctor/prescriptions/create',
+      params: { appointmentId }
+    });
+  };
+
+  const handleViewPrescription = (appointmentId) => {
+    router.push({
+      pathname: '/doctor/prescriptions/view',
+      params: { appointmentId }
+    });
   };
 
   const renderQuickStats = () => (
     <View style={styles.statsContainer}>
       <TouchableOpacity 
-        style={[styles.statCard, filter === 'all' && styles.activeStatCard]}
-        onPress={() => setFilter('all')}
+        style={[styles.statCard, activeFilter === 'all' && styles.activeStatCard]}
+        onPress={() => setActiveFilter('all')}
       >
-        <Text style={[styles.statNumber, filter === 'all' && styles.activeStatText]}>
+        <Text style={[styles.statNumber, activeFilter === 'all' && styles.activeStatText]}>
           {statsData.total}
         </Text>
-        <Text style={[styles.statLabel, filter === 'all' && styles.activeStatText]}>
+        <Text style={[styles.statLabel, activeFilter === 'all' && styles.activeStatText]}>
           Total
         </Text>
       </TouchableOpacity>
       
       <TouchableOpacity 
-        style={[styles.statCard, filter === 'upcoming' && styles.activeStatCard]}
-        onPress={() => setFilter('upcoming')}
+        style={[styles.statCard, activeFilter === 'completed' && styles.activeStatCard]}
+        onPress={() => setActiveFilter('completed')}
       >
-        <Text style={[styles.statNumber, { color: '#0AD476' }, filter === 'upcoming' && styles.activeStatText]}>
-          {statsData.upcoming}
-        </Text>
-        <Text style={[styles.statLabel, filter === 'upcoming' && styles.activeStatText]}>
-          Upcoming
-        </Text>
-      </TouchableOpacity>
-      
-      <TouchableOpacity 
-        style={[styles.statCard, filter === 'today' && styles.activeStatCard]}
-        onPress={() => setFilter('today')}
-      >
-        <Text style={[styles.statNumber, { color: '#3B82F6' }, filter === 'today' && styles.activeStatText]}>
-          {statsData.today}
-        </Text>
-        <Text style={[styles.statLabel, filter === 'today' && styles.activeStatText]}>
-          Today
-        </Text>
-      </TouchableOpacity>
-      
-      <TouchableOpacity 
-        style={[styles.statCard, filter === 'past' && styles.activeStatCard]}
-        onPress={() => setFilter('past')}
-      >
-        <Text style={[styles.statNumber, { color: '#6B7280' }, filter === 'past' && styles.activeStatText]}>
+        <Text style={[styles.statNumber, { color: '#0AD476' }, activeFilter === 'completed' && styles.activeStatText]}>
           {statsData.completed}
         </Text>
-        <Text style={[styles.statLabel, filter === 'past' && styles.activeStatText]}>
-          Past
+        <Text style={[styles.statLabel, activeFilter === 'completed' && styles.activeStatText]}>
+          Completed
+        </Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity 
+        style={[styles.statCard, activeFilter === 'pending' && styles.activeStatCard]}
+        onPress={() => setActiveFilter('pending')}
+      >
+        <Text style={[styles.statNumber, { color: '#FF9500' }, activeFilter === 'pending' && styles.activeStatText]}>
+          {statsData.pending}
+        </Text>
+        <Text style={[styles.statLabel, activeFilter === 'pending' && styles.activeStatText]}>
+          Pending
+        </Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity 
+        style={[styles.statCard, activeFilter === 'today' && styles.activeStatCard]}
+        onPress={() => setActiveFilter('today')}
+      >
+        <Text style={[styles.statNumber, { color: '#007AFF' }, activeFilter === 'today' && styles.activeStatText]}>
+          {statsData.today}
+        </Text>
+        <Text style={[styles.statLabel, activeFilter === 'today' && styles.activeStatText]}>
+          Today
         </Text>
       </TouchableOpacity>
     </View>
@@ -605,13 +513,13 @@ export default function EnhancedAppointmentsManagement() {
             {/* Service Filter */}
             <View style={styles.filterSection}>
               <Text style={styles.filterSectionTitle}>Services</Text>
-              <View style={styles.filterChips}>
+              <View style={styles.serviceChips}>
                 {availableServices.map((service) => (
                   <TouchableOpacity
                     key={service}
                     style={[
-                      styles.filterChip,
-                      selectedServices.includes(service) && styles.selectedFilterChip
+                      styles.serviceChip,
+                      selectedServices.includes(service) && styles.selectedServiceChip
                     ]}
                     onPress={() => {
                       if (selectedServices.includes(service)) {
@@ -622,70 +530,10 @@ export default function EnhancedAppointmentsManagement() {
                     }}
                   >
                     <Text style={[
-                      styles.filterChipText,
-                      selectedServices.includes(service) && styles.selectedFilterChipText
+                      styles.serviceChipText,
+                      selectedServices.includes(service) && styles.selectedServiceChipText
                     ]}>
                       {service}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {/* Region Filter */}
-            <View style={styles.filterSection}>
-              <Text style={styles.filterSectionTitle}>Regions</Text>
-              <View style={styles.filterChips}>
-                {availableRegions.map((region) => (
-                  <TouchableOpacity
-                    key={region}
-                    style={[
-                      styles.filterChip,
-                      selectedRegions.includes(region) && styles.selectedFilterChip
-                    ]}
-                    onPress={() => {
-                      if (selectedRegions.includes(region)) {
-                        setSelectedRegions(selectedRegions.filter(r => r !== region));
-                      } else {
-                        setSelectedRegions([...selectedRegions, region]);
-                      }
-                    }}
-                  >
-                    <Text style={[
-                      styles.filterChipText,
-                      selectedRegions.includes(region) && styles.selectedFilterChipText
-                    ]}>
-                      {region}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {/* Status Filter */}
-            <View style={styles.filterSection}>
-              <Text style={styles.filterSectionTitle}>Status</Text>
-              <View style={styles.filterChips}>
-                {Object.values(APPOINTMENT_STATUS).map((status) => (
-                  <TouchableOpacity
-                    key={status}
-                    style={[
-                      styles.filterChip,
-                      selectedStatuses.includes(status) && styles.selectedFilterChip
-                    ]}
-                    onPress={() => {
-                      if (selectedStatuses.includes(status)) {
-                        setSelectedStatuses(selectedStatuses.filter(s => s !== status));
-                      } else {
-                        setSelectedStatuses([...selectedStatuses, status]);
-                      }
-                    }}
-                  >
-                    <Text style={[
-                      styles.filterChipText,
-                      selectedStatuses.includes(status) && styles.selectedFilterChipText
-                    ]}>
-                      {status}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -745,8 +593,6 @@ export default function EnhancedAppointmentsManagement() {
               style={styles.clearFiltersButton}
               onPress={() => {
                 setSelectedServices([]);
-                setSelectedRegions([]);
-                setSelectedStatuses([]);
                 setSelectedDateRange('all');
                 setCustomDateFrom('');
                 setCustomDateTo('');
@@ -767,18 +613,19 @@ export default function EnhancedAppointmentsManagement() {
     </Modal>
   );
 
-  const renderOptimizedAppointmentCard = ({ item: appointment }) => {
-    const statusInfo = getStatusInfo(appointment.status);
+  // OPTIMIZED PRESCRIPTION CARD - More compact and readable
+  const renderOptimizedPrescriptionCard = ({ item: appointment }) => {
+    const statusInfo = getStatusInfo(appointment.has_prescription);
     const branchInfo = getBranchInfo(appointment.branch_id);
     const appointmentDate = parseAppointmentDate(appointment.date);
 
     return (
       <TouchableOpacity 
         style={styles.optimizedCard}
-        onPress={() => router.push({
-          pathname: '/doctor/appointments/detail',
-          params: { appointmentId: appointment.$id }
-        })}
+        onPress={() => appointment.has_prescription ? 
+          handleViewPrescription(appointment.$id) : 
+          handleAddPrescription(appointment.$id)
+        }
       >
         {/* Top Row - Patient Info & Status */}
         <View style={styles.cardTopRow}>
@@ -826,18 +673,39 @@ export default function EnhancedAppointmentsManagement() {
           </View>
         </View>
 
-        {/* Bottom Row - Region & ID */}
+        {/* Bottom Row - Action & ID */}
         <View style={styles.cardBottomRow}>
-          <View style={styles.regionContainer}>
-            <View style={styles.regionBadge}>
-              <Ionicons name="business-outline" size={10} color="#0AD476" />
-              <Text style={styles.regionText}>{branchInfo.region}</Text>
-            </View>
-          </View>
-          
           <Text style={styles.appointmentId}>
             ID: {appointment.$id.substring(0, 8)}
           </Text>
+          
+          {appointment.has_prescription ? (
+            <View style={styles.prescriptionActions}>
+              <TouchableOpacity 
+                style={styles.compactViewButton}
+                onPress={() => handleViewPrescription(appointment.$id)}
+              >
+                <Ionicons name="eye-outline" size={12} color="#0AD476" />
+                <Text style={styles.compactButtonText}>View</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.compactEditButton}
+                onPress={() => handleAddPrescription(appointment.$id)}
+              >
+                <Ionicons name="create-outline" size={12} color="#007AFF" />
+                <Text style={styles.compactButtonText}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity 
+              style={styles.compactAddButton}
+              onPress={() => handleAddPrescription(appointment.$id)}
+            >
+              <Ionicons name="add" size={12} color="white" />
+              <Text style={styles.compactAddButtonText}>Add Rx</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </TouchableOpacity>
     );
@@ -846,39 +714,49 @@ export default function EnhancedAppointmentsManagement() {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#1a8e2d" />
-        <Text style={styles.loadingText}>Loading appointments...</Text>
+        <ActivityIndicator size="large" color="#0AD476" />
+        <Text style={styles.loadingText}>Loading prescriptions...</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#0AD476" />
+      
+      {/* Enhanced Header */}
       <LinearGradient 
-        colors={["#1a8e2d", "#146922"]}
+        colors={["#0AD476", "#08B96B"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={styles.headerGradient}
-      />
-      <View style={styles.header}>
-        <PageHeader onPress={() => router.back()} />
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Appointments Management</Text>
-          <Text style={styles.headerSubtitle}>Manage patient appointments & schedules</Text>
+        style={styles.header}
+      >
+        <View style={styles.headerContent}>
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={24} color="white" />
+          </TouchableOpacity>
+          
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitle}>Prescription Management</Text>
+            <Text style={styles.headerSubtitle}>Digital prescriptions & patient care</Text>
+          </View>
+          
+          <TouchableOpacity 
+            style={styles.refreshButton} 
+            onPress={onRefresh}
+            disabled={refreshing}
+          >
+            <Ionicons 
+              name={refreshing ? "sync" : "refresh"} 
+              size={24} 
+              color="white" 
+            />
+          </TouchableOpacity>
         </View>
-        
-        <TouchableOpacity 
-          style={styles.refreshButton} 
-          onPress={onRefresh}
-          disabled={refreshing}
-        >
-          <Ionicons 
-            name={refreshing ? "sync" : "refresh"} 
-            size={24} 
-            color="white" 
-          />
-        </TouchableOpacity>
-      </View>
+      </LinearGradient>
 
       {/* Quick Stats */}
       {renderQuickStats()}
@@ -889,7 +767,7 @@ export default function EnhancedAppointmentsManagement() {
           <Ionicons name="search-outline" size={20} color="#666" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search patients, services, or ID..."
+            placeholder="Search patients, services, or branch..."
             value={searchQuery}
             onChangeText={setSearchQuery}
             placeholderTextColor="#999"
@@ -905,15 +783,15 @@ export default function EnhancedAppointmentsManagement() {
           style={styles.filterButton}
           onPress={() => setShowFilterModal(true)}
         >
-          <Ionicons name="filter-outline" size={20} color="#1a8e2d" />
-          {(selectedServices.length > 0 || selectedRegions.length > 0 || selectedStatuses.length > 0 || selectedDateRange !== 'all') && (
+          <Ionicons name="filter-outline" size={20} color="#0AD476" />
+          {(selectedServices.length > 0 || selectedDateRange !== 'all') && (
             <View style={styles.filterIndicator} />
           )}
         </TouchableOpacity>
       </View>
 
       {/* Active Filters Display */}
-      {(selectedServices.length > 0 || selectedRegions.length > 0 || selectedStatuses.length > 0 || selectedDateRange !== 'all') && (
+      {(selectedServices.length > 0 || selectedDateRange !== 'all') && (
         <View style={styles.activeFiltersContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {selectedServices.map((service) => (
@@ -922,27 +800,7 @@ export default function EnhancedAppointmentsManagement() {
                 <TouchableOpacity
                   onPress={() => setSelectedServices(selectedServices.filter(s => s !== service))}
                 >
-                  <Ionicons name="close" size={14} color="#1a8e2d" />
-                </TouchableOpacity>
-              </View>
-            ))}
-            {selectedRegions.map((region) => (
-              <View key={region} style={styles.activeFilterChip}>
-                <Text style={styles.activeFilterText}>{region}</Text>
-                <TouchableOpacity
-                  onPress={() => setSelectedRegions(selectedRegions.filter(r => r !== region))}
-                >
-                  <Ionicons name="close" size={14} color="#1a8e2d" />
-                </TouchableOpacity>
-              </View>
-            ))}
-            {selectedStatuses.map((status) => (
-              <View key={status} style={styles.activeFilterChip}>
-                <Text style={styles.activeFilterText}>{status}</Text>
-                <TouchableOpacity
-                  onPress={() => setSelectedStatuses(selectedStatuses.filter(s => s !== status))}
-                >
-                  <Ionicons name="close" size={14} color="#1a8e2d" />
+                  <Ionicons name="close" size={14} color="#0AD476" />
                 </TouchableOpacity>
               </View>
             ))}
@@ -954,7 +812,7 @@ export default function EnhancedAppointmentsManagement() {
                    selectedDateRange === 'week' ? 'Last 7 Days' : 'Last 30 Days'}
                 </Text>
                 <TouchableOpacity onPress={() => setSelectedDateRange('all')}>
-                  <Ionicons name="close" size={14} color="#1a8e2d" />
+                  <Ionicons name="close" size={14} color="#0AD476" />
                 </TouchableOpacity>
               </View>
             )}
@@ -962,10 +820,10 @@ export default function EnhancedAppointmentsManagement() {
         </View>
       )}
 
-      {/* Optimized Appointments List */}
+      {/* Optimized Prescription List */}
       <FlatList
         data={filteredAppointments}
-        renderItem={renderOptimizedAppointmentCard}
+        renderItem={renderOptimizedPrescriptionCard}
         keyExtractor={(item) => item.$id}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
@@ -973,28 +831,28 @@ export default function EnhancedAppointmentsManagement() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={['#1a8e2d']}
-            tintColor="#1a8e2d"
+            colors={['#0AD476']}
+            tintColor="#0AD476"
           />
         }
         ListEmptyComponent={() => (
           <View style={styles.emptyStateContainer}>
             <View style={styles.emptyStateIcon}>
               <Ionicons 
-                name={searchQuery || selectedServices.length > 0 || selectedRegions.length > 0 || selectedStatuses.length > 0 || selectedDateRange !== 'all' ? 
-                      "search-outline" : "calendar-outline"} 
+                name={searchQuery || selectedServices.length > 0 || selectedDateRange !== 'all' ? 
+                      "search-outline" : "medical-outline"} 
                 size={64} 
                 color="#E0E0E0" 
               />
             </View>
             <Text style={styles.emptyStateText}>
-              {searchQuery || selectedServices.length > 0 || selectedRegions.length > 0 || selectedStatuses.length > 0 || selectedDateRange !== 'all' ? 
-               'No matching appointments found' : 'No appointments found'}
+              {searchQuery || selectedServices.length > 0 || selectedDateRange !== 'all' ? 
+               'No matching prescriptions found' : 'No prescriptions found'}
             </Text>
             <Text style={styles.emptyStateSubtext}>
-              {searchQuery || selectedServices.length > 0 || selectedRegions.length > 0 || selectedStatuses.length > 0 || selectedDateRange !== 'all' 
+              {searchQuery || selectedServices.length > 0 || selectedDateRange !== 'all' 
                 ? 'Try adjusting your search terms or filters' 
-                : 'Appointments will appear here when patients book them'
+                : 'Prescriptions will appear here once you add them to appointments'
               }
             </Text>
           </View>
@@ -1025,18 +883,23 @@ const styles = StyleSheet.create({
   },
   
   // Header
-  headerGradient: {
-    height: 100,
-    width: '100%',
-    position: 'absolute',
-    top: 0,
-  },
   header: {
+    paddingTop: 50,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+  },
+  headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 50,
-    marginBottom: 20,
+    justifyContent: 'space-between',
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitleContainer: {
     flex: 1,
@@ -1082,7 +945,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   activeStatCard: {
-    backgroundColor: '#1a8e2d',
+    backgroundColor: '#0AD476',
     marginHorizontal: 4,
   },
   statNumber: {
@@ -1170,7 +1033,7 @@ const styles = StyleSheet.create({
   },
   activeFilterText: {
     fontSize: 12,
-    color: '#1a8e2d',
+    color: '#0AD476',
     fontWeight: '500',
   },
   
@@ -1180,7 +1043,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   
-  // OPTIMIZED APPOINTMENT CARD
+  // OPTIMIZED PRESCRIPTION CARD - More compact and space-efficient
   optimizedCard: {
     backgroundColor: 'white',
     borderRadius: 12,
@@ -1283,27 +1146,52 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  regionContainer: {
-    flex: 1,
+  appointmentId: {
+    fontSize: 10,
+    color: '#999',
   },
-  regionBadge: {
+  
+  // Compact Action Buttons
+  prescriptionActions: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  compactViewButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F0FDF4',
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 3,
   },
-  regionText: {
-    fontSize: 10,
-    color: '#1a8e2d',
-    fontWeight: '500',
-    marginLeft: 3,
+  compactEditButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F7FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 3,
   },
-  appointmentId: {
+  compactButtonText: {
     fontSize: 10,
-    color: '#999',
+    fontWeight: '600',
+    color: '#0AD476',
+  },
+  compactAddButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0AD476',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    gap: 3,
+  },
+  compactAddButtonText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: 'white',
   },
 
   // Filter Modal
@@ -1344,13 +1232,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   
-  // Filter Chips
-  filterChips: {
+  // Service Chips
+  serviceChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  filterChip: {
+  serviceChip: {
     backgroundColor: '#F5F5F5',
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -1358,17 +1246,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E0E0E0',
   },
-  selectedFilterChip: {
+  selectedServiceChip: {
     backgroundColor: '#F0FDF4',
-    borderColor: '#1a8e2d',
+    borderColor: '#0AD476',
   },
-  filterChipText: {
+  serviceChipText: {
     fontSize: 12,
     color: '#666',
     fontWeight: '500',
   },
-  selectedFilterChipText: {
-    color: '#1a8e2d',
+  selectedServiceChipText: {
+    color: '#0AD476',
   },
   
   // Date Range Options
@@ -1385,7 +1273,7 @@ const styles = StyleSheet.create({
   },
   selectedDateRangeOption: {
     backgroundColor: '#F0FDF4',
-    borderColor: '#1a8e2d',
+    borderColor: '#0AD476',
   },
   dateRangeOptionText: {
     fontSize: 14,
@@ -1393,7 +1281,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   selectedDateRangeOptionText: {
-    color: '#1a8e2d',
+    color: '#0AD476',
   },
   
   // Custom Date Inputs
@@ -1432,7 +1320,7 @@ const styles = StyleSheet.create({
   },
   applyFiltersButton: {
     flex: 1,
-    backgroundColor: '#1a8e2d',
+    backgroundColor: '#0AD476',
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: 'center',

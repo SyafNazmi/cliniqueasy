@@ -236,44 +236,44 @@ export default function PatientsManagement() {
     );
   };
 
-  const renderPatientCard = (patient) => {
+  const renderPatientCard = (patient, index) => {
     const patientId = patient.userId || patient.$id;
     const appointmentData = patientAppointments[patientId] || { total: 0, upcoming: 0, lastVisit: null };
 
     return (
-      <TouchableOpacity
-        key={patientId}
+        <TouchableOpacity
+        key={`patient-card-${patientId}-${index}`} // Unique key with index
         style={styles.patientCard}
         onPress={() => navigateToPatientDetail(patient)}
-      >
+        >
         <View style={styles.patientInfo}>
-          <View style={styles.patientAvatar}>
+            <View style={styles.patientAvatar}>
             <Text style={styles.patientAvatarText}>
-              {getPatientInitials(patient)}
+                {getPatientInitials(patient)}
             </Text>
-          </View>
-          <View style={styles.patientDetails}>
+            </View>
+            <View style={styles.patientDetails}>
             <Text style={styles.patientName}>
-              {getPatientDisplayName(patient)}
+                {getPatientDisplayName(patient)}
             </Text>
             <Text style={styles.patientMeta}>
-              ID: {patientId.substring(0, 12)}
-              {appointmentData.lastVisit && ` • Last visit: ${appointmentData.lastVisit}`}
+                ID: {patientId.substring(0, 12)}
+                {appointmentData.lastVisit && ` • Last visit: ${appointmentData.lastVisit}`}
             </Text>
             <View style={styles.appointmentStats}>
-              <View style={styles.statItem}>
+                <View style={styles.statItem}>
                 <Text style={styles.statNumber}>{appointmentData.total}</Text>
                 <Text style={styles.statLabel}>Total Visits</Text>
-              </View>
-              <View style={styles.statItem}>
+                </View>
+                <View style={styles.statItem}>
                 <Text style={styles.statNumber}>{appointmentData.upcoming}</Text>
                 <Text style={styles.statLabel}>Upcoming</Text>
-              </View>
+                </View>
             </View>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color="#ccc" />
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#ccc" />
         </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
     );
   };
 
@@ -321,38 +321,38 @@ export default function PatientsManagement() {
         </View>
 
         {/* Patients List */}
-        <ScrollView style={styles.patientsList} showsVerticalScrollIndicator={false}>
-          {loading ? (
+       <ScrollView style={styles.patientsList} showsVerticalScrollIndicator={false}>
+        {loading ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#1a8e2d" />
-              <Text style={styles.loadingText}>Loading patients...</Text>
+            <ActivityIndicator size="large" color="#1a8e2d" />
+            <Text style={styles.loadingText}>Loading patients...</Text>
             </View>
-          ) : filteredPatients.length === 0 ? (
+        ) : filteredPatients.length === 0 ? (
             <View style={styles.emptyState}>
-              <Ionicons name="people-outline" size={50} color="#ccc" />
-              <Text style={styles.emptyStateText}>
+            <Ionicons name="people-outline" size={50} color="#ccc" />
+            <Text style={styles.emptyStateText}>
                 {searchQuery || selectedLetter ? 'No patients found' : 'No patients registered'}
-              </Text>
-              {(searchQuery || selectedLetter) && (
+            </Text>
+            {(searchQuery || selectedLetter) && (
                 <TouchableOpacity 
-                  style={styles.clearFiltersButton}
-                  onPress={() => {
+                style={styles.clearFiltersButton}
+                onPress={() => {
                     setSearchQuery('');
                     setSelectedLetter('');
-                  }}
+                }}
                 >
-                  <Text style={styles.clearFiltersText}>Clear filters</Text>
+                <Text style={styles.clearFiltersText}>Clear filters</Text>
                 </TouchableOpacity>
-              )}
+            )}
             </View>
-          ) : (
+        ) : (
             Object.entries(groupPatientsByLetter()).map(([letter, letterPatients]) => (
-              <View key={letter} style={styles.patientSection}>
+            <View key={`section-${letter}`} style={styles.patientSection}>
                 <Text style={styles.sectionLetter}>{letter}</Text>
-                {letterPatients.map(patient => renderPatientCard(patient))}
-              </View>
+                {letterPatients.map((patient, index) => renderPatientCard(patient, index))}
+            </View>
             ))
-          )}
+        )}
         </ScrollView>
       </View>
     </View>
