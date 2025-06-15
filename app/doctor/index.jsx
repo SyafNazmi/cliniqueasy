@@ -1,4 +1,4 @@
-// app/doctor/index.jsx - Clean main dashboard with centralized constants
+// app/doctor/index.jsx - Complete optimized dashboard with compact appointment tab
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, Image } from 'react-native';
 import { router } from 'expo-router';
@@ -28,9 +28,14 @@ function DoctorDashboardContent() {
   const [loadingAppointments, setLoadingAppointments] = useState(true);
   const [loadingPatients, setLoadingPatients] = useState(true);
   const [patientNames, setPatientNames] = useState({});
+  const [branchNames, setBranchNames] = useState({}); // Added for branch names
+  const [serviceNames, setServiceNames] = useState({}); // Added for service names
   const [currentDate, setCurrentDate] = useState(new Date());
   const [calendarDays, setCalendarDays] = useState([]);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showAppointmentModal, setShowAppointmentModal] = useState(false);
+  const [selectedDayAppointments, setSelectedDayAppointments] = useState([]);
+  const [selectedDay, setSelectedDay] = useState(null);
 
   const { logout } = useAuth();
   
@@ -53,6 +58,7 @@ function DoctorDashboardContent() {
     }
   };
 
+  // Enhanced loadAppointments with branch and patient name fetching
   const loadAppointments = async (doctorId) => {
     try {
       setLoadingAppointments(true);
@@ -62,32 +68,13 @@ function DoctorDashboardContent() {
       // Sort appointments by date
       allAppointments.sort((a, b) => {
         try {
-          let dateA, dateB;
-          
-          if (a.date && a.date.includes(',')) {
-            const [, datePart] = a.date.split(', ');
-            const [day, month, year] = datePart.split(' ');
-            const monthIndex = getMonthIndex(month);
-            dateA = new Date(year, monthIndex, parseInt(day));
-          } else {
-            dateA = new Date(a.$createdAt);
-          }
-          
-          if (b.date && b.date.includes(',')) {
-            const [, datePart] = b.date.split(', ');
-            const [day, month, year] = datePart.split(' ');
-            const monthIndex = getMonthIndex(month);
-            dateB = new Date(year, monthIndex, parseInt(day));
-          } else {
-            dateB = new Date(b.$createdAt);
-          }
+          const dateA = parseAppointmentDate(a.date);
+          const dateB = parseAppointmentDate(b.date);
           
           if (dateA.getTime() === dateB.getTime()) {
-            if (a.time_slot && b.time_slot) {
-              const timeA = convert12HourTo24Hour(a.time_slot);
-              const timeB = convert12HourTo24Hour(b.time_slot);
-              return timeA.localeCompare(timeB);
-            }
+            return convert12HourTo24Hour(a.time_slot || '').localeCompare(
+              convert12HourTo24Hour(b.time_slot || '')
+            );
           }
           
           return dateB - dateA;
@@ -97,13 +84,132 @@ function DoctorDashboardContent() {
       });
       
       setAllAppointments(allAppointments);
-      setUpcomingAppointments(allAppointments.slice(0, 5));
-      await fetchPatientNames(allAppointments);
+      
+      // Fetch patient names and branch names
+      await Promise.all([
+        fetchPatientNames(allAppointments),
+        fetchBranchNames(allAppointments)
+      ]);
+      
+      // Filter upcoming appointments
+      const today = new Date();
+      const upcoming = allAppointments.filter(apt => {
+        const aptDate = parseAppointmentDate(apt.date);
+        return aptDate >= today && apt.status !== 'Cancelled' && apt.status !== 'Completed';
+      });
+      
+      setUpcomingAppointments(upcoming.slice(0, 5));
       
     } catch (error) {
       console.error('Error loading appointments:', error);
     } finally {
       setLoadingAppointments(false);
+    }
+  };
+
+  // Enhanced patient name fetching function
+  const fetchPatientNames = async (appointments) => {
+    try {
+      const nameMap = {};
+      
+      for (const appointment of appointments) {
+        let patientName = 'Unknown Patient';
+        
+        try {
+          // Check if this is a family booking with patient_name
+          if (appointment.is_family_booking && appointment.patient_name) {
+            patientName = appointment.patient_name;
+          } 
+          // If family booking but no patient_name, try to fetch by patient_id
+          else if (appointment.is_family_booking && appointment.patient_id) {
+            try {
+              const patientResponse = await DatabaseService.listDocuments(
+                COLLECTIONS.PATIENT_PROFILES,
+                [Query.equal('$id', appointment.patient_id)]
+              );
+              
+              if (patientResponse.documents && patientResponse.documents.length > 0) {
+                const patient = patientResponse.documents[0];
+                patientName = patient.fullName || patient.name || patient.displayName || appointment.patient_name || 'Family Member';
+              } else {
+                patientName = appointment.patient_name || 'Family Member';
+              }
+            } catch (error) {
+              patientName = appointment.patient_name || 'Family Member';
+            }
+          }
+          // Regular booking - fetch by user_id
+          else if (appointment.user_id) {
+            try {
+              const usersResponse = await DatabaseService.listDocuments(
+                COLLECTIONS.PATIENT_PROFILES,
+                [Query.equal('userId', appointment.user_id)]
+              );
+              
+              if (usersResponse.documents && usersResponse.documents.length > 0) {
+                const user = usersResponse.documents[0];
+                patientName = user.fullName || user.name || user.displayName || 
+                  (appointment.user_id.includes('@') ? appointment.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+                   `Patient ${appointment.user_id.substring(0, 8)}`);
+              } else {
+                patientName = appointment.user_id.includes('@') ? 
+                  appointment.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+                  `Patient ${appointment.user_id.substring(0, 8)}`;
+              }
+            } catch (error) {
+              patientName = `Patient ${appointment.user_id.substring(0, 8)}`;
+            }
+          }
+          
+          const appointmentKey = `${appointment.$id}`;
+          nameMap[appointmentKey] = patientName;
+          
+        } catch (error) {
+          console.error(`Error fetching patient name for appointment ${appointment.$id}:`, error);
+          const appointmentKey = `${appointment.$id}`;
+          nameMap[appointmentKey] = appointment.patient_name || 'Unknown Patient';
+        }
+      }
+      
+      setPatientNames(nameMap);
+    } catch (error) {
+      console.error('Error fetching patient names:', error);
+    }
+  };
+
+  // Branch names fetching function
+  const fetchBranchNames = async (appointments) => {
+    try {
+      const branchIds = [...new Set(appointments.map(apt => apt.branch_id).filter(Boolean))];
+      const branchMap = {};
+      
+      for (const branchId of branchIds) {
+        try {
+          const branchResponse = await DatabaseService.listDocuments(
+            COLLECTIONS.BRANCHES,
+            [Query.equal('branch_id', branchId)]
+          );
+          
+          if (branchResponse.documents && branchResponse.documents.length > 0) {
+            const branch = branchResponse.documents[0];
+            branchMap[branchId] = {
+              name: branch.name || 'Unknown Branch',
+              region: branch.region_id || 'Unknown Region',
+              regionId: branch.region_id
+            };
+          }
+        } catch (error) {
+          branchMap[branchId] = {
+            name: 'Unknown Branch',
+            region: 'Unknown Region',
+            regionId: null
+          };
+        }
+      }
+      
+      setBranchNames(branchMap);
+    } catch (error) {
+      console.error('Error fetching branch names:', error);
     }
   };
 
@@ -217,58 +323,44 @@ function DoctorDashboardContent() {
     }
   };
 
-  const fetchPatientNames = async (appointments) => {
-    try {
-      const userIds = [...new Set(appointments.map(apt => apt.user_id))];
-      const nameMap = {};
-      
-      for (const userId of userIds) {
-        try {
-          const usersResponse = await DatabaseService.listDocuments(
-            COLLECTIONS.PATIENT_PROFILES,
-            [Query.equal('userId', userId)]
-          );
-          
-          if (usersResponse.documents && usersResponse.documents.length > 0) {
-            const user = usersResponse.documents[0];
-            if (user.fullName) {
-              nameMap[userId] = user.fullName;
-              continue;
-            }
-            
-            const nameFields = ['name', 'displayName', 'full_name'];
-            for (const field of nameFields) {
-              if (user[field]) {
-                nameMap[userId] = user[field];
-                break;
-              }
-            }
-          }
-          
-          if (!nameMap[userId]) {
-            if (userId.includes('@')) {
-              const name = userId.split('@')[0].replace(/[._-]/g, ' ');
-              const formattedName = name.charAt(0).toUpperCase() + name.slice(1);
-              nameMap[userId] = formattedName;
-            } else {
-              nameMap[userId] = `Patient ${userId.substring(0, 8)}`;
-            }
-          }
-        } catch (error) {
-          nameMap[userId] = `Patient ${userId.substring(0, 8)}`;
-        }
-      }
-      
-      setPatientNames(nameMap);
-    } catch (error) {
-      console.error("Error in fetchPatientNames:", error);
-      setPatientNames({});
+  // Helper function to get patient name (updated for appointment-specific keys)
+  const getPatientName = (appointment) => {
+    if (!appointment) return "Unknown Patient";
+    
+    // Check if this is a family booking with patient_name
+    if (appointment.is_family_booking && appointment.patient_name) {
+      return appointment.patient_name;
     }
+    
+    // Use the patientNames state with appointment-specific key
+    const appointmentKey = `${appointment.$id}`;
+    return patientNames[appointmentKey] || appointment.patient_name || "Unknown Patient";
   };
 
-  const getPatientName = (userId) => {
-    if (!userId) return "Unknown Patient";
-    return patientNames[userId] || "Patient";
+  // Helper function to get branch name
+  const getBranchName = (branchId) => {
+    if (!branchId) return "Unknown Branch";
+    
+    const branchInfo = branchNames[branchId];
+    return branchInfo?.name || "Unknown Branch";
+  };
+
+  // Helper function to get status color
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'Confirmed':
+        return '#0AD476';
+      case 'Completed':
+        return '#3B82F6';
+      case 'Cancelled':
+        return '#EF4444';
+      case 'Rescheduled':
+        return '#F59E0B';
+      case 'No Show':
+        return '#8B5CF6';
+      default:
+        return '#6B7280'; // Booked
+    }
   };
 
   const handleSignOut = async () => {
@@ -317,7 +409,150 @@ function DoctorDashboardContent() {
     return name.substring(0, 2).toUpperCase();
   };
 
-  // Profile Modal Component
+  // Appointment Modal Component
+  const AppointmentModal = () => (
+    <Modal
+      visible={showAppointmentModal}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowAppointmentModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.appointmentModalContent}>
+          <View style={styles.appointmentModalHeader}>
+            <View style={styles.appointmentModalTitle}>
+              <Ionicons name="calendar" size={24} color="#4CAF50" />
+              <Text style={styles.appointmentModalTitleText}>
+                Appointments for {selectedDay}
+              </Text>
+            </View>
+            <TouchableOpacity 
+              onPress={() => setShowAppointmentModal(false)}
+              style={styles.modalCloseButton}
+            >
+              <Ionicons name="close" size={24} color="#666" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.appointmentModalBody}>
+            {selectedDayAppointments.length > 0 ? (
+              selectedDayAppointments.map((appointment, index) => (
+                <View key={appointment.$id} style={styles.modalAppointmentCard}>
+                  <View style={styles.modalAppointmentHeader}>
+                    <View style={styles.modalPatientIcon}>
+                      <Text style={styles.modalPatientIconText}>
+                        {getPatientName(appointment).substring(0, 2).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.modalAppointmentInfo}>
+                      <Text style={styles.modalPatientName}>
+                        {getPatientName(appointment)}
+                      </Text>
+                      <View style={styles.modalAppointmentDetails}>
+                        <View style={styles.modalDetailRow}>
+                          <Ionicons name="time-outline" size={16} color="#4CAF50" />
+                          <Text style={styles.modalDetailText}>
+                            {appointment.time_slot || 'No time specified'}
+                          </Text>
+                        </View>
+                        <View style={styles.modalDetailRow}>
+                          <Ionicons name="location-outline" size={16} color="#FF9800" />
+                          <Text style={styles.modalDetailText}>
+                            {getBranchName(appointment.branch_id)}
+                          </Text>
+                        </View>
+                        <View style={styles.modalDetailRow}>
+                          <Ionicons name="medical-outline" size={16} color="#2196F3" />
+                          <Text style={styles.modalDetailText}>
+                            {appointment.service_name || 'General Consultation'}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                    <View style={styles.modalStatusContainer}>
+                      <View style={[
+                        styles.modalStatusDot,
+                        { backgroundColor: getStatusColor(appointment.status) }
+                      ]} />
+                      <Text style={[
+                        styles.modalStatusText,
+                        { color: getStatusColor(appointment.status) }
+                      ]}>
+                        {appointment.status || 'Booked'}
+                      </Text>
+                    </View>
+                  </View>
+                  
+                  {appointment.notes && (
+                    <View style={styles.modalNotesSection}>
+                      <Ionicons name="document-text-outline" size={14} color="#666" />
+                      <Text style={styles.modalNotesText}>{appointment.notes}</Text>
+                    </View>
+                  )}
+
+                  <View style={styles.modalAppointmentActions}>
+                    <TouchableOpacity 
+                      style={styles.modalActionButton}
+                      onPress={() => {
+                        setShowAppointmentModal(false);
+                        router.push({
+                          pathname: '/doctor/appointments/detail',
+                          params: { appointmentId: appointment.$id }
+                        });
+                      }}
+                    >
+                      <Ionicons name="eye-outline" size={16} color="#4CAF50" />
+                      <Text style={styles.modalActionText}>View Details</Text>
+                    </TouchableOpacity>
+
+                    {!appointment.has_prescription && (
+                      <TouchableOpacity 
+                        style={[styles.modalActionButton, styles.modalPrescriptionButton]}
+                        onPress={() => {
+                          setShowAppointmentModal(false);
+                          router.push({
+                            pathname: '/doctor/prescriptions/create',
+                            params: { appointmentId: appointment.$id }
+                          });
+                        }}
+                      >
+                        <Ionicons name="medical-outline" size={16} color="white" />
+                        <Text style={[styles.modalActionText, { color: 'white' }]}>
+                          Add Prescription
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {index < selectedDayAppointments.length - 1 && (
+                    <View style={styles.modalAppointmentDivider} />
+                  )}
+                </View>
+              ))
+            ) : (
+              <View style={styles.modalEmptyState}>
+                <Ionicons name="calendar-clear-outline" size={48} color="#E0E0E0" />
+                <Text style={styles.modalEmptyText}>No appointments for this day</Text>
+              </View>
+            )}
+          </ScrollView>
+
+          <View style={styles.appointmentModalFooter}>
+            <TouchableOpacity 
+              style={styles.modalViewAllButton}
+              onPress={() => {
+                setShowAppointmentModal(false);
+                navigateToAppointments();
+              }}
+            >
+              <Text style={styles.modalViewAllText}>View All Appointments</Text>
+              <Ionicons name="arrow-forward" size={16} color="#4CAF50" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
   const ProfileModal = () => (
     <Modal
       visible={showProfileModal}
@@ -403,14 +638,12 @@ function DoctorDashboardContent() {
         ]}
         onPress={() => {
           if (hasAppointments) {
-            Alert.alert(
-              `Appointments for ${day}`,
-              dayAppointments.map(apt => 
-                `${getPatientName(apt.user_id)} at ${apt.time_slot}`
-              ).join('\n')
-            );
+            setSelectedDay(day);
+            setSelectedDayAppointments(dayAppointments);
+            setShowAppointmentModal(true);
           }
         }}
+        disabled={!hasAppointments}
       >
         {day && (
           <>
@@ -422,7 +655,11 @@ function DoctorDashboardContent() {
               {day}
             </Text>
             {hasAppointments && (
-              <View style={styles.appointmentIndicator} />
+              <View style={styles.appointmentIndicator}>
+                <Text style={styles.appointmentCount}>
+                  {dayAppointments.length}
+                </Text>
+              </View>
             )}
           </>
         )}
@@ -528,7 +765,7 @@ function DoctorDashboardContent() {
                 </View>
                 <View style={styles.appointmentInfo}>
                   <Text style={styles.patientName}>
-                    {getPatientName(appointment.user_id)}
+                    {getPatientName(appointment)}
                   </Text>
                   <Text style={styles.appointmentTime}>
                     {appointment.time_slot || 'No time'} • {appointment.date || 'Today'}
@@ -589,144 +826,180 @@ function DoctorDashboardContent() {
     </ScrollView>
   );
 
+  // OPTIMIZED APPOINTMENTS TAB WITH COMPACT LAYOUT
   const renderAppointmentsTab = () => (
-  <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
-    {/* Calendar at the top */}
-    <View style={styles.calendarContainer}>
-      <View style={styles.calendarHeader}>
-        <TouchableOpacity 
-          style={styles.calendarNav}
-          onPress={() => navigateMonth(-1)}
-        >
-          <Ionicons name="chevron-back" size={20} color="white" />
-        </TouchableOpacity>
-        <Text style={styles.calendarTitle}>
-          {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-        </Text>
-        <TouchableOpacity 
-          style={styles.calendarNav}
-          onPress={() => navigateMonth(1)}
-        >
-          <Ionicons name="chevron-forward" size={20} color="white" />
-        </TouchableOpacity>
-      </View>
-
-      {/* Day Headers */}
-      <View style={styles.calendarGrid}>
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-          <View key={day} style={styles.calendarDayHeader}>
-            <Text style={styles.calendarDayHeaderText}>{day}</Text>
-          </View>
-        ))}
-        {calendarDays.map((day, index) => renderCalendarDay(day, index))}
-      </View>
-    </View>
-    
-    <TouchableOpacity 
-      style={styles.viewFullButton}
-      onPress={navigateToAppointments}
-    >
-      <Text style={styles.viewFullButtonText}>Manage Appointments</Text>
-      <Ionicons name="open-outline" size={16} color="#4CAF50" />
-    </TouchableOpacity>
-
-    {/* Appointment Statistics */}
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Appointment Statistics</Text>
-      <View style={styles.appointmentStatsGrid}>
-        {/* Total Appointments */}
-        <View style={styles.appointmentStatCard}>
-          <View style={styles.statIconContainer}>
-            <Ionicons name="calendar-outline" size={24} color="#4CAF50" />
-          </View>
-          <Text style={styles.statNumber}>{allAppointments.length}</Text>
-          <Text style={styles.statLabel}>Total{'\n'}Appointments</Text>
-        </View>
-
-        {/* Today's Appointments */}
-        <View style={styles.appointmentStatCard}>
-          <View style={styles.statIconContainer}>
-            <Ionicons name="today-outline" size={24} color="#2196F3" />
-          </View>
-          <Text style={styles.statNumber}>
-            {allAppointments.filter(apt => {
-              const today = new Date();
-              const aptDate = parseAppointmentDate(apt.date);
-              return aptDate.toDateString() === today.toDateString();
-            }).length}
+    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+      {/* Calendar at the top */}
+      <View style={styles.calendarContainer}>
+        <View style={styles.calendarHeader}>
+          <TouchableOpacity 
+            style={styles.calendarNav}
+            onPress={() => navigateMonth(-1)}
+          >
+            <Ionicons name="chevron-back" size={20} color="white" />
+          </TouchableOpacity>
+          <Text style={styles.calendarTitle}>
+            {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
           </Text>
-          <Text style={styles.statLabel}>Today's{'\n'}Appointments</Text>
+          <TouchableOpacity 
+            style={styles.calendarNav}
+            onPress={() => navigateMonth(1)}
+          >
+            <Ionicons name="chevron-forward" size={20} color="white" />
+          </TouchableOpacity>
         </View>
 
-        {/* Tomorrow's Appointments */}
-        <View style={styles.appointmentStatCard}>
-          <View style={styles.statIconContainer}>
-            <Ionicons name="calendar-number-outline" size={24} color="#FF9800" />
-          </View>
-          <Text style={styles.statNumber}>
-            {allAppointments.filter(apt => {
-              const tomorrow = new Date();
-              tomorrow.setDate(tomorrow.getDate() + 1);
-              const aptDate = parseAppointmentDate(apt.date);
-              return aptDate.toDateString() === tomorrow.toDateString();
-            }).length}
-          </Text>
-          <Text style={styles.statLabel}>Tomorrow's{'\n'}Appointments</Text>
+        {/* Day Headers */}
+        <View style={styles.calendarGrid}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+            <View key={day} style={styles.calendarDayHeader}>
+              <Text style={styles.calendarDayHeaderText}>{day}</Text>
+            </View>
+          ))}
+          {calendarDays.map((day, index) => renderCalendarDay(day, index))}
         </View>
-      </View>
-    </View>
-
-    {/* Recent Appointments Section */}
-    <View style={styles.section}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Recent Appointments</Text>
-        <TouchableOpacity onPress={navigateToAppointments}>
-          <Text style={styles.seeAllText}>View All</Text>
-        </TouchableOpacity>
       </View>
       
-      {loadingAppointments ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4CAF50" />
-          <Text style={styles.loadingText}>Loading appointments...</Text>
-        </View>
-      ) : allAppointments.length === 0 ? (
-        <View style={styles.emptyStateContainer}>
-          <View style={styles.emptyStateIcon}>
-            <Ionicons name="calendar-clear-outline" size={40} color="#C0C0C0" />
-          </View>
-          <Text style={styles.emptyStateText}>No appointments scheduled</Text>
-          <Text style={styles.emptyStateSubtext}>Your calendar is looking clear!</Text>
-        </View>
-      ) : (
-        allAppointments.slice(0, 5).map((appointment) => (
-          <View key={appointment.$id} style={styles.appointmentOverviewCard}>
-            <View style={styles.appointmentCardHeader}>
-              <View style={styles.patientIcon}>
-                <Ionicons name="person" size={20} color="#4CAF50" />
+      <TouchableOpacity 
+        style={styles.viewFullButton}
+        onPress={navigateToAppointments}
+      >
+        <Text style={styles.viewFullButtonText}>Manage Appointments</Text>
+        <Ionicons name="open-outline" size={16} color="#4CAF50" />
+      </TouchableOpacity>
+
+      {/* Compact Appointment Statistics */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Quick Stats</Text>
+        <View style={styles.compactStatsGrid}>
+          {/* Total and Today Row */}
+          <View style={styles.statsRow}>
+            <View style={styles.compactStatCard}>
+              <View style={styles.compactStatContent}>
+                <Ionicons name="calendar-outline" size={18} color="#4CAF50" />
+                <View style={styles.compactStatText}>
+                  <Text style={styles.compactStatNumber}>{allAppointments.length}</Text>
+                  <Text style={styles.compactStatLabel}>Total</Text>
+                </View>
               </View>
-              <View style={styles.appointmentInfo}>
-                <Text style={styles.patientName}>
-                  {getPatientName(appointment.user_id)}
-                </Text>
-                <Text style={styles.appointmentTime}>
-                  {appointment.time_slot || 'No time'} • {appointment.date || 'Today'}
-                </Text>
-                <View style={styles.serviceContainer}>
-                  <Ionicons name="medical" size={12} color="#666" />
-                  <Text style={styles.serviceText}>
-                    {appointment.service_name || 'General appointment'}
+            </View>
+
+            <View style={styles.compactStatCard}>
+              <View style={styles.compactStatContent}>
+                <Ionicons name="today-outline" size={18} color="#2196F3" />
+                <View style={styles.compactStatText}>
+                  <Text style={styles.compactStatNumber}>
+                    {allAppointments.filter(apt => {
+                      const today = new Date();
+                      const aptDate = parseAppointmentDate(apt.date);
+                      return aptDate.toDateString() === today.toDateString();
+                    }).length}
                   </Text>
+                  <Text style={styles.compactStatLabel}>Today</Text>
                 </View>
               </View>
             </View>
           </View>
-        ))
-      )}
-    </View>
-  </ScrollView>
-);
 
+          {/* Upcoming and Tomorrow Row */}
+          <View style={styles.statsRow}>
+            <View style={styles.compactStatCard}>
+              <View style={styles.compactStatContent}>
+                <Ionicons name="calendar-number-outline" size={18} color="#FF9800" />
+                <View style={styles.compactStatText}>
+                  <Text style={styles.compactStatNumber}>
+                    {allAppointments.filter(apt => {
+                      const tomorrow = new Date();
+                      tomorrow.setDate(tomorrow.getDate() + 1);
+                      const aptDate = parseAppointmentDate(apt.date);
+                      return aptDate.toDateString() === tomorrow.toDateString();
+                    }).length}
+                  </Text>
+                  <Text style={styles.compactStatLabel}>Tomorrow</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.compactStatCard}>
+              <View style={styles.compactStatContent}>
+                <Ionicons name="trending-up-outline" size={18} color="#9C27B0" />
+                <View style={styles.compactStatText}>
+                  <Text style={styles.compactStatNumber}>
+                    {allAppointments.filter(apt => {
+                      const today = new Date();
+                      const aptDate = parseAppointmentDate(apt.date);
+                      return aptDate >= today && apt.status !== 'Cancelled' && apt.status !== 'Completed';
+                    }).length}
+                  </Text>
+                  <Text style={styles.compactStatLabel}>Upcoming</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        </View>
+      </View>
+
+      {/* Compact Recent Appointments Section */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Recent Appointments</Text>
+          <TouchableOpacity onPress={navigateToAppointments}>
+            <Text style={styles.seeAllText}>View All</Text>
+          </TouchableOpacity>
+        </View>
+        
+        {loadingAppointments ? (
+          <View style={styles.compactLoadingContainer}>
+            <ActivityIndicator size="large" color="#4CAF50" />
+            <Text style={styles.compactLoadingText}>Loading...</Text>
+          </View>
+        ) : allAppointments.length === 0 ? (
+          <View style={styles.compactEmptyState}>
+            <Ionicons name="calendar-clear-outline" size={32} color="#C0C0C0" />
+            <Text style={styles.compactEmptyText}>No appointments scheduled</Text>
+          </View>
+        ) : (
+          allAppointments.slice(0, 5).map((appointment) => (
+            <View key={appointment.$id} style={styles.compactAppointmentCard}>
+              <View style={styles.compactCardHeader}>
+                <View style={styles.compactPatientIcon}>
+                  <Ionicons name="person" size={16} color="#4CAF50" />
+                </View>
+                <View style={styles.compactAppointmentInfo}>
+                  <Text style={styles.compactPatientName} numberOfLines={1}>
+                    {getPatientName(appointment)}
+                  </Text>
+                  <Text style={styles.compactAppointmentTime}>
+                    {appointment.time_slot || 'No time'} • {appointment.date || 'Today'}
+                  </Text>
+                </View>
+                <View style={styles.statusIndicator}>
+                  <View style={[
+                    styles.statusDot, 
+                    { backgroundColor: getStatusColor(appointment.status) }
+                  ]} />
+                </View>
+              </View>
+              <View style={styles.compactServiceRow}>
+                <View style={styles.compactServiceInfo}>
+                  <Ionicons name="medical" size={10} color="#666" />
+                  <Text style={styles.compactServiceText} numberOfLines={1}>
+                    {appointment.service_name || 'General appointment'}
+                  </Text>
+                </View>
+                <View style={styles.compactBranchInfo}>
+                  <Ionicons name="location" size={10} color="#666" />
+                  <Text style={styles.compactBranchText} numberOfLines={1}>
+                    {getBranchName(appointment.branch_id)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ))
+        )}
+      </View>
+    </ScrollView>
+  );
 
   const renderPatientsTab = () => {
     const groupedPatients = {};
@@ -828,7 +1101,7 @@ function DoctorDashboardContent() {
           <View style={styles.prescriptionHeader}>
             <View style={styles.prescriptionPatientInfo}>
               <Text style={styles.prescriptionPatientName}>
-                {getPatientName(appointment.user_id)}
+                {getPatientName(appointment)}
               </Text>
               <Text style={styles.prescriptionDate}>
                 {appointment.date || 'Unknown date'}
@@ -913,6 +1186,7 @@ function DoctorDashboardContent() {
       </LinearGradient>
       
       <ProfileModal />
+      <AppointmentModal />
       
       <View style={styles.content}>
         {activeTab === 'today' && renderTodayTab()}
@@ -1281,120 +1555,239 @@ const styles = StyleSheet.create({
   },
 
   // Enhanced Appointment Card
-  appointmentOverviewCard: {
-  backgroundColor: 'white',
-  borderRadius: 12,
-  padding: 16,
-  marginBottom: 16,
-  borderLeftWidth: 4,
-  borderLeftColor: '#4CAF50',
-  shadowColor: '#000',
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.05,
-  shadowRadius: 8,
-  elevation: 2,
-},
+  appointmentCard: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4CAF50',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
 
-appointmentCardHeader: {
-  flexDirection: 'row',
-  alignItems: 'center',
-},
+  appointmentCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
 
-patientIcon: {
-  width: 44,
-  height: 44,
-  borderRadius: 22,
-  backgroundColor: '#E8F5E8',
-  justifyContent: 'center',
-  alignItems: 'center',
-  marginRight: 16,
-},
+  patientIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E8F5E8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
 
-appointmentInfo: {
-  flex: 1,
-},
+  appointmentInfo: {
+    flex: 1,
+  },
 
-patientName: {
-  fontSize: 16,
-  fontWeight: '600',
-  color: '#1A1A1A',
-  marginBottom: 4,
-  lineHeight: 20,
-},
+  patientName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1A1A1A',
+    marginBottom: 4,
+    lineHeight: 20,
+  },
 
-appointmentTime: {
-  fontSize: 14,
-  color: '#4CAF50',
-  fontWeight: '500',
-  marginBottom: 6,
-},
+  appointmentTime: {
+    fontSize: 14,
+    color: '#4CAF50',
+    fontWeight: '500',
+    marginBottom: 6,
+  },
 
-serviceContainer: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  backgroundColor: '#F5F5F5',
-  paddingHorizontal: 8,
-  paddingVertical: 4,
-  borderRadius: 12,
-  alignSelf: 'flex-start',
-},
+  serviceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+  },
 
-serviceText: {
-  fontSize: 12,
-  color: '#666',
-  marginLeft: 4,
-  fontWeight: '400',
-},
+  serviceText: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 4,
+    fontWeight: '400',
+  },
 
-// Remove the redundant appointmentDetailsRow - we don't need it anymore
-// The information is already clearly displayed in the header
+  appointmentStatus: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
-// Simplified Statistics Grid
-appointmentStatsGrid: {
-  flexDirection: 'row',
-  justifyContent: 'space-between',
-  marginTop: 12,
-  gap: 12,
-},
+  // COMPACT APPOINTMENT STYLES
+  compactStatsGrid: {
+    marginTop: 8,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    gap: 8,
+  },
+  compactStatCard: {
+    flex: 1,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  compactStatContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  compactStatText: {
+    flex: 1,
+  },
+  compactStatNumber: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    lineHeight: 20,
+  },
+  compactStatLabel: {
+    fontSize: 10,
+    color: '#666',
+    fontWeight: '400',
+    lineHeight: 12,
+  },
 
-appointmentStatCard: {
-  flex: 1,
-  backgroundColor: 'white',
-  borderRadius: 12,
-  padding: 20,
-  alignItems: 'center',
-  shadowColor: '#000',
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.05,
-  shadowRadius: 8,
-  elevation: 2,
-},
+  // Compact Appointment Cards
+  compactAppointmentCard: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#4CAF50',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  compactCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  compactPatientIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E8F5E8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  compactAppointmentInfo: {
+    flex: 1,
+  },
+  compactPatientName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1A1A1A',
+    marginBottom: 2,
+    lineHeight: 16,
+  },
+  compactAppointmentTime: {
+    fontSize: 11,
+    color: '#4CAF50',
+    fontWeight: '500',
+  },
+  statusIndicator: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  compactServiceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  compactServiceInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginRight: 6,
+  },
+  compactServiceText: {
+    fontSize: 10,
+    color: '#666',
+    marginLeft: 3,
+    fontWeight: '400',
+    flex: 1,
+  },
+  compactBranchInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  compactBranchText: {
+    fontSize: 10,
+    color: '#1a8e2d',
+    marginLeft: 3,
+    fontWeight: '400',
+    flex: 1,
+  },
 
-statIconContainer: {
-  width: 48,
-  height: 48,
-  borderRadius: 24,
-  backgroundColor: '#F8F9FA',
-  justifyContent: 'center',
-  alignItems: 'center',
-  marginBottom: 12,
-},
+  // Compact Empty State
+  compactEmptyState: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'white',
+    padding: 16,
+    borderRadius: 8,
+    gap: 8,
+  },
+  compactEmptyText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
 
-statNumber: {
-  fontSize: 28,
-  fontWeight: '700',
-  color: '#1A1A1A',
-  marginBottom: 4,
-},
-
-statLabel: {
-  fontSize: 12,
-  color: '#666',
-  textAlign: 'center',
-  lineHeight: 16,
-  fontWeight: '400',
-},
-
+  // Compact Loading
+  compactLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'white',
+    padding: 16,
+    borderRadius: 8,
+    gap: 8,
+  },
+  compactLoadingText: {
+    fontSize: 12,
+    color: '#666',
+  },
 
   // Enhanced Quick Actions
   quickActionsGrid: {
@@ -1500,6 +1893,182 @@ statLabel: {
     color: 'white',
     fontWeight: 'bold',
   },
+
+  // Appointment Modal Styles
+  appointmentModalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    minHeight: '50%',
+    width: '100%',
+    position: 'absolute',
+    bottom: 0,
+  },
+  appointmentModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  appointmentModalTitle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  appointmentModalTitleText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F5F5F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appointmentModalBody: {
+    flex: 1,
+    padding: 20,
+  },
+  modalAppointmentCard: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+  },
+  modalAppointmentHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  modalPatientIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#4CAF50',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  modalPatientIconText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  modalAppointmentInfo: {
+    flex: 1,
+  },
+  modalPatientName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  modalAppointmentDetails: {
+    gap: 6,
+  },
+  modalDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  modalDetailText: {
+    fontSize: 14,
+    color: '#666',
+    flex: 1,
+  },
+  modalStatusContainer: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  modalStatusDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  modalStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modalNotesSection: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#F0F0F0',
+    borderRadius: 8,
+  },
+  modalNotesText: {
+    fontSize: 12,
+    color: '#666',
+    flex: 1,
+    fontStyle: 'italic',
+  },
+  modalAppointmentActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  modalActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4CAF50',
+    backgroundColor: 'white',
+  },
+  modalPrescriptionButton: {
+    backgroundColor: '#4CAF50',
+    borderColor: '#4CAF50',
+  },
+  modalActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4CAF50',
+  },
+  modalAppointmentDivider: {
+    height: 1,
+    backgroundColor: '#E0E0E0',
+    marginVertical: 16,
+  },
+  modalEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  modalEmptyText: {
+    fontSize: 16,
+    color: '#666',
+    marginTop: 8,
+  },
+  appointmentModalFooter: {
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
+  },
+  modalViewAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 8,
+  },
+  modalViewAllText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4CAF50',
+  },
   calendarDayTextWithAppointments: {
     color: '#2e7d32',
     fontWeight: '600',
@@ -1508,10 +2077,17 @@ statLabel: {
     position: 'absolute',
     bottom: 2,
     right: 2,
-    width: 6,
-    height: 6,
+    width: 16,
+    height: 16,
     backgroundColor: '#4CAF50',
-    borderRadius: 3,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appointmentCount: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   viewFullButton: {
     flexDirection: 'row',

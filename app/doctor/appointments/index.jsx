@@ -1,4 +1,4 @@
-// app/doctor/appointments/index.jsx - ENHANCED VERSION WITH ADVANCED FILTERS
+// app/doctor/appointments/index.jsx - FIXED VERSION WITH PROPER HEADER AND PAST COUNT
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -38,7 +38,7 @@ export default function EnhancedAppointmentsManagement() {
   const [filteredAppointments, setFilteredAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState('all'); // 'all', 'upcoming', 'past', 'today'
+  const [filter, setFilter] = useState('all');
   const [patientNames, setPatientNames] = useState({});
   const [branchNames, setBranchNames] = useState({});
   const [serviceNames, setServiceNames] = useState({});
@@ -60,7 +60,10 @@ export default function EnhancedAppointmentsManagement() {
     upcoming: 0,
     completed: 0,
     cancelled: 0,
-    today: 0
+    today: 0,
+    booked: 0,
+    confirmed: 0,
+    past: 0
   });
 
   useEffect(() => {
@@ -110,8 +113,17 @@ export default function EnhancedAppointmentsManagement() {
       await fetchPatientNames(allAppointments);
       await fetchBranchNames(allAppointments);
       await fetchServiceNames(allAppointments);
+      
+      // Extract services first
       extractAvailableOptions(allAppointments);
+      
+      // Calculate stats
       calculateStats(allAppointments);
+      
+      // Update regions after branch data is loaded (small delay to ensure state is updated)
+      setTimeout(() => {
+        updateAvailableRegions();
+      }, 100);
       
     } catch (error) {
       console.error('Error loading appointments:', error);
@@ -170,30 +182,69 @@ export default function EnhancedAppointmentsManagement() {
     }
   };
 
+  // Enhanced patient name fetching with proper family booking support
   const fetchPatientNames = async (appointments) => {
     try {
-      const userIds = [...new Set(appointments.map(apt => apt.user_id))];
       const nameMap = {};
       
-      for (const userId of userIds) {
+      for (const appointment of appointments) {
+        let patientName = 'Unknown Patient';
+        
         try {
-          const usersResponse = await DatabaseService.listDocuments(
-            COLLECTIONS.PATIENT_PROFILES,
-            [Query.equal('userId', userId)]
-          );
-          
-          if (usersResponse.documents && usersResponse.documents.length > 0) {
-            const user = usersResponse.documents[0];
-            nameMap[userId] = user.fullName || user.name || user.displayName || 
-              (userId.includes('@') ? userId.split('@')[0].replace(/[._-]/g, ' ') : 
-               `Patient ${userId.substring(0, 8)}`);
-          } else {
-            nameMap[userId] = userId.includes('@') ? 
-              userId.split('@')[0].replace(/[._-]/g, ' ') : 
-              `Patient ${userId.substring(0, 8)}`;
+          // Check if this is a family booking with patient_name
+          if (appointment.is_family_booking && appointment.patient_name) {
+            patientName = appointment.patient_name;
+          } 
+          // If family booking but no patient_name, try to fetch by patient_id
+          else if (appointment.is_family_booking && appointment.patient_id) {
+            try {
+              // Try to get patient profile by patient_id
+              const patientResponse = await DatabaseService.listDocuments(
+                COLLECTIONS.PATIENT_PROFILES,
+                [Query.equal('$id', appointment.patient_id)]
+              );
+              
+              if (patientResponse.documents && patientResponse.documents.length > 0) {
+                const patient = patientResponse.documents[0];
+                patientName = patient.fullName || patient.name || patient.displayName || appointment.patient_name || 'Family Member';
+              } else {
+                patientName = appointment.patient_name || 'Family Member';
+              }
+            } catch (error) {
+              patientName = appointment.patient_name || 'Family Member';
+            }
           }
+          // Regular booking - fetch by user_id
+          else if (appointment.user_id) {
+            try {
+              const usersResponse = await DatabaseService.listDocuments(
+                COLLECTIONS.PATIENT_PROFILES,
+                [Query.equal('userId', appointment.user_id)]
+              );
+              
+              if (usersResponse.documents && usersResponse.documents.length > 0) {
+                const user = usersResponse.documents[0];
+                patientName = user.fullName || user.name || user.displayName || 
+                  (appointment.user_id.includes('@') ? appointment.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+                   `Patient ${appointment.user_id.substring(0, 8)}`);
+              } else {
+                patientName = appointment.user_id.includes('@') ? 
+                  appointment.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+                  `Patient ${appointment.user_id.substring(0, 8)}`;
+              }
+            } catch (error) {
+              patientName = `Patient ${appointment.user_id.substring(0, 8)}`;
+            }
+          }
+          
+          // Create a unique key for the appointment
+          const appointmentKey = `${appointment.$id}`;
+          nameMap[appointmentKey] = patientName;
+          
         } catch (error) {
-          nameMap[userId] = `Patient ${userId.substring(0, 8)}`;
+          console.error(`Error fetching patient name for appointment ${appointment.$id}:`, error);
+          const appointmentKey = `${appointment.$id}`;
+          nameMap[appointmentKey] = appointment.patient_name || 'Unknown Patient';
         }
       }
       
@@ -208,7 +259,6 @@ export default function EnhancedAppointmentsManagement() {
       const branchIds = [...new Set(appointments.map(apt => apt.branch_id).filter(Boolean))];
       const branchMap = {};
       
-      // First, get all unique region IDs from branches
       const regionIds = new Set();
       
       for (const branchId of branchIds) {
@@ -229,10 +279,8 @@ export default function EnhancedAppointmentsManagement() {
         }
       }
       
-      // Fetch region names
       const regionMap = await fetchRegionNames([...regionIds]);
       
-      // Now fetch branch details with region names
       for (const branchId of branchIds) {
         try {
           const branchResponse = await DatabaseService.listDocuments(
@@ -258,6 +306,17 @@ export default function EnhancedAppointmentsManagement() {
       }
       
       setBranchNames(branchMap);
+      
+      // Update available regions after branch names are set
+      if (allAppointments.length > 0) {
+        const regions = [...new Set(
+          allAppointments.map(apt => {
+            const branchData = branchMap[apt.branch_id];
+            return branchData ? branchData.region : null;
+          }).filter(region => region && region !== 'Unknown Region')
+        )];
+        setAvailableRegions(regions.sort());
+      }
     } catch (error) {
       console.error('Error fetching branch names:', error);
     }
@@ -280,7 +339,6 @@ export default function EnhancedAppointmentsManagement() {
             const region = regionResponse.documents[0];
             regionMap[regionId] = region.name || regionId;
           } else {
-            // Fallback to hardcoded regions
             const hardcodedRegions = {
               'tawau': 'Tawau',
               'semporna': 'Semporna', 
@@ -289,7 +347,6 @@ export default function EnhancedAppointmentsManagement() {
             regionMap[regionId] = hardcodedRegions[regionId] || regionId;
           }
         } catch (error) {
-          console.error(`Error fetching region ${regionId}:`, error);
           const hardcodedRegions = {
             'tawau': 'Tawau',
             'semporna': 'Semporna', 
@@ -348,7 +405,8 @@ export default function EnhancedAppointmentsManagement() {
     const services = [...new Set(appointments.map(apt => apt.service_name).filter(Boolean))];
     setAvailableServices(services.sort());
     
-    // Extract unique regions from branch info
+    // Extract unique regions - need to wait for branchNames to be populated
+    // This will be called after fetchBranchNames completes
     const regions = [...new Set(
       appointments.map(apt => {
         const branchInfo = getBranchInfo(apt.branch_id);
@@ -358,6 +416,18 @@ export default function EnhancedAppointmentsManagement() {
     setAvailableRegions(regions.sort());
   };
 
+  // New function to update available regions after branch data is loaded
+  const updateAvailableRegions = () => {
+    const regions = [...new Set(
+      allAppointments.map(apt => {
+        const branchInfo = getBranchInfo(apt.branch_id);
+        return branchInfo.region;
+      }).filter(region => region && region !== 'Unknown Region')
+    )];
+    setAvailableRegions(regions.sort());
+  };
+
+  // FIXED: Proper stats calculation including proper PAST count
   const calculateStats = (appointments) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -367,25 +437,47 @@ export default function EnhancedAppointmentsManagement() {
       upcoming: 0,
       completed: 0,
       cancelled: 0,
-      today: 0
+      today: 0,
+      booked: 0,
+      confirmed: 0,
+      past: 0
     };
 
     appointments.forEach(apt => {
       const aptDate = parseAppointmentDate(apt.date);
       aptDate.setHours(0, 0, 0, 0);
+      
+      const status = apt.status || APPOINTMENT_STATUS.BOOKED;
 
       // Count by status
-      if (apt.status === APPOINTMENT_STATUS.COMPLETED) {
-        stats.completed++;
-      } else if (apt.status === APPOINTMENT_STATUS.CANCELLED) {
-        stats.cancelled++;
-      } else if (aptDate >= today) {
+      switch (status) {
+        case APPOINTMENT_STATUS.BOOKED:
+          stats.booked++;
+          break;
+        case APPOINTMENT_STATUS.CONFIRMED:
+          stats.confirmed++;
+          break;
+        case APPOINTMENT_STATUS.COMPLETED:
+          stats.completed++;
+          break;
+        case APPOINTMENT_STATUS.CANCELLED:
+          stats.cancelled++;
+          break;
+      }
+
+      // Count upcoming (future dates that are not cancelled or completed)
+      if (aptDate >= today && status !== APPOINTMENT_STATUS.CANCELLED && status !== APPOINTMENT_STATUS.COMPLETED) {
         stats.upcoming++;
       }
 
       // Count today's appointments
       if (aptDate.getTime() === today.getTime()) {
         stats.today++;
+      }
+
+      // FIXED: Count past appointments (past dates OR completed/cancelled status)
+      if (aptDate < today || status === APPOINTMENT_STATUS.COMPLETED || status === APPOINTMENT_STATUS.CANCELLED) {
+        stats.past++;
       }
     });
 
@@ -432,18 +524,17 @@ export default function EnhancedAppointmentsManagement() {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
 
-    // Apply main filter
     switch (filter) {
       case 'upcoming':
         filtered = filtered.filter(apt => {
           const aptDate = parseAppointmentDate(apt.date);
-          return aptDate >= now && apt.status !== APPOINTMENT_STATUS.CANCELLED;
+          return aptDate >= now && apt.status !== APPOINTMENT_STATUS.CANCELLED && apt.status !== APPOINTMENT_STATUS.COMPLETED;
         });
         break;
       case 'past':
         filtered = filtered.filter(apt => {
           const aptDate = parseAppointmentDate(apt.date);
-          return aptDate < now;
+          return aptDate < now || apt.status === APPOINTMENT_STATUS.COMPLETED || apt.status === APPOINTMENT_STATUS.CANCELLED;
         });
         break;
       case 'today':
@@ -457,14 +548,12 @@ export default function EnhancedAppointmentsManagement() {
         break;
     }
 
-    // Apply service filter
     if (selectedServices.length > 0) {
       filtered = filtered.filter(apt => 
         selectedServices.includes(apt.service_name)
       );
     }
 
-    // Apply region filter
     if (selectedRegions.length > 0) {
       filtered = filtered.filter(apt => {
         const branchInfo = getBranchInfo(apt.branch_id);
@@ -472,25 +561,22 @@ export default function EnhancedAppointmentsManagement() {
       });
     }
 
-    // Apply status filter
     if (selectedStatuses.length > 0) {
       filtered = filtered.filter(apt => 
         selectedStatuses.includes(apt.status || APPOINTMENT_STATUS.BOOKED)
       );
     }
 
-    // Apply date range filter
     if (selectedDateRange !== 'all') {
       filtered = filtered.filter(apt => 
         isDateInRange(apt.date, selectedDateRange)
       );
     }
 
-    // Apply search
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(apt => {
-        const patientName = getPatientName(apt.user_id).toLowerCase();
+        const patientName = getPatientName(apt).toLowerCase();
         const serviceName = (apt.service_name || '').toLowerCase();
         const appointmentId = apt.$id.toLowerCase();
         const branchName = getBranchInfo(apt.branch_id).name.toLowerCase();
@@ -507,9 +593,11 @@ export default function EnhancedAppointmentsManagement() {
     setFilteredAppointments(filtered);
   };
 
-  const getPatientName = (userId) => {
-    if (!userId) return "Unknown Patient";
-    return patientNames[userId] || "Patient";
+  // Updated patient name getter to use appointment-specific key
+  const getPatientName = (appointment) => {
+    if (!appointment) return "Unknown Patient";
+    const appointmentKey = `${appointment.$id}`;
+    return patientNames[appointmentKey] || appointment.patient_name || "Unknown Patient";
   };
 
   const getBranchInfo = (branchId) => {
@@ -576,7 +664,7 @@ export default function EnhancedAppointmentsManagement() {
         onPress={() => setFilter('past')}
       >
         <Text style={[styles.statNumber, { color: '#6B7280' }, filter === 'past' && styles.activeStatText]}>
-          {statsData.completed}
+          {statsData.past}
         </Text>
         <Text style={[styles.statLabel, filter === 'past' && styles.activeStatText]}>
           Past
@@ -602,7 +690,6 @@ export default function EnhancedAppointmentsManagement() {
           </View>
 
           <ScrollView style={styles.modalBody}>
-            {/* Service Filter */}
             <View style={styles.filterSection}>
               <Text style={styles.filterSectionTitle}>Services</Text>
               <View style={styles.filterChips}>
@@ -632,7 +719,6 @@ export default function EnhancedAppointmentsManagement() {
               </View>
             </View>
 
-            {/* Region Filter */}
             <View style={styles.filterSection}>
               <Text style={styles.filterSectionTitle}>Regions</Text>
               <View style={styles.filterChips}>
@@ -662,7 +748,6 @@ export default function EnhancedAppointmentsManagement() {
               </View>
             </View>
 
-            {/* Status Filter */}
             <View style={styles.filterSection}>
               <Text style={styles.filterSectionTitle}>Status</Text>
               <View style={styles.filterChips}>
@@ -692,7 +777,6 @@ export default function EnhancedAppointmentsManagement() {
               </View>
             </View>
 
-            {/* Date Range Filter */}
             <View style={styles.filterSection}>
               <Text style={styles.filterSectionTitle}>Date Range</Text>
               <View style={styles.dateRangeOptions}>
@@ -767,77 +851,69 @@ export default function EnhancedAppointmentsManagement() {
     </Modal>
   );
 
-  const renderOptimizedAppointmentCard = ({ item: appointment }) => {
+  // UPDATED: Clean minimal appointment card design like image 2
+  const renderMinimalAppointmentCard = ({ item: appointment }) => {
     const statusInfo = getStatusInfo(appointment.status);
     const branchInfo = getBranchInfo(appointment.branch_id);
     const appointmentDate = parseAppointmentDate(appointment.date);
+    const patientName = getPatientName(appointment);
 
     return (
       <TouchableOpacity 
-        style={styles.optimizedCard}
+        style={styles.minimalCard}
         onPress={() => router.push({
           pathname: '/doctor/appointments/detail',
           params: { appointmentId: appointment.$id }
         })}
       >
-        {/* Top Row - Patient Info & Status */}
-        <View style={styles.cardTopRow}>
-          <View style={styles.patientSection}>
-            <View style={[styles.compactAvatar, { backgroundColor: statusInfo.color }]}>
-              <Text style={styles.avatarText}>
-                {getPatientName(appointment.user_id).substring(0, 2).toUpperCase()}
-              </Text>
-            </View>
-            <View style={styles.patientDetails}>
-              <Text style={styles.patientName} numberOfLines={1}>
-                {getPatientName(appointment.user_id)}
-              </Text>
-              <Text style={styles.appointmentMeta}>
-                {appointmentDate.toLocaleDateString('en-GB', { 
-                  day: '2-digit', 
-                  month: 'short' 
-                })} • {appointment.time_slot}
-              </Text>
-            </View>
+        {/* Patient Avatar and Info */}
+        <View style={styles.cardMainRow}>
+          <View style={[styles.patientAvatar, { backgroundColor: statusInfo.color }]}>
+            <Text style={styles.avatarText}>
+              {patientName.substring(0, 2).toUpperCase()}
+            </Text>
           </View>
           
-          <View style={[styles.compactStatusBadge, { backgroundColor: statusInfo.bgColor }]}>
-            <Ionicons name={statusInfo.icon} size={10} color={statusInfo.color} />
-            <Text style={[styles.compactStatusText, { color: statusInfo.color }]}>
+          <View style={styles.patientDetails}>
+            <Text style={styles.patientName} numberOfLines={1}>
+              {patientName}
+            </Text>
+            <Text style={styles.appointmentDateTime}>
+              {appointmentDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} • {appointment.time_slot}
+            </Text>
+          </View>
+          
+          <View style={[styles.statusBadge, { backgroundColor: statusInfo.bgColor }]}>
+            <Ionicons name="bookmark" size={12} color={statusInfo.color} />
+            <Text style={[styles.statusText, { color: statusInfo.color }]}>
               {statusInfo.text}
             </Text>
           </View>
         </View>
 
-        {/* Middle Row - Service & Branch */}
-        <View style={styles.cardMiddleRow}>
+        {/* Service and Branch Info */}
+        <View style={styles.serviceRow}>
           <View style={styles.serviceInfo}>
-            <Ionicons name="medical-outline" size={12} color="#666" />
-            <Text style={styles.serviceLabel} numberOfLines={1}>
-              {appointment.service_name || 'General Consultation'}
+            <Ionicons name="medical-outline" size={16} color="#666" />
+            <Text style={styles.serviceText} numberOfLines={1}>
+              {appointment.service_name || 'Health Check-ups and Pr...'}
             </Text>
           </View>
           
           <View style={styles.branchInfo}>
-            <Ionicons name="location-outline" size={12} color="#666" />
-            <Text style={styles.branchLabel} numberOfLines={1}>
+            <Ionicons name="location-outline" size={16} color="#666" />
+            <Text style={styles.branchText} numberOfLines={1}>
               {branchInfo.name}
             </Text>
           </View>
         </View>
 
-        {/* Bottom Row - Region & ID */}
-        <View style={styles.cardBottomRow}>
-          <View style={styles.regionContainer}>
-            <View style={styles.regionBadge}>
-              <Ionicons name="business-outline" size={10} color="#0AD476" />
-              <Text style={styles.regionText}>{branchInfo.region}</Text>
-            </View>
+        {/* Footer with Region and ID */}
+        <View style={styles.cardFooter}>
+          <View style={styles.regionTag}>
+            <Text style={styles.regionText}>{branchInfo.region}</Text>
           </View>
-          
-          <Text style={styles.appointmentId}>
-            ID: {appointment.$id.substring(0, 8)}
-          </Text>
+          <Text style={styles.appointmentId}>ID: {appointment.$id.substring(0, 8)}</Text>
         </View>
       </TouchableOpacity>
     );
@@ -860,13 +936,14 @@ export default function EnhancedAppointmentsManagement() {
         end={{ x: 1, y: 1 }}
         style={styles.headerGradient}
       />
+      
+      {/* FIXED: Properly positioned header */}
       <View style={styles.header}>
         <PageHeader onPress={() => router.back()} />
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Appointments Management</Text>
-          <Text style={styles.headerSubtitle}>Manage patient appointments & schedules</Text>
+        <View style={styles.headerContent}>
+          <Text style={styles.headerTitle}>Appointments</Text>
+          <Text style={styles.headerTitle}>Management</Text>
         </View>
-        
         <TouchableOpacity 
           style={styles.refreshButton} 
           onPress={onRefresh}
@@ -880,10 +957,8 @@ export default function EnhancedAppointmentsManagement() {
         </TouchableOpacity>
       </View>
 
-      {/* Quick Stats */}
       {renderQuickStats()}
 
-      {/* Search and Filter Section */}
       <View style={styles.searchSection}>
         <View style={styles.searchContainer}>
           <Ionicons name="search-outline" size={20} color="#666" style={styles.searchIcon} />
@@ -912,7 +987,6 @@ export default function EnhancedAppointmentsManagement() {
         </TouchableOpacity>
       </View>
 
-      {/* Active Filters Display */}
       {(selectedServices.length > 0 || selectedRegions.length > 0 || selectedStatuses.length > 0 || selectedDateRange !== 'all') && (
         <View style={styles.activeFiltersContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -962,10 +1036,9 @@ export default function EnhancedAppointmentsManagement() {
         </View>
       )}
 
-      {/* Optimized Appointments List */}
       <FlatList
         data={filteredAppointments}
-        renderItem={renderOptimizedAppointmentCard}
+        renderItem={renderMinimalAppointmentCard}
         keyExtractor={(item) => item.$id}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
@@ -1001,7 +1074,6 @@ export default function EnhancedAppointmentsManagement() {
         )}
       />
 
-      {/* Filter Modal */}
       {renderFilterModal()}
     </View>
   );
@@ -1024,9 +1096,9 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   
-  // Header
+  // FIXED: Header positioning and layout
   headerGradient: {
-    height: 100,
+    height: 120,
     width: '100%',
     position: 'absolute',
     top: 0,
@@ -1034,23 +1106,21 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 50,
-    marginBottom: 20,
+    paddingBottom: 20,
   },
-  headerTitleContainer: {
+  headerContent: {
     flex: 1,
     alignItems: 'center',
+    marginHorizontal: 20,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     color: 'white',
-    marginBottom: 2,
-  },
-  headerSubtitle: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.8)',
+    lineHeight: 22,
   },
   refreshButton: {
     width: 40,
@@ -1067,7 +1137,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     paddingVertical: 16,
     marginHorizontal: 20,
-    marginTop: -10,
+    marginTop: 10,
+    marginBottom: 20,
     borderRadius: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -1180,35 +1251,29 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   
-  // OPTIMIZED APPOINTMENT CARD
-  optimizedCard: {
+  // MINIMAL APPOINTMENT CARD (like image 2)
+  minimalCard: {
     backgroundColor: 'white',
     borderRadius: 12,
-    marginBottom: 12,
     padding: 16,
+    marginBottom: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.05,
     shadowRadius: 3,
-    elevation: 2,
+    elevation: 1,
   },
 
-  // Card Top Row
-  cardTopRow: {
+  // Main row with avatar, patient info, and status
+  cardMainRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
   },
-  patientSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  compactAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  patientAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -1216,51 +1281,48 @@ const styles = StyleSheet.create({
   avatarText: {
     color: 'white',
     fontWeight: 'bold',
-    fontSize: 12,
+    fontSize: 14,
   },
   patientDetails: {
     flex: 1,
   },
   patientName: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '600',
     color: '#000',
     marginBottom: 2,
   },
-  appointmentMeta: {
-    fontSize: 11,
+  appointmentDateTime: {
+    fontSize: 12,
     color: '#666',
   },
-  compactStatusBadge: {
+  statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 10,
-    gap: 3,
+    borderRadius: 8,
+    gap: 4,
   },
-  compactStatusText: {
-    fontSize: 10,
+  statusText: {
+    fontSize: 11,
     fontWeight: '600',
   },
 
-  // Card Middle Row
-  cardMiddleRow: {
+  // Service and branch row
+  serviceRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 12,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F5F5F5',
   },
   serviceInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    marginRight: 8,
+    marginRight: 12,
   },
-  serviceLabel: {
-    fontSize: 12,
+  serviceText: {
+    fontSize: 13,
     color: '#666',
     marginLeft: 6,
     flex: 1,
@@ -1270,43 +1332,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
   },
-  branchLabel: {
-    fontSize: 12,
+  branchText: {
+    fontSize: 13,
     color: '#666',
     marginLeft: 6,
     flex: 1,
   },
 
-  // Card Bottom Row
-  cardBottomRow: {
+  // Footer with region and ID
+  cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  regionContainer: {
-    flex: 1,
-  },
-  regionBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  regionTag: {
     backgroundColor: '#F0FDF4',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
-    alignSelf: 'flex-start',
   },
   regionText: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#1a8e2d',
     fontWeight: '500',
-    marginLeft: 3,
   },
   appointmentId: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#999',
+    fontWeight: '500',
   },
 
-  // Filter Modal
+  // Filter Modal (keeping existing styles)
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1343,8 +1399,6 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 12,
   },
-  
-  // Filter Chips
   filterChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1370,8 +1424,6 @@ const styles = StyleSheet.create({
   selectedFilterChipText: {
     color: '#1a8e2d',
   },
-  
-  // Date Range Options
   dateRangeOptions: {
     gap: 8,
   },
@@ -1395,8 +1447,6 @@ const styles = StyleSheet.create({
   selectedDateRangeOptionText: {
     color: '#1a8e2d',
   },
-  
-  // Custom Date Inputs
   customDateInputs: {
     marginTop: 12,
     gap: 8,
@@ -1409,8 +1459,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#333',
   },
-  
-  // Modal Footer
   modalFooter: {
     flexDirection: 'row',
     padding: 20,

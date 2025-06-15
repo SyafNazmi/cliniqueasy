@@ -1,4 +1,4 @@
-// app/doctor/appointments/detail.jsx - APPOINTMENT DETAIL WITH RESCHEDULE & CANCEL
+// app/doctor/appointments/detail.jsx - FIXED VERSION WITH CONSISTENT PATIENT NAME LOGIC
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -73,7 +73,7 @@ export default function AppointmentDetail() {
       
       // Load related data
       await Promise.all([
-        fetchPatientInfo(appointmentData.user_id),
+        fetchPatientInfo(appointmentData),
         fetchBranchInfo(appointmentData.branch_id),
         fetchDoctorInfo(appointmentData.doctor_id),
         fetchServiceInfo(appointmentData.service_id)
@@ -87,44 +87,194 @@ export default function AppointmentDetail() {
     }
   };
 
-  const fetchPatientInfo = async (userId) => {
+  // FIXED: Consistent patient info fetching logic matching the list view
+  const fetchPatientInfo = async (appointmentData) => {
     try {
-      const response = await DatabaseService.listDocuments(
-        COLLECTIONS.PATIENT_PROFILES,
-        [Query.equal('userId', userId)]
-      );
+      console.log('Fetching patient info for appointment:', appointmentData.$id);
+      console.log('Is family booking:', appointmentData?.is_family_booking);
+      console.log('Patient name from appointment:', appointmentData?.patient_name);
+      console.log('Patient ID from appointment:', appointmentData?.patient_id);
+      console.log('User ID from appointment:', appointmentData?.user_id);
       
-      if (response.documents && response.documents.length > 0) {
-        setPatientInfo(response.documents[0]);
+      let patientData = null;
+      let patientName = 'Unknown Patient';
+      
+      // Use the same logic as the list view for consistency
+      if (appointmentData.is_family_booking && appointmentData.patient_name) {
+        // Family booking with patient name - use it directly
+        patientName = appointmentData.patient_name;
+        
+        // Try to get additional details if patient_id exists
+        if (appointmentData.patient_id) {
+          try {
+            const patientResponse = await DatabaseService.listDocuments(
+              COLLECTIONS.PATIENT_PROFILES,
+              [Query.equal('$id', appointmentData.patient_id)]
+            );
+            
+            if (patientResponse.documents && patientResponse.documents.length > 0) {
+              patientData = patientResponse.documents[0];
+              // Keep the name from appointment but get other details from profile
+              patientData.displayName = patientName;
+            }
+          } catch (error) {
+            console.log('Could not fetch patient profile details');
+          }
+        }
+      } 
+      else if (appointmentData.is_family_booking && appointmentData.patient_id) {
+        // Family booking with patient_id but no name
+        try {
+          const patientResponse = await DatabaseService.listDocuments(
+            COLLECTIONS.PATIENT_PROFILES,
+            [Query.equal('$id', appointmentData.patient_id)]
+          );
+          
+          if (patientResponse.documents && patientResponse.documents.length > 0) {
+            patientData = patientResponse.documents[0];
+            patientName = patientData.fullName || patientData.name || patientData.displayName || 'Family Member';
+          } else {
+            patientName = 'Family Member';
+          }
+        } catch (error) {
+          patientName = 'Family Member';
+        }
       }
+      else if (appointmentData.user_id) {
+        // Regular booking - fetch by user_id
+        try {
+          const usersResponse = await DatabaseService.listDocuments(
+            COLLECTIONS.PATIENT_PROFILES,
+            [Query.equal('userId', appointmentData.user_id)]
+          );
+          
+          if (usersResponse.documents && usersResponse.documents.length > 0) {
+            patientData = usersResponse.documents[0];
+            patientName = patientData.fullName || patientData.name || patientData.displayName || 
+              (appointmentData.user_id.includes('@') ? appointmentData.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+               `Patient ${appointmentData.user_id.substring(0, 8)}`);
+          } else {
+            patientName = appointmentData.user_id.includes('@') ? 
+              appointmentData.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+              `Patient ${appointmentData.user_id.substring(0, 8)}`;
+          }
+        } catch (error) {
+          patientName = `Patient ${appointmentData.user_id.substring(0, 8)}`;
+        }
+      }
+      
+      // Create final patient info object
+      const finalPatientInfo = {
+        ...patientData,
+        displayName: patientName,
+        fullName: patientName,
+        name: patientName,
+        phone: patientData?.phoneNumber || patientData?.phone || 'Not provided',
+        age: patientData?.age || 'Not provided',
+        gender: patientData?.gender || 'Not provided',
+        bookingType: appointmentData?.is_family_booking ? 'Family Member' : 'Account Holder',
+        accountHolder: appointmentData?.user_id || 'Not provided'
+      };
+      
+      setPatientInfo(finalPatientInfo);
+      console.log('Final patient info set:', finalPatientInfo);
+      
     } catch (error) {
       console.error('Error fetching patient info:', error);
+      // Fallback to appointment data
+      setPatientInfo({
+        displayName: appointmentData?.patient_name || 'Unknown Patient',
+        fullName: appointmentData?.patient_name || 'Unknown Patient',
+        name: appointmentData?.patient_name || 'Unknown Patient', 
+        phone: 'Not provided',
+        age: 'Not provided',
+        gender: 'Not provided',
+        bookingType: appointmentData?.is_family_booking ? 'Family Member' : 'Account Holder',
+        accountHolder: appointmentData?.user_id || 'Not provided'
+      });
     }
   };
 
+  // FIXED: Updated branch fetching logic
   const fetchBranchInfo = async (branchId) => {
     try {
-      const response = await DatabaseService.listDocuments(
-        COLLECTIONS.BRANCHES,
-        [Query.equal('branch_id', branchId)]
-      );
+      console.log('Fetching branch info for branch ID:', branchId);
       
-      if (response.documents && response.documents.length > 0) {
-        const branch = response.documents[0];
+      let branch = null;
+      try {
+        // Method 1: Try to get branch by document ID first
+        branch = await DatabaseService.getDocument(COLLECTIONS.BRANCHES, branchId);
+        console.log('Found branch by document ID:', branch);
+      } catch (docError) {
+        console.log('Branch not found by document ID, trying branch_id field...');
         
-        // Also fetch region info
-        const regionResponse = await DatabaseService.listDocuments(
-          COLLECTIONS.REGIONS,
-          [Query.equal('region_id', branch.region_id)]
+        // Method 2: Try to find by branch_id field
+        const response = await DatabaseService.listDocuments(
+          COLLECTIONS.BRANCHES,
+          [Query.equal('branch_id', String(branchId))]
         );
+        
+        if (response.documents && response.documents.length > 0) {
+          branch = response.documents[0];
+          console.log('Found branch by branch_id field:', branch);
+        }
+      }
+      
+      if (branch) {
+        let regionInfo = null;
+        if (branch.region_id && branch.region_id !== null) {
+          try {
+            console.log('Fetching region info for region_id:', branch.region_id);
+            
+            const regionResponse = await DatabaseService.listDocuments(
+              COLLECTIONS.REGIONS,
+              [Query.equal('region_id', String(branch.region_id))]
+            );
+            
+            if (regionResponse.documents && regionResponse.documents.length > 0) {
+              regionInfo = regionResponse.documents[0];
+              console.log('Found region info:', regionInfo);
+            } else {
+              // Fallback to hardcoded regions
+              const hardcodedRegions = {
+                'tawau': 'Tawau',
+                'semporna': 'Semporna', 
+                'kota_kinabalu': 'Kota Kinabalu',
+              };
+              regionInfo = { name: hardcodedRegions[branch.region_id] || branch.region_id };
+            }
+          } catch (regionError) {
+            console.error('Error fetching region info:', regionError);
+            const hardcodedRegions = {
+              'tawau': 'Tawau',
+              'semporna': 'Semporna', 
+              'kota_kinabalu': 'Kota Kinabalu',
+            };
+            regionInfo = { name: hardcodedRegions[branch.region_id] || branch.region_id };
+          }
+        }
         
         setBranchInfo({
           ...branch,
-          regionName: regionResponse.documents?.[0]?.name || branch.region_id
+          regionName: regionInfo?.name || 'Unknown Region'
+        });
+      } else {
+        console.log('No branch found with ID:', branchId);
+        setBranchInfo({
+          name: 'Unknown Branch',
+          regionName: 'Unknown Region',
+          address: 'Address not available',
+          phone: 'Not provided'
         });
       }
     } catch (error) {
       console.error('Error fetching branch info:', error);
+      setBranchInfo({
+        name: 'Unknown Branch',
+        regionName: 'Unknown Region', 
+        address: 'Address not available',
+        phone: 'Not provided'
+      });
     }
   };
 
@@ -376,7 +526,7 @@ export default function AppointmentDetail() {
       >
         <View style={styles.headerContent}>
           <TouchableOpacity 
-            style={styles.backButton}
+            style={styles.backButtonHeader}
             onPress={() => router.back()}
           >
             <Ionicons name="arrow-back" size={24} color="white" />
@@ -421,12 +571,33 @@ export default function AppointmentDetail() {
           <View style={styles.cardHeader}>
             <Ionicons name="person" size={20} color="#1a8e2d" />
             <Text style={styles.cardTitle}>Patient Information</Text>
+            {appointment?.is_family_booking && (
+              <View style={styles.familyBadge}>
+                <Ionicons name="people" size={14} color="#8B5CF6" />
+                <Text style={styles.familyBadgeText}>Family</Text>
+              </View>
+            )}
           </View>
           <View style={styles.infoGrid}>
             <View style={styles.infoItem}>
-              <Text style={styles.infoLabel}>Name</Text>
+              <Text style={styles.infoLabel}>Patient Name</Text>
               <Text style={styles.infoValue}>
-                {patientInfo?.fullName || patientInfo?.name || 'Unknown Patient'}
+                {patientInfo?.displayName || patientInfo?.fullName || patientInfo?.name || 'Unknown Patient'}
+              </Text>
+            </View>
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>Booking Type</Text>
+              <Text style={[styles.infoValue, { 
+                color: appointment?.is_family_booking ? '#8B5CF6' : '#1a8e2d',
+                fontWeight: 'bold' 
+              }]}>
+                {patientInfo?.bookingType || (appointment?.is_family_booking ? 'Family Member' : 'Account Holder')}
+              </Text>
+            </View>
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>Account Holder</Text>
+              <Text style={styles.infoValue}>
+                {patientInfo?.accountHolder || appointment?.user_id || 'Not provided'}
               </Text>
             </View>
             <View style={styles.infoItem}>
@@ -436,15 +607,15 @@ export default function AppointmentDetail() {
               </Text>
             </View>
             <View style={styles.infoItem}>
-              <Text style={styles.infoLabel}>Email</Text>
-              <Text style={styles.infoValue}>
-                {appointment.user_id || 'Not provided'}
-              </Text>
-            </View>
-            <View style={styles.infoItem}>
               <Text style={styles.infoLabel}>Age</Text>
               <Text style={styles.infoValue}>
                 {patientInfo?.age || 'Not provided'}
+              </Text>
+            </View>
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>Gender</Text>
+              <Text style={styles.infoValue}>
+                {patientInfo?.gender || 'Not provided'}
               </Text>
             </View>
           </View>
@@ -743,7 +914,7 @@ export default function AppointmentDetail() {
                 Are you sure you want to cancel this appointment?
               </Text>
               <Text style={styles.appointmentInfo}>
-                {patientInfo?.fullName || 'Unknown Patient'} • {appointment.date} at {appointment.time_slot}
+                {patientInfo?.displayName || patientInfo?.fullName || 'Unknown Patient'} • {appointment.date} at {appointment.time_slot}
               </Text>
               
               <Text style={styles.modalSectionTitle}>Reason for Cancellation</Text>
@@ -824,7 +995,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  backButton: {
+  backButtonHeader: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -931,6 +1102,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
     marginLeft: 8,
+    flex: 1,
   },
   infoGrid: {
     gap: 12,
@@ -953,6 +1125,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 2,
     textAlign: 'right',
+  },
+  
+  // Family booking badge
+  familyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F3FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 4,
+  },
+  familyBadgeText: {
+    fontSize: 12,
+    color: '#8B5CF6',
+    fontWeight: '600',
   },
   
   // Prescription Status
@@ -1205,8 +1393,15 @@ const styles = StyleSheet.create({
   },
   
   // Back Button (for error state)
+  backButton: {
+    backgroundColor: '#1a8e2d',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 16,
+  },
   backButtonText: {
-    color: '#1a8e2d',
+    color: 'white',
     fontSize: 16,
     fontWeight: '600',
   },
