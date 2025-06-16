@@ -1,90 +1,191 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native'
-import React, { useEffect, useState } from 'react'
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'expo-router'
-import { account, DatabaseService, Query } from '@/configs/AppwriteConfig'
+import { useFocusEffect } from '@react-navigation/native'
+import { AuthService, DatabaseService, Query } from '@/configs/AppwriteConfig'
 import { Ionicons } from '@expo/vector-icons'
 import { COLLECTIONS } from '@/constants'
-import { APPOINTMENT_STATUS } from '@/service/appointmentUtils';
+import { appointmentManager } from '@/service/appointmentUtils'
 
 export default function UpcomingAppointments() {
   const router = useRouter();
   const [upcomingAppointments, setUpcomingAppointments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [user, setUser] = useState(null);
 
-  useEffect(() => {
-    loadUpcomingAppointments();
-  }, []);
-
-  const loadUpcomingAppointments = async () => {
+  // Function to fetch appointments (extracted for reuse) - BASED ON HOMESCREEN SUCCESS
+  const fetchUserAndAppointments = useCallback(async (showLoader = true) => {
     try {
-      setIsLoading(true);
-      const currentUser = await account.get();
+      if (showLoader) {
+        setIsLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
       
+      // Get current user
+      const currentUser = await AuthService.getCurrentUser();
+      setUser(currentUser);
+      
+      // Fetch user's appointments from Appwrite
       if (currentUser) {
-        const appointmentsResponse = await DatabaseService.listDocuments(
+        // Enhanced query with ordering to get newest first
+        const queries = [
+          Query.equal('user_id', currentUser.$id),
+          Query.orderDesc('$createdAt'),
+          Query.limit(100)
+        ];
+        
+        const response = await DatabaseService.listDocuments(
           COLLECTIONS.APPOINTMENTS,
-          [Query.equal('user_id', currentUser.$id)],
-          100
+          queries
         );
         
-        // Filter and sort upcoming appointments
-        const upcomingAppts = appointmentsResponse.documents
-        .filter(app => {
-            // Check if date is not past AND appointment is not cancelled
-            const isNotPast = !isDatePast(app.date);
-            const isNotCancelled = app.status !== APPOINTMENT_STATUS.CANCELLED;
-            
-            return isNotPast && isNotCancelled;
-        })
-        .sort((a, b) => {
-            if (!a.date || !b.date) return 0;
-            
-            try {
-            const dateA = new Date(a.date.split(', ')[1]);
-            const dateB = new Date(b.date.split(', ')[1]);
-            return dateA - dateB; // Earliest first for upcoming
-            } catch (error) {
-            console.error('Error sorting appointments:', error);
-            return 0;
-            }
+        const appointmentDocuments = response.documents || [];
+        
+        // Filter for upcoming appointments (same logic as HomeScreen)
+        const upcomingAppts = appointmentDocuments.filter(appointment => {
+          // First check if appointment is cancelled or completed
+          const status = appointment.status?.toLowerCase();
+          if (status === 'cancelled' || status === 'completed') {
+            return false;
+          }
+          
+          // Parse the appointment date
+          const parts = appointment.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
+          if (!parts) return false;
+          
+          const [_, dayName, dayNum, monthName, year] = parts;
+          const months = {
+            'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+            'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+          };
+          
+          const appointmentDate = new Date(
+            parseInt(year),
+            months[monthName],
+            parseInt(dayNum)
+          );
+          
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          
+          return appointmentDate >= today;
+        });
+
+        // Sort upcoming appointments by date (earliest first)
+        const sortedUpcomingAppointments = upcomingAppts.sort((a, b) => {
+          const partsA = a.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
+          const partsB = b.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
+          
+          if (!partsA || !partsB) return 0;
+          
+          const months = {
+            'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+            'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+          };
+          
+          const dateA = new Date(
+            parseInt(partsA[4]),
+            months[partsA[3]],
+            parseInt(partsA[2])
+          );
+          
+          const dateB = new Date(
+            parseInt(partsB[4]),
+            months[partsB[3]],
+            parseInt(partsB[2])
+          );
+          
+          // If same date, sort by time
+          if (dateA.getTime() === dateB.getTime()) {
+            return a.time_slot?.localeCompare(b.time_slot || '');
+          }
+          
+          return dateA - dateB;
         });
         
-        setUpcomingAppointments(upcomingAppts);
+        setUpcomingAppointments(sortedUpcomingAppointments);
       }
     } catch (error) {
-      console.error('Error loading upcoming appointments:', error);
+      console.error('Error fetching upcoming appointments:', error);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
-  };
+  }, []);
 
-  const isDatePast = (dateString) => {
-    if (!dateString) return false;
-    
-    try {
-      const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
-      if (!parts) return false;
-      
-      const months = {
-        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-      };
-      
-      const appointmentDate = new Date(
-        parseInt(parts[4]),
-        months[parts[3]],
-        parseInt(parts[2])
-      );
-      
-      appointmentDate.setHours(23, 59, 59, 999);
-      const today = new Date();
-      
-      return appointmentDate < today;
-    } catch (error) {
-      console.error('Error parsing date:', dateString, error);
-      return false;
-    }
-  };
+  // SOLUTION 1: Use useFocusEffect to refetch data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchUserAndAppointments(false); // Don't show full loader when refocusing
+    }, [fetchUserAndAppointments])
+  );
+
+  // SOLUTION 2: Set up real-time subscription for appointments
+  useEffect(() => {
+    let subscriptionKey = null;
+
+    const setupRealtimeSubscription = async () => {
+      try {
+        const currentUser = await AuthService.getCurrentUser();
+        if (currentUser) {
+          subscriptionKey = appointmentManager.subscribeToAppointments(
+            (event) => {
+              // Check if this appointment belongs to the current user
+              if (event.appointment?.user_id === currentUser.$id) {
+                // ENHANCED RETRY LOGIC: Try multiple times to ensure we get the new appointment
+                const retryFetch = async (attempt = 1, maxAttempts = 3) => {
+                  await fetchUserAndAppointments(false);
+                  
+                  // Check if the new appointment is now in state
+                  const newAppointmentId = event.appointment?.$id;
+                  if (newAppointmentId && attempt < maxAttempts) {
+                    // Add a small delay to let state update
+                    setTimeout(() => {
+                      setUpcomingAppointments(currentAppointments => {
+                        const hasNewAppointment = currentAppointments.some(apt => apt.$id === newAppointmentId);
+                        
+                        if (!hasNewAppointment) {
+                          setTimeout(() => retryFetch(attempt + 1, maxAttempts), 1500);
+                        }
+                        
+                        return currentAppointments;
+                      });
+                    }, 500);
+                  }
+                };
+                
+                // Start the retry process with a delay
+                setTimeout(() => retryFetch(), 1000);
+              }
+            }
+          );
+        }
+      } catch (error) {
+        console.error('Error setting up real-time subscription:', error);
+      }
+    };
+
+    setupRealtimeSubscription();
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (subscriptionKey) {
+        appointmentManager.unsubscribe(subscriptionKey);
+      }
+    };
+  }, [fetchUserAndAppointments]);
+
+  // Initial load
+  useEffect(() => {
+    fetchUserAndAppointments();
+  }, [fetchUserAndAppointments]);
+
+  // SOLUTION 3: Add pull-to-refresh functionality
+  const onRefresh = useCallback(() => {
+    fetchUserAndAppointments(false);
+  }, [fetchUserAndAppointments]);
 
   const handleAppointmentClick = (appointment) => {
     router.push({
@@ -96,6 +197,10 @@ export default function UpcomingAppointments() {
   };
 
   const renderAppointmentItem = (appointment) => {
+    // Check if this is a family booking
+    const isFamilyBooking = appointment.is_family_booking || false;
+    const patientName = appointment.patient_name || 'Unknown Patient';
+
     return (
       <TouchableOpacity
         key={appointment.$id}
@@ -106,11 +211,24 @@ export default function UpcomingAppointments() {
         <View style={styles.appointmentHeader}>
           <View style={styles.appointmentInfo}>
             <Text style={styles.appointmentDoctor}>
-              {appointment.doctor_name || 'Doctor'}
+              Dr. {appointment.doctor_name || 'Doctor'}
             </Text>
             <Text style={styles.appointmentSpecialization}>
               {appointment.doctor_specialization || appointment.service_name || 'General Practice'}
             </Text>
+            {/* NEW: Show family member info if applicable */}
+            {(isFamilyBooking || (patientName && patientName !== 'Unknown Patient')) && (
+              <View style={styles.familyInfo}>
+                <Ionicons 
+                  name={isFamilyBooking ? "people" : "person"} 
+                  size={12} 
+                  color="#0AD476" 
+                />
+                <Text style={styles.familyText}>
+                  {isFamilyBooking ? `${patientName} (Family)` : patientName}
+                </Text>
+              </View>
+            )}
           </View>
           <View style={styles.statusBadge}>
             <Text style={styles.statusBadgeText}>Upcoming</Text>
@@ -191,6 +309,14 @@ export default function UpcomingAppointments() {
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            colors={['#0AD476']} // Android
+            tintColor="#0AD476" // iOS
+          />
+        }
       >
         {upcomingAppointments.length > 0 ? (
           <>
@@ -206,7 +332,7 @@ export default function UpcomingAppointments() {
             </Text>
             <TouchableOpacity 
               style={styles.bookButton}
-              onPress={() => router.push('/booking')}
+              onPress={() => router.push('/appointment/appointmentBooking')}
             >
               <Text style={styles.bookButtonText}>Book an Appointment</Text>
             </TouchableOpacity>
@@ -327,6 +453,19 @@ const styles = StyleSheet.create({
   appointmentSpecialization: {
     fontSize: 14,
     color: '#666666',
+    marginBottom: 4,
+  },
+  // NEW: Family info styles
+  familyInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  familyText: {
+    fontSize: 12,
+    color: '#0AD476',
+    fontWeight: '500',
+    marginLeft: 4,
   },
   statusBadge: {
     backgroundColor: '#0AD476',

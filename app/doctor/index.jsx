@@ -1,5 +1,5 @@
 // app/doctor/index.jsx - Complete optimized dashboard with compact appointment tab
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, Image } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +10,8 @@ import { DatabaseService, Query, account } from '../../configs/AppwriteConfig';
 import { COLLECTIONS } from '../../constants';
 import RoleProtected from '../../components/RoleProtected';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native'; // Added for focus refresh
+import { appointmentManager } from '../../service/appointmentUtils'; // Added for real-time updates
 
 export default function DoctorDashboard() {
   return (
@@ -28,8 +30,8 @@ function DoctorDashboardContent() {
   const [loadingAppointments, setLoadingAppointments] = useState(true);
   const [loadingPatients, setLoadingPatients] = useState(true);
   const [patientNames, setPatientNames] = useState({});
-  const [branchNames, setBranchNames] = useState({}); // Added for branch names
-  const [serviceNames, setServiceNames] = useState({}); // Added for service names
+  const [branchNames, setBranchNames] = useState({});
+  const [serviceNames, setServiceNames] = useState({});
   const [currentDate, setCurrentDate] = useState(new Date());
   const [calendarDays, setCalendarDays] = useState([]);
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -42,6 +44,16 @@ function DoctorDashboardContent() {
   useEffect(() => {
     loadUserData();
   }, []);
+
+  // ADDED: Focus effect to refresh data when returning to screen
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.uid) {
+        loadAppointments(user.uid, false); // Don't show loader when refocusing
+        loadPatients(user.uid);
+      }
+    }, [user?.uid])
+  );
 
   const loadUserData = async () => {
     try {
@@ -58,14 +70,27 @@ function DoctorDashboardContent() {
     }
   };
 
-  // Enhanced loadAppointments with branch and patient name fetching
-  const loadAppointments = async (doctorId) => {
+  // UPDATED: Enhanced loadAppointments with real-time subscription and consistent filtering
+  const loadAppointments = async (doctorId, showLoader = true) => {
     try {
-      setLoadingAppointments(true);
-      const appointmentsResponse = await DatabaseService.listDocuments(COLLECTIONS.APPOINTMENTS, []);
+      if (showLoader) {
+        setLoadingAppointments(true);
+      }
+      
+      // Enhanced query with ordering (same as patient HomeScreen)
+      const queries = [
+        Query.orderDesc('$createdAt'),
+        Query.limit(100)
+      ];
+      
+      const appointmentsResponse = await DatabaseService.listDocuments(
+        COLLECTIONS.APPOINTMENTS, 
+        queries
+      );
+      
       let allAppointments = appointmentsResponse.documents || [];
       
-      // Sort appointments by date
+      // Sort appointments by date (same logic as patient screen)
       allAppointments.sort((a, b) => {
         try {
           const dateA = parseAppointmentDate(a.date);
@@ -91,23 +116,119 @@ function DoctorDashboardContent() {
         fetchBranchNames(allAppointments)
       ]);
       
-      // Filter upcoming appointments
+      // UPDATED: Filter upcoming appointments (same logic as patient HomeScreen)
       const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
       const upcoming = allAppointments.filter(apt => {
+        // First check if appointment is cancelled or completed (same as patient screen)
+        const status = apt.status?.toLowerCase();
+        if (status === 'cancelled' || status === 'completed') {
+          return false;
+        }
+        
         const aptDate = parseAppointmentDate(apt.date);
-        return aptDate >= today && apt.status !== 'Cancelled' && apt.status !== 'Completed';
+        return aptDate >= today;
       });
       
-      setUpcomingAppointments(upcoming.slice(0, 5));
+      // Sort upcoming appointments by date (earliest first)
+      const sortedUpcoming = [...upcoming].sort((a, b) => {
+        const partsA = a.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
+        const partsB = b.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
+        
+        if (!partsA || !partsB) return 0;
+        
+        const months = {
+          'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+          'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+        };
+        
+        const dateA = new Date(
+          parseInt(partsA[4]),
+          months[partsA[3]],
+          parseInt(partsA[2])
+        );
+        
+        const dateB = new Date(
+          parseInt(partsB[4]),
+          months[partsB[3]],
+          parseInt(partsB[2])
+        );
+        
+        // If same date, sort by time
+        if (dateA.getTime() === dateB.getTime()) {
+          return (a.time_slot || '').localeCompare(b.time_slot || '');
+        }
+        
+        return dateA - dateB;
+      });
+      
+      setUpcomingAppointments(sortedUpcoming.slice(0, 5));
       
     } catch (error) {
       console.error('Error loading appointments:', error);
     } finally {
-      setLoadingAppointments(false);
+      if (showLoader) {
+        setLoadingAppointments(false);
+      }
     }
   };
 
-  // Enhanced patient name fetching function
+  // ADDED: Set up real-time subscription for appointments (same as patient HomeScreen)
+  useEffect(() => {
+    let subscriptionKey = null;
+
+    const setupRealtimeSubscription = async () => {
+      try {
+        const userData = await getLocalStorage('userDetail');
+        if (userData?.uid) {
+          subscriptionKey = appointmentManager.subscribeToAppointments(
+            (event) => {
+              console.log('Doctor dashboard received appointment update:', event);
+              
+              // Refresh appointments when any appointment changes
+              // Enhanced retry logic for real-time updates
+              const retryFetch = async (attempt = 1, maxAttempts = 3) => {
+                await loadAppointments(userData.uid, false);
+                
+                // Check if the appointment change is reflected
+                const appointmentId = event.appointment?.$id;
+                if (appointmentId && attempt < maxAttempts) {
+                  setTimeout(() => {
+                    setAllAppointments(currentAppointments => {
+                      const hasAppointment = currentAppointments.some(apt => apt.$id === appointmentId);
+                      
+                      if (!hasAppointment && event.type !== 'delete') {
+                        setTimeout(() => retryFetch(attempt + 1, maxAttempts), 1500);
+                      }
+                      
+                      return currentAppointments;
+                    });
+                  }, 500);
+                }
+              };
+              
+              // Start the retry process with a delay
+              setTimeout(() => retryFetch(), 1000);
+            }
+          );
+        }
+      } catch (error) {
+        console.error('Error setting up doctor real-time subscription:', error);
+      }
+    };
+
+    setupRealtimeSubscription();
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (subscriptionKey) {
+        appointmentManager.unsubscribe(subscriptionKey);
+      }
+    };
+  }, [user?.uid]);
+
+  // Enhanced patient name fetching function (same logic as appointments management)
   const fetchPatientNames = async (appointments) => {
     try {
       const nameMap = {};
@@ -177,7 +298,7 @@ function DoctorDashboardContent() {
     }
   };
 
-  // Branch names fetching function
+  // Enhanced branch names fetching function
   const fetchBranchNames = async (appointments) => {
     try {
       const branchIds = [...new Set(appointments.map(apt => apt.branch_id).filter(Boolean))];

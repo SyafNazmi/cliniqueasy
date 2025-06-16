@@ -1,4 +1,4 @@
-// app/(tabs)/Profile.jsx
+// app/(tabs)/Profile.jsx - Updated with enhanced appointment logic from HomeScreen
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native'
 import React, { useEffect, useState } from 'react'
 import { useRouter } from 'expo-router'
@@ -17,29 +17,80 @@ export default function Profile() {
   const [familyMemberCount, setFamilyMemberCount] = useState(0);
   const { logout } = useAuth();
 
+  // Enhanced date parsing function (matching HomeScreen logic)
   const parseAppointmentDate = (dateString) => {
     if (!dateString) return new Date(0);
     
     try {
+      // Handle the format: "Monday, 16 Jun 2025"
       const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
-      if (parts) {
-        const months = {
-          'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-          'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-        };
-        
-        return new Date(
-          parseInt(parts[4]),
-          months[parts[3]],
-          parseInt(parts[2])
-        );
+      if (!parts) {
+        console.log('Date parsing failed for:', dateString);
+        return new Date(dateString); // Fallback to default parsing
       }
       
-      return new Date(dateString);
+      const [_, dayName, dayNum, monthName, year] = parts;
+      const months = {
+        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+      };
+      
+      const monthIndex = months[monthName];
+      if (monthIndex === undefined) {
+        console.log('Unknown month:', monthName);
+        return new Date(dateString);
+      }
+      
+      return new Date(
+        parseInt(year),
+        monthIndex,
+        parseInt(dayNum)
+      );
     } catch (error) {
       console.error('Error parsing date:', dateString, error);
       return new Date(0);
     }
+  };
+
+  // Enhanced function to check if appointment date is in the past (matching HomeScreen logic)
+  const isDatePast = (dateString) => {
+    if (!dateString) return false;
+    
+    try {
+      const appointmentDate = parseAppointmentDate(dateString);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Set to start of today
+      
+      return appointmentDate < today;
+    } catch (error) {
+      console.error('Error checking if date is past:', dateString, error);
+      return false;
+    }
+  };
+
+  // Enhanced function to filter upcoming appointments (matching HomeScreen logic)
+  const getUpcomingAppointments = (appointmentsList) => {
+    return appointmentsList.filter(appointment => {
+      // First check if appointment is cancelled or completed
+      const status = appointment.status?.toLowerCase();
+      if (status === 'cancelled' || status === 'completed') {
+        return false;
+      }
+      
+      // Then check if date is in the future
+      return !isDatePast(appointment.date);
+    });
+  };
+
+  // Enhanced function to filter past appointments
+  const getPastAppointments = (appointmentsList) => {
+    return appointmentsList.filter(appointment => {
+      // Include completed appointments or appointments in the past
+      const status = appointment.status?.toLowerCase();
+      const isPast = isDatePast(appointment.date);
+      
+      return status === 'completed' || (isPast && status !== 'cancelled');
+    });
   };
 
   useEffect(() => {
@@ -48,52 +99,52 @@ export default function Profile() {
   }, []);
 
   const loadFamilyMemberCount = async () => {
-  try {
-    const user = await account.get();
-    
-    // First try to get profiles with profileType (new data structure)
-    let queries = [
-      DatabaseService.createQuery('equal', 'userId', user.$id),
-      DatabaseService.createQuery('equal', 'profileType', PROFILE_TYPES.FAMILY_MEMBER)
-    ];
-
-    let response = await DatabaseService.listDocuments(
-      COLLECTIONS.PATIENT_PROFILES,
-      queries,
-      100
-    );
-
-    let familyMemberCount = response.documents?.length || 0;
-
-    // If no results with profileType, fall back to legacy method
-    if (familyMemberCount === 0) {
-      console.log('No profiles found with profileType, checking legacy data for count...');
+    try {
+      const user = await account.get();
       
-      // Get all profiles for this user (legacy method)
-      const legacyQueries = [
-        DatabaseService.createQuery('equal', 'userId', user.$id)
+      // First try to get profiles with profileType (new data structure)
+      let queries = [
+        DatabaseService.createQuery('equal', 'userId', user.$id),
+        DatabaseService.createQuery('equal', 'profileType', PROFILE_TYPES.FAMILY_MEMBER)
       ];
 
-      const legacyResponse = await DatabaseService.listDocuments(
+      let response = await DatabaseService.listDocuments(
         COLLECTIONS.PATIENT_PROFILES,
-        legacyQueries,
+        queries,
         100
       );
 
-      // Filter out user's own profile by email (legacy method)
-      const familyMembers = (legacyResponse.documents || []).filter(profile => {
-        return profile.email !== user.email;
-      });
+      let familyMemberCount = response.documents?.length || 0;
 
-      familyMemberCount = familyMembers.length;
+      // If no results with profileType, fall back to legacy method
+      if (familyMemberCount === 0) {
+        console.log('No profiles found with profileType, checking legacy data for count...');
+        
+        // Get all profiles for this user (legacy method)
+        const legacyQueries = [
+          DatabaseService.createQuery('equal', 'userId', user.$id)
+        ];
+
+        const legacyResponse = await DatabaseService.listDocuments(
+          COLLECTIONS.PATIENT_PROFILES,
+          legacyQueries,
+          100
+        );
+
+        // Filter out user's own profile by email (legacy method)
+        const familyMembers = (legacyResponse.documents || []).filter(profile => {
+          return profile.email !== user.email;
+        });
+
+        familyMemberCount = familyMembers.length;
+      }
+      
+      setFamilyMemberCount(familyMemberCount);
+    } catch (error) {
+      console.error('Error loading family member count:', error);
+      setFamilyMemberCount(0);
     }
-    
-    setFamilyMemberCount(familyMemberCount);
-  } catch (error) {
-    console.error('Error loading family member count:', error);
-    setFamilyMemberCount(0);
-  }
-};
+  };
 
   const loadProfileAndAppointments = async () => {
     try {
@@ -101,6 +152,13 @@ export default function Profile() {
       const currentUser = await account.get();
       
       if (currentUser) {
+        // Enhanced queries to get more appointments and order them properly
+        const appointmentQueries = [
+          Query.equal('user_id', currentUser.$id),
+          Query.orderDesc('$createdAt'),
+          Query.limit(100)
+        ];
+        
         const [profileResponse, appointmentsResponse] = await Promise.all([
           DatabaseService.listDocuments(
             COLLECTIONS.PATIENT_PROFILES,
@@ -109,8 +167,7 @@ export default function Profile() {
           ),
           DatabaseService.listDocuments(
             COLLECTIONS.APPOINTMENTS,
-            [Query.equal('user_id', currentUser.$id)],
-            100
+            appointmentQueries
           )
         ]);
         
@@ -118,6 +175,7 @@ export default function Profile() {
           setProfile(profileResponse.documents[0]);
         }
         
+        // Sort appointments by date (newest first for display purposes)
         const sortedAppointments = appointmentsResponse.documents.sort((a, b) => {
           if (!a.date || !b.date) return 0;
           
@@ -199,36 +257,14 @@ export default function Profile() {
     return Math.round((requiredCompletion + optionalCompletion) * 100);
   };
 
-  const isDatePast = (dateString) => {
-    if (!dateString) return false;
-    
-    try {
-      const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
-      if (!parts) return false;
-      
-      const months = {
-        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-      };
-      
-      const appointmentDate = new Date(
-        parseInt(parts[4]),
-        months[parts[3]],
-        parseInt(parts[2])
-      );
-      
-      appointmentDate.setHours(23, 59, 59, 999);
-      return appointmentDate < new Date();
-    } catch (error) {
-      console.error('Error parsing date:', dateString, error);
-      return false;
-    }
-  };
-
-  // Separate appointments into upcoming and past
-  const upcomingAppointments = appointments.filter(app => !isDatePast(app.date));
-  const pastAppointments = appointments.filter(app => isDatePast(app.date));
+  // Calculate appointment statistics using enhanced logic
+  const upcomingAppointments = getUpcomingAppointments(appointments);
+  const pastAppointments = getPastAppointments(appointments);
   const completion = calculateProfileCompletion();
+
+  // Calculate family booking statistics
+  const upcomingFamilyBookings = upcomingAppointments.filter(apt => apt.is_family_booking === true);
+  const hasUpcomingFamilyBookings = upcomingFamilyBookings.length > 0;
 
   if (isLoading) {
     return (
@@ -312,35 +348,35 @@ export default function Profile() {
           style={[styles.menuItem, styles.familyButtonWithCount]}
           onPress={() => router.push('/profile/family-members')}
         >
-        <View style={styles.menuItemLeft}>
-          <View style={styles.iconContainer}>
-            <Ionicons name="people" size={20} color="#0AD476" />
-            {familyMemberCount > 0 && (
-              <View style={styles.familyCountBadge}>
-                <Text style={styles.familyCountText}>{familyMemberCount}</Text>
-              </View>
-            )}
-          </View>
-              <View>
-                <Text style={styles.menuItemText}>Family Members</Text>
-                <Text style={styles.menuItemSubtext}>
-                  {familyMemberCount === 0 
-                    ? "Add family members to your account" 
-                    : `Manage ${familyMemberCount} family member${familyMemberCount !== 1 ? 's' : ''}`
-                  }
-                </Text>
-              </View>
+          <View style={styles.menuItemLeft}>
+            <View style={styles.iconContainer}>
+              <Ionicons name="people" size={20} color="#0AD476" />
+              {familyMemberCount > 0 && (
+                <View style={styles.familyCountBadge}>
+                  <Text style={styles.familyCountText}>{familyMemberCount}</Text>
+                </View>
+              )}
             </View>
-            <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
-          </TouchableOpacity>
+            <View>
+              <Text style={styles.menuItemText}>Family Members</Text>
+              <Text style={styles.menuItemSubtext}>
+                {familyMemberCount === 0 
+                  ? "Add family members to your account" 
+                  : `Manage ${familyMemberCount} family member${familyMemberCount !== 1 ? 's' : ''}`
+                }
+              </Text>
+            </View>
           </View>
+          <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
+        </TouchableOpacity>
+      </View>
 
-      {/* Appointments Summary */}
+      {/* Enhanced Appointments Summary */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Appointments</Text>
           {appointments.length > 0 && (
-            <TouchableOpacity onPress={() => router.push('/profile/upcoming-appointments')}>
+            <TouchableOpacity onPress={() => router.push('/appointment')}>
               <Text style={styles.viewAllLink}>View All</Text>
             </TouchableOpacity>
           )}
@@ -353,11 +389,17 @@ export default function Profile() {
             <Text style={styles.emptyAppointmentsSubtext}>
               Your appointment history will appear here
             </Text>
+            <TouchableOpacity 
+              style={styles.bookFirstButton}
+              onPress={() => router.push('/appointment/appointmentBooking')}
+            >
+              <Text style={styles.bookFirstButtonText}>Book Your First Appointment</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.appointmentsMenuContainer}>
-            {/* Upcoming Appointments */}
-            {upcomingAppointments.length > 0 && (
+            {/* Enhanced Upcoming Appointments */}
+            {upcomingAppointments.length > 0 ? (
               <TouchableOpacity 
                 style={styles.menuItem}
                 onPress={() => router.push('/profile/upcoming-appointments')}
@@ -370,16 +412,40 @@ export default function Profile() {
                     <Text style={styles.menuItemText}>Upcoming Appointments</Text>
                     <Text style={styles.menuItemSubtext}>
                       {upcomingAppointments.length} appointment{upcomingAppointments.length > 1 ? 's' : ''} scheduled
+                      {hasUpcomingFamilyBookings && ' (including family)'}
                     </Text>
                   </View>
                 </View>
                 <View style={styles.appointmentBadge}>
                   <Text style={styles.appointmentBadgeText}>{upcomingAppointments.length}</Text>
+                  {hasUpcomingFamilyBookings && (
+                    <View style={styles.familyIndicatorSmall}>
+                      <Ionicons name="people" size={10} color="#0AD476" />
+                    </View>
+                  )}
                 </View>
               </TouchableOpacity>
+            ) : (
+              <View style={styles.noUpcomingCard}>
+                <View style={styles.menuItemLeft}>
+                  <View style={[styles.iconContainer, { backgroundColor: '#F5F5F5' }]}>
+                    <Ionicons name="calendar-outline" size={20} color="#8E8E93" />
+                  </View>
+                  <View>
+                    <Text style={[styles.menuItemText, { color: '#8E8E93' }]}>No Upcoming Appointments</Text>
+                    <Text style={styles.menuItemSubtext}>Schedule your next appointment</Text>
+                  </View>
+                </View>
+                <TouchableOpacity 
+                  style={styles.quickBookButton}
+                  onPress={() => router.push('/appointment/appointmentBooking')}
+                >
+                  <Ionicons name="add" size={16} color="#0AD476" />
+                </TouchableOpacity>
+              </View>
             )}
 
-            {/* Past Appointments */}
+            {/* Enhanced Past Appointments */}
             {pastAppointments.length > 0 && (
               <TouchableOpacity 
                 style={styles.menuItem}
@@ -405,7 +471,7 @@ export default function Profile() {
             {/* All Appointments Summary */}
             <TouchableOpacity 
               style={[styles.menuItem, { borderBottomWidth: 0 }]}
-              onPress={() => router.push('/profile/upcoming-appointments')}
+              onPress={() => router.push('/appointment')}
             >
               <View style={styles.menuItemLeft}>
                 <View style={[styles.iconContainer, { backgroundColor: '#F0FDF4' }]}>
@@ -414,7 +480,7 @@ export default function Profile() {
                 <View>
                   <Text style={styles.menuItemText}>All Appointments</Text>
                   <Text style={styles.menuItemSubtext}>
-                    View complete appointment history
+                    View complete appointment history ({appointments.length} total)
                   </Text>
                 </View>
               </View>
@@ -643,6 +709,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+    position: 'relative',
+  },
+  familyCountBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#0AD476',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  familyCountText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   menuItemText: {
     fontSize: 16,
@@ -669,18 +754,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#8E8E93',
     marginTop: 8,
-    marginBottom: 16,
+    marginBottom: 4,
   },
   emptyAppointmentsSubtext: {
     fontSize: 14,
     color: '#C7C7CC',
-    marginTop: 4,
+    marginBottom: 16,
     textAlign: 'center',
   },
   bookFirstButton: {
     backgroundColor: '#0AD476',
     paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 8,
   },
   bookFirstButtonText: {
@@ -688,54 +773,48 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#FFFFFF',
   },
-  appointmentsContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 8,
+  appointmentsMenuContainer: {
+    paddingHorizontal: 0,
   },
-  appointmentSummaryCard: {
+  appointmentBadge: {
+    backgroundColor: '#E8F5E8',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  appointmentBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0AD476',
+  },
+  familyIndicatorSmall: {
+    marginLeft: 4,
+    backgroundColor: '#dcfce7',
+    borderRadius: 8,
+    width: 16,
+    height: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  noUpcomingCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#F8F9FA',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#F0F0F0',
   },
-  appointmentSummaryLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  appointmentIcon: {
+  quickBookButton: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 18,
     width: 36,
     height: 36,
-    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
-  },
-  appointmentSummaryTitle: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#000000',
-    marginBottom: 2,
-  },
-  appointmentSummarySubtext: {
-    fontSize: 13,
-    color: '#8E8E93',
-  },
-  appointmentTotalCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 4,
-  },
-  appointmentTotalText: {
-    fontSize: 14,
-    color: '#0AD476',
-    marginLeft: 8,
-    fontWeight: '500',
+    borderWidth: 1,
+    borderColor: '#E8F5E8',
   },
 });

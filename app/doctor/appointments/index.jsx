@@ -1,5 +1,6 @@
-// app/doctor/appointments/index.jsx - FIXED VERSION WITH PROPER HEADER AND PAST COUNT
-import React, { useState, useEffect } from 'react';
+
+// app/doctor/appointments/index.jsx - FIXED with real-time updates and focus refresh
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -21,6 +22,8 @@ import PageHeader from '../../../components/PageHeader';
 import { DatabaseService, Query } from '../../../configs/AppwriteConfig';
 import { getLocalStorage } from '../../../service/Storage';
 import { COLLECTIONS } from '../../../constants';
+import { useFocusEffect } from '@react-navigation/native'; // Added for focus refresh
+import { appointmentManager } from '../../../service/appointmentUtils'; // Added for real-time updates
 
 const { width } = Dimensions.get('window');
 
@@ -70,13 +73,78 @@ export default function EnhancedAppointmentsManagement() {
     loadAppointments();
   }, []);
 
+  // ADDED: Focus effect to refresh data when returning to screen
+  useFocusEffect(
+    useCallback(() => {
+      loadAppointments(false); // Don't show loader when refocusing
+    }, [])
+  );
+
+  // ADDED: Set up real-time subscription for appointments
+  useEffect(() => {
+    let subscriptionKey = null;
+
+    const setupRealtimeSubscription = async () => {
+      try {
+        const userData = await getLocalStorage('userDetail');
+        if (userData?.uid) {
+          subscriptionKey = appointmentManager.subscribeToAppointments(
+            (event) => {
+              console.log('Doctor appointments management received update:', event);
+              
+              // Refresh appointments when any appointment changes
+              const retryFetch = async (attempt = 1, maxAttempts = 3) => {
+                await loadAppointments(false);
+                
+                // Check if the appointment change is reflected
+                const appointmentId = event.appointment?.$id;
+                if (appointmentId && attempt < maxAttempts) {
+                  setTimeout(() => {
+                    setAllAppointments(currentAppointments => {
+                      const hasAppointment = currentAppointments.some(apt => apt.$id === appointmentId);
+                      
+                      if (!hasAppointment && event.type !== 'delete') {
+                        setTimeout(() => retryFetch(attempt + 1, maxAttempts), 1500);
+                      }
+                      
+                      return currentAppointments;
+                    });
+                  }, 500);
+                }
+              };
+              
+              // Start the retry process with a delay
+              setTimeout(() => retryFetch(), 1000);
+            }
+          );
+        }
+      } catch (error) {
+        console.error('Error setting up doctor appointments real-time subscription:', error);
+      }
+    };
+
+    setupRealtimeSubscription();
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (subscriptionKey) {
+        appointmentManager.unsubscribe(subscriptionKey);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     filterAppointments();
   }, [allAppointments, searchQuery, filter, selectedServices, selectedRegions, selectedStatuses, selectedDateRange, customDateFrom, customDateTo]);
 
-  const loadAppointments = async () => {
+  // UPDATED: Enhanced loadAppointments with same logic as patient HomeScreen
+  const loadAppointments = async (showLoader = true) => {
     try {
-      setLoading(true);
+      if (showLoader) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       
       const userData = await getLocalStorage('userDetail');
       if (!userData?.uid) {
@@ -84,14 +152,20 @@ export default function EnhancedAppointmentsManagement() {
         return;
       }
 
+      // Enhanced query with ordering (same as patient HomeScreen)
+      const queries = [
+        Query.orderDesc('$createdAt'),
+        Query.limit(100)
+      ];
+      
       const appointmentsResponse = await DatabaseService.listDocuments(
         COLLECTIONS.APPOINTMENTS,
-        []
+        queries
       );
       
       let allAppointments = appointmentsResponse.documents || [];
       
-      // Sort appointments by date
+      // Sort appointments by date (same logic as patient HomeScreen)
       allAppointments.sort((a, b) => {
         try {
           const dateA = parseAppointmentDate(a.date);
@@ -120,7 +194,7 @@ export default function EnhancedAppointmentsManagement() {
       // Calculate stats
       calculateStats(allAppointments);
       
-      // Update regions after branch data is loaded (small delay to ensure state is updated)
+      // Update regions after branch data is loaded
       setTimeout(() => {
         updateAvailableRegions();
       }, 100);
@@ -130,13 +204,12 @@ export default function EnhancedAppointmentsManagement() {
       Alert.alert('Error', 'Failed to load appointments');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   const onRefresh = async () => {
-    setRefreshing(true);
-    await loadAppointments();
-    setRefreshing(false);
+    await loadAppointments(false);
   };
 
   const parseAppointmentDate = (dateString) => {
@@ -182,7 +255,7 @@ export default function EnhancedAppointmentsManagement() {
     }
   };
 
-  // Enhanced patient name fetching with proper family booking support
+  // Enhanced patient name fetching with proper family booking support (same as dashboard)
   const fetchPatientNames = async (appointments) => {
     try {
       const nameMap = {};
@@ -427,7 +500,7 @@ export default function EnhancedAppointmentsManagement() {
     setAvailableRegions(regions.sort());
   };
 
-  // FIXED: Proper stats calculation including proper PAST count
+  // UPDATED: Enhanced stats calculation with same logic as patient HomeScreen
   const calculateStats = (appointments) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -447,26 +520,26 @@ export default function EnhancedAppointmentsManagement() {
       const aptDate = parseAppointmentDate(apt.date);
       aptDate.setHours(0, 0, 0, 0);
       
-      const status = apt.status || APPOINTMENT_STATUS.BOOKED;
+      const status = apt.status?.toLowerCase() || 'booked';
 
       // Count by status
       switch (status) {
-        case APPOINTMENT_STATUS.BOOKED:
+        case 'booked':
           stats.booked++;
           break;
-        case APPOINTMENT_STATUS.CONFIRMED:
+        case 'confirmed':
           stats.confirmed++;
           break;
-        case APPOINTMENT_STATUS.COMPLETED:
+        case 'completed':
           stats.completed++;
           break;
-        case APPOINTMENT_STATUS.CANCELLED:
+        case 'cancelled':
           stats.cancelled++;
           break;
       }
 
-      // Count upcoming (future dates that are not cancelled or completed)
-      if (aptDate >= today && status !== APPOINTMENT_STATUS.CANCELLED && status !== APPOINTMENT_STATUS.COMPLETED) {
+      // Count upcoming (same logic as patient HomeScreen)
+      if (aptDate >= today && status !== 'cancelled' && status !== 'completed') {
         stats.upcoming++;
       }
 
@@ -475,8 +548,8 @@ export default function EnhancedAppointmentsManagement() {
         stats.today++;
       }
 
-      // FIXED: Count past appointments (past dates OR completed/cancelled status)
-      if (aptDate < today || status === APPOINTMENT_STATUS.COMPLETED || status === APPOINTMENT_STATUS.CANCELLED) {
+      // Count past appointments (same logic as patient HomeScreen)
+      if (aptDate < today || status === 'completed' || status === 'cancelled') {
         stats.past++;
       }
     });
@@ -519,6 +592,7 @@ export default function EnhancedAppointmentsManagement() {
     }
   };
 
+  // UPDATED: Enhanced filterAppointments with same logic as patient HomeScreen
   const filterAppointments = () => {
     let filtered = allAppointments;
     const now = new Date();
@@ -527,14 +601,26 @@ export default function EnhancedAppointmentsManagement() {
     switch (filter) {
       case 'upcoming':
         filtered = filtered.filter(apt => {
+          // Same logic as patient HomeScreen
+          const status = apt.status?.toLowerCase();
+          if (status === 'cancelled' || status === 'completed') {
+            return false;
+          }
+          
           const aptDate = parseAppointmentDate(apt.date);
-          return aptDate >= now && apt.status !== APPOINTMENT_STATUS.CANCELLED && apt.status !== APPOINTMENT_STATUS.COMPLETED;
+          return aptDate >= now;
         });
         break;
       case 'past':
         filtered = filtered.filter(apt => {
+          // Same logic as patient HomeScreen
+          const status = apt.status?.toLowerCase();
+          if (status === 'cancelled' || status === 'completed') {
+            return true;
+          }
+          
           const aptDate = parseAppointmentDate(apt.date);
-          return aptDate < now || apt.status === APPOINTMENT_STATUS.COMPLETED || apt.status === APPOINTMENT_STATUS.CANCELLED;
+          return aptDate < now;
         });
         break;
       case 'today':
@@ -673,7 +759,7 @@ export default function EnhancedAppointmentsManagement() {
     </View>
   );
 
-  const renderFilterModal = () => (
+    const renderFilterModal = () => (
     <Modal
       visible={showFilterModal}
       animationType="slide"
@@ -850,8 +936,8 @@ export default function EnhancedAppointmentsManagement() {
       </View>
     </Modal>
   );
+    
 
-  // UPDATED: Clean minimal appointment card design like image 2
   const renderMinimalAppointmentCard = ({ item: appointment }) => {
     const statusInfo = getStatusInfo(appointment.status);
     const branchInfo = getBranchInfo(appointment.branch_id);
@@ -986,55 +1072,6 @@ export default function EnhancedAppointmentsManagement() {
           )}
         </TouchableOpacity>
       </View>
-
-      {(selectedServices.length > 0 || selectedRegions.length > 0 || selectedStatuses.length > 0 || selectedDateRange !== 'all') && (
-        <View style={styles.activeFiltersContainer}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {selectedServices.map((service) => (
-              <View key={service} style={styles.activeFilterChip}>
-                <Text style={styles.activeFilterText}>{service}</Text>
-                <TouchableOpacity
-                  onPress={() => setSelectedServices(selectedServices.filter(s => s !== service))}
-                >
-                  <Ionicons name="close" size={14} color="#1a8e2d" />
-                </TouchableOpacity>
-              </View>
-            ))}
-            {selectedRegions.map((region) => (
-              <View key={region} style={styles.activeFilterChip}>
-                <Text style={styles.activeFilterText}>{region}</Text>
-                <TouchableOpacity
-                  onPress={() => setSelectedRegions(selectedRegions.filter(r => r !== region))}
-                >
-                  <Ionicons name="close" size={14} color="#1a8e2d" />
-                </TouchableOpacity>
-              </View>
-            ))}
-            {selectedStatuses.map((status) => (
-              <View key={status} style={styles.activeFilterChip}>
-                <Text style={styles.activeFilterText}>{status}</Text>
-                <TouchableOpacity
-                  onPress={() => setSelectedStatuses(selectedStatuses.filter(s => s !== status))}
-                >
-                  <Ionicons name="close" size={14} color="#1a8e2d" />
-                </TouchableOpacity>
-              </View>
-            ))}
-            {selectedDateRange !== 'all' && (
-              <View style={styles.activeFilterChip}>
-                <Text style={styles.activeFilterText}>
-                  {selectedDateRange === 'custom' ? 'Custom Date' : 
-                   selectedDateRange === 'today' ? 'Today' :
-                   selectedDateRange === 'week' ? 'Last 7 Days' : 'Last 30 Days'}
-                </Text>
-                <TouchableOpacity onPress={() => setSelectedDateRange('all')}>
-                  <Ionicons name="close" size={14} color="#1a8e2d" />
-                </TouchableOpacity>
-              </View>
-            )}
-          </ScrollView>
-        </View>
-      )}
 
       <FlatList
         data={filteredAppointments}

@@ -1,67 +1,149 @@
-import { View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, StyleSheet } from 'react-native'
-import React, { useEffect, useState } from 'react'
+import { View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, StyleSheet, RefreshControl, SafeAreaView, StatusBar } from 'react-native'
+import React, { useEffect, useState, useCallback } from 'react'
+import { useFocusEffect } from '@react-navigation/native'
 import Header from "../../components/Header";
 import AppointmentCard from '../../components/AppointmentCard';
 import DoctorSpeciality from '../../components/DoctorSpeciality';
 import NearbyHospitals from '../../components/NearbyHospitals';
 import { router, useRouter } from 'expo-router';
 import { AuthService, DatabaseService, Query } from '../../configs/AppwriteConfig';
-import { COLLECTIONS } from '../../constants'; // Import COLLECTIONS constant
+import { COLLECTIONS } from '../../constants';
 import { Ionicons } from '@expo/vector-icons';
+import { appointmentManager } from '../../service/appointmentUtils';
 
 export default function HomeScreen() {
   const router = useRouter();
   const [appointments, setAppointments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [user, setUser] = useState(null);
-  // NEW: Add family booking stats
   const [familyBookingStats, setFamilyBookingStats] = useState({
     total: 0,
     family: 0,
     own: 0
   });
 
-  useEffect(() => {
-    const fetchUserAndAppointments = async () => {
-      try {
+  // Function to fetch appointments (extracted for reuse)
+  const fetchUserAndAppointments = useCallback(async (showLoader = true) => {
+    try {
+      if (showLoader) {
         setIsLoading(true);
-        
-        // Get current user
-        const currentUser = await AuthService.getCurrentUser();
-        setUser(currentUser);
-        
-        // Fetch user's appointments from Appwrite
-        if (currentUser) {
-          const response = await DatabaseService.listDocuments(
-            COLLECTIONS.APPOINTMENTS, // Use constant instead of hardcoded ID
-            [Query.equal('user_id', currentUser.$id)],
-            100 // Limit
-          );
-          
-          const appointmentDocuments = response.documents || [];
-          setAppointments(appointmentDocuments);
-          
-          // NEW: Calculate family booking stats
-          const familyBookings = appointmentDocuments.filter(apt => apt.is_family_booking === true);
-          const ownBookings = appointmentDocuments.filter(apt => apt.is_family_booking !== true); // Handle undefined/false/null
-          
-          setFamilyBookingStats({
-            total: appointmentDocuments.length,
-            family: familyBookings.length,
-            own: ownBookings.length
-          });
-        }
-      } catch (error) {
-        console.error('Error fetching data:', error);
-      } finally {
-        setIsLoading(false);
+      } else {
+        setIsRefreshing(true);
       }
-    };
-    
-    fetchUserAndAppointments();
+      
+      // Get current user
+      const currentUser = await AuthService.getCurrentUser();
+      setUser(currentUser);
+      
+      // Fetch user's appointments from Appwrite
+      if (currentUser) {
+        // Enhanced query with ordering to get newest first
+        const queries = [
+          Query.equal('user_id', currentUser.$id),
+          Query.orderDesc('$createdAt'),
+          Query.limit(100)
+        ];
+        
+        const response = await DatabaseService.listDocuments(
+          COLLECTIONS.APPOINTMENTS,
+          queries
+        );
+        
+        const appointmentDocuments = response.documents || [];
+        setAppointments(appointmentDocuments);
+        
+        // Calculate family booking stats
+        const familyBookings = appointmentDocuments.filter(apt => apt.is_family_booking === true);
+        const ownBookings = appointmentDocuments.filter(apt => apt.is_family_booking !== true);
+        
+        setFamilyBookingStats({
+          total: appointmentDocuments.length,
+          family: familyBookings.length,
+          own: ownBookings.length
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   }, []);
 
-  // Find upcoming appointments (today or in the future) - ENHANCED
+  // Use useFocusEffect to refetch data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchUserAndAppointments(false); // Don't show full loader when refocusing
+    }, [fetchUserAndAppointments])
+  );
+
+  // Set up real-time subscription for appointments
+  useEffect(() => {
+    let subscriptionKey = null;
+
+    const setupRealtimeSubscription = async () => {
+      try {
+        const currentUser = await AuthService.getCurrentUser();
+        if (currentUser) {
+          subscriptionKey = appointmentManager.subscribeToAppointments(
+            (event) => {
+              // Check if this appointment belongs to the current user
+              if (event.appointment?.user_id === currentUser.$id) {
+                // Enhanced retry logic: Try multiple times to ensure we get the new appointment
+                const retryFetch = async (attempt = 1, maxAttempts = 3) => {
+                  await fetchUserAndAppointments(false);
+                  
+                  // Check if the new appointment is now in state
+                  const newAppointmentId = event.appointment?.$id;
+                  if (newAppointmentId && attempt < maxAttempts) {
+                    // Add a small delay to let state update
+                    setTimeout(() => {
+                      setAppointments(currentAppointments => {
+                        const hasNewAppointment = currentAppointments.some(apt => apt.$id === newAppointmentId);
+                        
+                        if (!hasNewAppointment) {
+                          setTimeout(() => retryFetch(attempt + 1, maxAttempts), 1500);
+                        }
+                        
+                        return currentAppointments;
+                      });
+                    }, 500);
+                  }
+                };
+                
+                // Start the retry process with a delay
+                setTimeout(() => retryFetch(), 1000);
+              }
+            }
+          );
+        }
+      } catch (error) {
+        console.error('Error setting up real-time subscription:', error);
+      }
+    };
+
+    setupRealtimeSubscription();
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (subscriptionKey) {
+        appointmentManager.unsubscribe(subscriptionKey);
+      }
+    };
+  }, [fetchUserAndAppointments]);
+
+  // Initial load
+  useEffect(() => {
+    fetchUserAndAppointments();
+  }, [fetchUserAndAppointments]);
+
+  // Add pull-to-refresh functionality
+  const onRefresh = useCallback(() => {
+    fetchUserAndAppointments(false);
+  }, [fetchUserAndAppointments]);
+
+  // Find upcoming appointments (today or in the future)
   const upcomingAppointments = appointments.filter(appointment => {
     // First check if appointment is cancelled or completed
     const status = appointment.status?.toLowerCase();
@@ -123,153 +205,169 @@ export default function HomeScreen() {
     return dateA - dateB;
   });
 
-  // NEW: Calculate family booking info for upcoming appointments
+  // Calculate family booking info for upcoming appointments
   const upcomingFamilyBookings = sortedUpcomingAppointments.filter(apt => apt.is_family_booking === true);
   const hasUpcomingFamilyBookings = upcomingFamilyBookings.length > 0;
 
   return (
-  <ScrollView style={styles.container}>
-    <View style={styles.content}>
-      <Header />
-      {/* REMOVED: SearchBar component */}
-      
-      {/* ENHANCED: Appointment Summary Cards - Better spacing */}
-      {familyBookingStats.total > 0 && (
-        <View style={styles.enhancedSummaryContainer}>
-          {/* Your Appointments Card */}
-          <TouchableOpacity 
-            style={[styles.summaryCard, styles.yourAppointmentsCard]}
-            onPress={() => router.push('/appointment?filter=own')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.summaryCardHeader}>
-              <View style={[styles.summaryIconContainer, styles.yourAppointmentsIcon]}>
-                <Ionicons name="person" size={20} color="#007AFF" />
-              </View>
-              <Text style={styles.summaryNumber}>{familyBookingStats.own}</Text>
-            </View>
-            <Text style={styles.summaryLabel}>Your Appointments</Text>
-            <View style={styles.summaryProgress}>
-              <View style={[
-                styles.progressBar, 
-                styles.yourAppointmentsProgress,
-                { width: `${familyBookingStats.total > 0 ? (familyBookingStats.own / familyBookingStats.total) * 100 : 0}%` }
-              ]} />
-            </View>
-          </TouchableOpacity>
-
-          {/* Family Appointments Card */}
-          <TouchableOpacity 
-            style={[styles.summaryCard, styles.familyAppointmentsCard]}
-            onPress={() => router.push('/appointment?filter=family')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.summaryCardHeader}>
-              <View style={[styles.summaryIconContainer, styles.familyAppointmentsIcon]}>
-                <Ionicons name="people" size={20} color="#0AD476" />
-              </View>
-              <Text style={styles.summaryNumber}>{familyBookingStats.family}</Text>
-            </View>
-            <Text style={styles.summaryLabel}>Family Appointments</Text>
-            <View style={styles.summaryProgress}>
-              <View style={[
-                styles.progressBar, 
-                styles.familyAppointmentsProgress,
-                { width: `${familyBookingStats.total > 0 ? (familyBookingStats.family / familyBookingStats.total) * 100 : 0}%` }
-              ]} />
-            </View>
-          </TouchableOpacity>
-        </View>
-      )}
-      
-      {/* FIXED: Upcoming Appointments Section - Removed extra marginTop */}
-      <View style={styles.sectionContainer}>
-        <View style={styles.sectionHeader}>
-          <View style={styles.titleContainer}>
-            <Text style={styles.sectionTitle}>Upcoming Schedule</Text>
-            <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>
-                {sortedUpcomingAppointments.length}
-              </Text>
-            </View>
-            {/* Family indicator */}
-            {hasUpcomingFamilyBookings && (
-              <View style={styles.familyIndicator}>
-                <Ionicons name="people" size={12} color="#0AD476" />
-              </View>
-            )}
-          </View>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="white" />
+      <ScrollView 
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            colors={['#0AD476']} // Android
+            tintColor="#0AD476" // iOS
+          />
+        }
+      >
+        <View style={styles.content}>
+          <Header />
           
-          <TouchableOpacity 
-            onPress={() => router.push('/appointment')}
-            style={styles.seeAllButton}
-          >
-            <Text style={styles.seeAllText}>See All</Text>
-          </TouchableOpacity>
-        </View>
-        
-        {/* Rest of your appointment content... */}
-        {isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#0AD476" />
-          </View>
-        ) : sortedUpcomingAppointments.length > 0 ? (
-          <View>
-            <AppointmentCard 
-              appointment={sortedUpcomingAppointments[0]} 
-              currentUserId={user?.$id}
-            />
-            
-            {sortedUpcomingAppointments.length > 1 && (
+          {/* Appointment Summary Cards */}
+          {familyBookingStats.total > 0 && (
+            <View style={styles.enhancedSummaryContainer}>
+              {/* Your Appointments Card */}
+              <TouchableOpacity 
+                style={[styles.summaryCard, styles.yourAppointmentsCard]}
+                onPress={() => router.push('/appointment?filter=own')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.summaryCardHeader}>
+                  <View style={[styles.summaryIconContainer, styles.yourAppointmentsIcon]}>
+                    <Ionicons name="person" size={20} color="#007AFF" />
+                  </View>
+                  <Text style={styles.summaryNumber}>{familyBookingStats.own}</Text>
+                </View>
+                <Text style={styles.summaryLabel}>Your Appointments</Text>
+                <View style={styles.summaryProgress}>
+                  <View style={[
+                    styles.progressBar, 
+                    styles.yourAppointmentsProgress,
+                    { width: `${familyBookingStats.total > 0 ? (familyBookingStats.own / familyBookingStats.total) * 100 : 0}%` }
+                  ]} />
+                </View>
+              </TouchableOpacity>
+
+              {/* Family Appointments Card */}
+              <TouchableOpacity 
+                style={[styles.summaryCard, styles.familyAppointmentsCard]}
+                onPress={() => router.push('/appointment?filter=family')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.summaryCardHeader}>
+                  <View style={[styles.summaryIconContainer, styles.familyAppointmentsIcon]}>
+                    <Ionicons name="people" size={20} color="#0AD476" />
+                  </View>
+                  <Text style={styles.summaryNumber}>{familyBookingStats.family}</Text>
+                </View>
+                <Text style={styles.summaryLabel}>Family Appointments</Text>
+                <View style={styles.summaryProgress}>
+                  <View style={[
+                    styles.progressBar, 
+                    styles.familyAppointmentsProgress,
+                    { width: `${familyBookingStats.total > 0 ? (familyBookingStats.family / familyBookingStats.total) * 100 : 0}%` }
+                  ]} />
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
+          
+          {/* Upcoming Appointments Section */}
+          <View style={styles.sectionContainer}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.titleContainer}>
+                <Text style={styles.sectionTitle}>Upcoming Schedule</Text>
+                <View style={styles.countBadge}>
+                  <Text style={styles.countBadgeText}>
+                    {sortedUpcomingAppointments.length}
+                  </Text>
+                </View>
+                {/* Family indicator */}
+                {hasUpcomingFamilyBookings && (
+                  <View style={styles.familyIndicator}>
+                    <Ionicons name="people" size={12} color="#0AD476" />
+                  </View>
+                )}
+              </View>
+              
               <TouchableOpacity 
                 onPress={() => router.push('/appointment')}
-                style={styles.moreAppointmentsButton}
+                style={styles.seeAllButton}
               >
-                <Ionicons name="calendar-outline" size={16} color="#0AD476" />
-                <Text style={styles.moreAppointmentsText}>
-                  {sortedUpcomingAppointments.length - 1} more appointment{sortedUpcomingAppointments.length > 2 ? 's' : ''}
-                  {hasUpcomingFamilyBookings && ' (including family)'}
-                </Text>
+                <Text style={styles.seeAllText}>See All</Text>
               </TouchableOpacity>
+            </View>
+            
+            {/* Show loading or refresh indicator */}
+            {(isLoading || isRefreshing) && appointments.length === 0 ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#0AD476" />
+                <Text style={styles.loadingText}>
+                  {isRefreshing ? 'Refreshing...' : 'Loading appointments...'}
+                </Text>
+              </View>
+            ) : sortedUpcomingAppointments.length > 0 ? (
+              <View>
+                <AppointmentCard 
+                  appointment={sortedUpcomingAppointments[0]} 
+                  currentUserId={user?.$id}
+                />
+                
+                {sortedUpcomingAppointments.length > 1 && (
+                  <TouchableOpacity 
+                    onPress={() => router.push('/appointment')}
+                    style={styles.moreAppointmentsButton}
+                  >
+                    <Ionicons name="calendar-outline" size={16} color="#0AD476" />
+                    <Text style={styles.moreAppointmentsText}>
+                      {sortedUpcomingAppointments.length - 1} more appointment{sortedUpcomingAppointments.length > 2 ? 's' : ''}
+                      {hasUpcomingFamilyBookings && ' (including family)'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              <View style={styles.noAppointmentsContainer}>
+                <Ionicons name="calendar-outline" size={40} color="#d1d5db" />
+                <Text style={styles.noAppointmentsTitle}>No upcoming appointments</Text>
+                <Text style={styles.noAppointmentsText}>Schedule your next appointment for you or your family</Text>
+                <TouchableOpacity 
+                  onPress={() => router.push('/appointment/appointmentBooking')}
+                  style={styles.bookAppointmentButton}
+                >
+                  <Text style={styles.bookAppointmentText}>Book Appointment</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
-        ) : (
-          <View style={styles.noAppointmentsContainer}>
-            <Ionicons name="calendar-outline" size={40} color="#d1d5db" />
-            <Text style={styles.noAppointmentsTitle}>No upcoming appointments</Text>
-            <Text style={styles.noAppointmentsText}>Schedule your next appointment for you or your family</Text>
-            <TouchableOpacity 
-              onPress={() => router.push('/appointment/appointmentBooking')}
-              style={styles.bookAppointmentButton}
-            >
-              <Text style={styles.bookAppointmentText}>Book Appointment</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
 
-      {/* Rest of your sections with better spacing */}
-      <View style={styles.doctorSpecialitySection}>
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Doctor Speciality</Text>
-          <TouchableOpacity>
-            <Text style={styles.seeAllText}>See All</Text>
-          </TouchableOpacity>
+          {/* Rest of your sections */}
+          <View style={styles.doctorSpecialitySection}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>Doctor Speciality</Text>
+              <TouchableOpacity>
+                <Text style={styles.seeAllText}>See All</Text>
+              </TouchableOpacity>
+            </View>
+            <DoctorSpeciality />
+          </View>
+          
+          <View style={styles.nearbyHospitalsSection}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>Nearby Hospitals</Text>
+              <TouchableOpacity onPress={()=>router.push('/hospitals-list')}>
+                <Text style={styles.seeAllText}>See All</Text>
+              </TouchableOpacity>
+            </View>
+            <NearbyHospitals />
+          </View>
         </View>
-        <DoctorSpeciality />
-      </View>
-      
-      <View style={styles.nearbyHospitalsSection}>
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Nearby Hospitals</Text>
-          <TouchableOpacity onPress={()=>router.push('/hospitals-list')}>
-            <Text style={styles.seeAllText}>See All</Text>
-          </TouchableOpacity>
-        </View>
-        <NearbyHospitals />
-      </View>
-    </View>
-  </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   )
 }
 
@@ -278,24 +376,30 @@ const styles = StyleSheet.create({
     flex: 1, 
     backgroundColor: 'white' 
   },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+  },
   content: { 
-    padding: 16, 
-    marginTop: 50
+    padding: 16,
+    // Removed marginTop: 50 - this was causing the gap!
   },
   
   // Enhanced Summary Cards
   enhancedSummaryContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 20, // Reduced gap
-    marginTop: 15, // Small top margin for breathing room
+    marginBottom: 20,
+    marginTop: 15,
     gap: 12,
   },
   summaryCard: {
     flex: 1,
     backgroundColor: '#fff',
     borderRadius: 16,
-    padding: 16, // Slightly reduced padding
+    padding: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -315,10 +419,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10, // Reduced spacing
+    marginBottom: 10,
   },
   summaryIconContainer: {
-    width: 36, // Slightly smaller
+    width: 36,
     height: 36,
     borderRadius: 18,
     justifyContent: 'center',
@@ -331,18 +435,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8F5E8',
   },
   summaryNumber: {
-    fontSize: 24, // Slightly smaller
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#1a1a1a',
   },
   summaryLabel: {
-    fontSize: 13, // Slightly smaller
+    fontSize: 13,
     color: '#666',
     fontWeight: '500',
     marginBottom: 8,
   },
   summaryProgress: {
-    height: 3, // Thinner progress bar
+    height: 3,
     backgroundColor: '#f0f0f0',
     borderRadius: 2,
     overflow: 'hidden',
@@ -423,11 +527,15 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
 
-  
   loadingContainer: {
     height: 150,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 10,
+    color: '#666',
+    fontSize: 14,
   },
   moreAppointmentsButton: { 
     flexDirection: 'row',

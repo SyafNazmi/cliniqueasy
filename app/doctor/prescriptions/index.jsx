@@ -1,5 +1,5 @@
-// app/doctor/prescriptions/index.jsx - ENHANCED VERSION WITH OPTIMIZED CARDS & ADVANCED FILTERS
-import React, { useEffect, useState } from 'react';
+// app/doctor/prescriptions/index.jsx - FIXED with real-time updates and focus refresh
+import React, { useEffect, useState, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -20,11 +20,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DatabaseService, Query } from '../../../configs/AppwriteConfig';
 import { getLocalStorage } from '../../../service/Storage';
-
-const APPOINTMENTS_COLLECTION_ID = '67e0332c0001131d71ec';
-const USERS_COLLECTION_ID = '67e032ec0025cf1956ff';
-const BRANCHES_COLLECTION_ID = '67f68c760039e7d1a61d';
-const REGIONS_COLLECTION_ID = '6807cb05000906569d69'; // Your actual regions collection ID
+import { COLLECTIONS } from '../../../constants'; // Use constants instead of hardcoded IDs
+import { useFocusEffect } from '@react-navigation/native'; // Added for focus refresh
+import { appointmentManager } from '../../../service/appointmentUtils'; // Added for real-time updates
 
 const { width } = Dimensions.get('window');
 
@@ -42,7 +40,7 @@ export default function EnhancedDoctorPrescriptions() {
   
   // Advanced filter states
   const [selectedServices, setSelectedServices] = useState([]);
-  const [selectedDateRange, setSelectedDateRange] = useState('all'); // all, today, week, month, custom
+  const [selectedDateRange, setSelectedDateRange] = useState('all');
   const [customDateFrom, setCustomDateFrom] = useState('');
   const [customDateTo, setCustomDateTo] = useState('');
   
@@ -59,24 +57,111 @@ export default function EnhancedDoctorPrescriptions() {
     loadData();
   }, []);
 
+  // ADDED: Focus effect to refresh data when returning to screen
+  useFocusEffect(
+    useCallback(() => {
+      loadData(false); // Don't show loader when refocusing
+    }, [])
+  );
+
+  // ADDED: Set up real-time subscription for appointments/prescriptions
+  useEffect(() => {
+    let subscriptionKey = null;
+
+    const setupRealtimeSubscription = async () => {
+      try {
+        const userData = await getLocalStorage('userDetail');
+        if (userData?.uid) {
+          subscriptionKey = appointmentManager.subscribeToAppointments(
+            (event) => {
+              console.log('Doctor prescriptions received update:', event);
+              
+              // Refresh prescriptions when any appointment changes
+              const retryFetch = async (attempt = 1, maxAttempts = 3) => {
+                await loadData(false);
+                
+                // Check if the appointment change is reflected
+                const appointmentId = event.appointment?.$id;
+                if (appointmentId && attempt < maxAttempts) {
+                  setTimeout(() => {
+                    setAllAppointments(currentAppointments => {
+                      const hasAppointment = currentAppointments.some(apt => apt.$id === appointmentId);
+                      
+                      if (!hasAppointment && event.type !== 'delete') {
+                        setTimeout(() => retryFetch(attempt + 1, maxAttempts), 1500);
+                      }
+                      
+                      return currentAppointments;
+                    });
+                  }, 500);
+                }
+              };
+              
+              // Start the retry process with a delay
+              setTimeout(() => retryFetch(), 1000);
+            }
+          );
+        }
+      } catch (error) {
+        console.error('Error setting up doctor prescriptions real-time subscription:', error);
+      }
+    };
+
+    setupRealtimeSubscription();
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (subscriptionKey) {
+        appointmentManager.unsubscribe(subscriptionKey);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     filterAppointments();
   }, [allAppointments, searchQuery, activeFilter, selectedServices, selectedDateRange, customDateFrom, customDateTo]);
 
-  const loadData = async () => {
+  // UPDATED: Enhanced loadData with same logic as other doctor screens
+  const loadData = async (showLoader = true) => {
     try {
-      setLoading(true);
+      if (showLoader) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       
       const userData = await getLocalStorage('userDetail');
       setUser(userData);
 
-      const appointmentsResponse = await DatabaseService.listDocuments(APPOINTMENTS_COLLECTION_ID, []);
+      // Enhanced query with ordering (same as other doctor screens)
+      const queries = [
+        Query.orderDesc('$createdAt'),
+        Query.limit(100)
+      ];
+
+      const appointmentsResponse = await DatabaseService.listDocuments(
+        COLLECTIONS.APPOINTMENTS, // Use constant instead of hardcoded ID
+        queries
+      );
+      
       let appointments = appointmentsResponse.documents || [];
       
+      // Sort appointments by date (same logic as other screens)
       appointments.sort((a, b) => {
-        const dateA = parseAppointmentDate(a.date);
-        const dateB = parseAppointmentDate(b.date);
-        return dateB - dateA;
+        try {
+          const dateA = parseAppointmentDate(a.date);
+          const dateB = parseAppointmentDate(b.date);
+          
+          if (dateA.getTime() === dateB.getTime()) {
+            return convert12HourTo24Hour(a.time_slot || '').localeCompare(
+              convert12HourTo24Hour(b.time_slot || '')
+            );
+          }
+          
+          return dateB - dateA;
+        } catch (error) {
+          return 0;
+        }
       });
       
       setAllAppointments(appointments);
@@ -90,6 +175,7 @@ export default function EnhancedDoctorPrescriptions() {
       Alert.alert('Error', 'Failed to load prescription data');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -99,9 +185,7 @@ export default function EnhancedDoctorPrescriptions() {
   };
 
   const onRefresh = async () => {
-    setRefreshing(true);
-    await loadData();
-    setRefreshing(false);
+    await loadData(false);
   };
 
   const parseAppointmentDate = (dateString) => {
@@ -126,30 +210,89 @@ export default function EnhancedDoctorPrescriptions() {
     return months[monthName] || 0;
   };
 
+  const convert12HourTo24Hour = (timeString) => {
+    try {
+      if (!timeString) return '';
+      
+      const [time, modifier] = timeString.split(' ');
+      let [hours, minutes] = time.split(':');
+      
+      hours = parseInt(hours);
+      
+      if (modifier === 'PM' && hours < 12) {
+        hours += 12;
+      } else if (modifier === 'AM' && hours === 12) {
+        hours = 0;
+      }
+      
+      return `${hours.toString().padStart(2, '0')}:${minutes}`;
+    } catch (e) {
+      return timeString;
+    }
+  };
+
+  // UPDATED: Enhanced patient name fetching with same logic as other doctor screens
   const fetchPatientNames = async (appointments) => {
     try {
-      const userIds = [...new Set(appointments.map(apt => apt.user_id))];
       const nameMap = {};
       
-      for (const userId of userIds) {
+      for (const appointment of appointments) {
+        let patientName = 'Unknown Patient';
+        
         try {
-          const usersResponse = await DatabaseService.listDocuments(
-            USERS_COLLECTION_ID,
-            [Query.equal('userId', userId)]
-          );
-          
-          if (usersResponse.documents && usersResponse.documents.length > 0) {
-            const user = usersResponse.documents[0];
-            nameMap[userId] = user.fullName || user.name || user.displayName || 
-              (userId.includes('@') ? userId.split('@')[0].replace(/[._-]/g, ' ') : 
-               `Patient ${userId.substring(0, 8)}`);
-          } else {
-            nameMap[userId] = userId.includes('@') ? 
-              userId.split('@')[0].replace(/[._-]/g, ' ') : 
-              `Patient ${userId.substring(0, 8)}`;
+          // Check if this is a family booking with patient_name
+          if (appointment.is_family_booking && appointment.patient_name) {
+            patientName = appointment.patient_name;
+          } 
+          // If family booking but no patient_name, try to fetch by patient_id
+          else if (appointment.is_family_booking && appointment.patient_id) {
+            try {
+              const patientResponse = await DatabaseService.listDocuments(
+                COLLECTIONS.PATIENT_PROFILES,
+                [Query.equal('$id', appointment.patient_id)]
+              );
+              
+              if (patientResponse.documents && patientResponse.documents.length > 0) {
+                const patient = patientResponse.documents[0];
+                patientName = patient.fullName || patient.name || patient.displayName || appointment.patient_name || 'Family Member';
+              } else {
+                patientName = appointment.patient_name || 'Family Member';
+              }
+            } catch (error) {
+              patientName = appointment.patient_name || 'Family Member';
+            }
           }
+          // Regular booking - fetch by user_id
+          else if (appointment.user_id) {
+            try {
+              const usersResponse = await DatabaseService.listDocuments(
+                COLLECTIONS.PATIENT_PROFILES,
+                [Query.equal('userId', appointment.user_id)]
+              );
+              
+              if (usersResponse.documents && usersResponse.documents.length > 0) {
+                const user = usersResponse.documents[0];
+                patientName = user.fullName || user.name || user.displayName || 
+                  (appointment.user_id.includes('@') ? appointment.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+                   `Patient ${appointment.user_id.substring(0, 8)}`);
+              } else {
+                patientName = appointment.user_id.includes('@') ? 
+                  appointment.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+                  `Patient ${appointment.user_id.substring(0, 8)}`;
+              }
+            } catch (error) {
+              patientName = `Patient ${appointment.user_id.substring(0, 8)}`;
+            }
+          }
+          
+          // Create a unique key for the appointment
+          const appointmentKey = `${appointment.$id}`;
+          nameMap[appointmentKey] = patientName;
+          
         } catch (error) {
-          nameMap[userId] = `Patient ${userId.substring(0, 8)}`;
+          console.error(`Error fetching patient name for appointment ${appointment.$id}:`, error);
+          const appointmentKey = `${appointment.$id}`;
+          nameMap[appointmentKey] = appointment.patient_name || 'Unknown Patient';
         }
       }
       
@@ -172,7 +315,7 @@ export default function EnhancedDoctorPrescriptions() {
       for (const branchId of branchIds) {
         try {
           const branchResponse = await DatabaseService.listDocuments(
-            BRANCHES_COLLECTION_ID,
+            COLLECTIONS.BRANCHES,
             [Query.equal('branch_id', branchId)]
           );
           
@@ -200,7 +343,7 @@ export default function EnhancedDoctorPrescriptions() {
       for (const branchId of branchIds) {
         try {
           const branchResponse = await DatabaseService.listDocuments(
-            BRANCHES_COLLECTION_ID,
+            COLLECTIONS.BRANCHES,
             [Query.equal('branch_id', branchId)]
           );
           
@@ -236,7 +379,7 @@ export default function EnhancedDoctorPrescriptions() {
       for (const regionId of regionIds) {
         try {
           const regionResponse = await DatabaseService.listDocuments(
-            REGIONS_COLLECTION_ID,
+            COLLECTIONS.REGIONS,
             [Query.equal('region_id', regionId)]
           );
           
@@ -385,7 +528,7 @@ export default function EnhancedDoctorPrescriptions() {
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(apt => {
-        const patientName = getPatientName(apt.user_id).toLowerCase();
+        const patientName = getPatientName(apt).toLowerCase();
         const serviceName = (apt.service_name || '').toLowerCase();
         const appointmentId = apt.$id.toLowerCase();
         const branchName = getBranchInfo(apt.branch_id).name.toLowerCase();
@@ -400,9 +543,18 @@ export default function EnhancedDoctorPrescriptions() {
     setFilteredAppointments(filtered);
   };
 
-  const getPatientName = (userId) => {
-    if (!userId) return "Unknown Patient";
-    return patientNames[userId] || "Patient";
+  // UPDATED: Enhanced patient name getter to use appointment-specific key
+  const getPatientName = (appointment) => {
+    if (!appointment) return "Unknown Patient";
+    
+    // Check if this is a family booking with patient_name
+    if (appointment.is_family_booking && appointment.patient_name) {
+      return appointment.patient_name;
+    }
+    
+    // Use the patientNames state with appointment-specific key
+    const appointmentKey = `${appointment.$id}`;
+    return patientNames[appointmentKey] || appointment.patient_name || "Unknown Patient";
   };
 
   const getBranchInfo = (branchId) => {
@@ -632,12 +784,12 @@ export default function EnhancedDoctorPrescriptions() {
           <View style={styles.patientSection}>
             <View style={[styles.compactAvatar, { backgroundColor: statusInfo.color }]}>
               <Text style={styles.avatarText}>
-                {getPatientName(appointment.user_id).substring(0, 2).toUpperCase()}
+                {getPatientName(appointment).substring(0, 2).toUpperCase()}
               </Text>
             </View>
             <View style={styles.patientDetails}>
               <Text style={styles.patientName} numberOfLines={1}>
-                {getPatientName(appointment.user_id)}
+                {getPatientName(appointment)}
               </Text>
               <Text style={styles.appointmentMeta}>
                 {appointmentDate.toLocaleDateString('en-GB', { 
@@ -1194,7 +1346,7 @@ const styles = StyleSheet.create({
     color: 'white',
   },
 
-  // Filter Modal
+  // Filter Modal (keeping existing styles)
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',

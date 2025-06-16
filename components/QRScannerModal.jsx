@@ -1,5 +1,5 @@
-// components/QRScannerModal.jsx - Fixed Version with User Confirmation
-import React, { useState, useEffect } from 'react';
+// components/QRScannerModal.jsx - Fixed Version with Debouncing
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -27,6 +27,16 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
   const [errorMsg, setErrorMsg] = useState('');
   const [facing, setFacing] = useState('back');
   
+  // Add refs for debouncing and preventing multiple scans
+  const lastScannedData = useRef(null);
+  const lastScannedTime = useRef(0);
+  const processingRef = useRef(false);
+  const scanTimeoutRef = useRef(null);
+  
+  // Constants for debouncing
+  const SCAN_DEBOUNCE_TIME = 2000; // 2 seconds
+  const SAME_QR_COOLDOWN = 5000; // 5 seconds for same QR code
+  
   // Initialize the camera permissions
   useEffect(() => {
     (async () => {
@@ -47,16 +57,73 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
     })();
   }, []);
 
-  // Handle barcode scanning
+  // Reset scanning state when modal visibility changes
+  useEffect(() => {
+    if (visible) {
+      resetScanningState();
+    } else {
+      // Clear any pending timeouts when modal is closed
+      if (scanTimeoutRef.current) {
+        clearTimeout(scanTimeoutRef.current);
+        scanTimeoutRef.current = null;
+      }
+    }
+  }, [visible]);
+
+  // Reset all scanning related state
+  const resetScanningState = () => {
+    setScanned(false);
+    setLoading(false);
+    processingRef.current = false;
+    lastScannedData.current = null;
+    lastScannedTime.current = 0;
+    
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = null;
+    }
+  };
+
+  // Enhanced barcode scanning with debouncing and duplicate prevention
   const handleBarCodeScanned = ({ type, data }) => {
+    const currentTime = Date.now();
+    
+    // Prevent multiple processing
+    if (processingRef.current || loading || scanned) {
+      console.log("Scan ignored: already processing");
+      return;
+    }
+    
+    // Check if it's the same QR code scanned recently
+    if (lastScannedData.current === data) {
+      const timeSinceLastScan = currentTime - lastScannedTime.current;
+      if (timeSinceLastScan < SAME_QR_COOLDOWN) {
+        console.log(`Same QR code scanned too recently (${timeSinceLastScan}ms ago). Ignoring.`);
+        return;
+      }
+    }
+    
+    // Check general debounce timing
+    if (currentTime - lastScannedTime.current < SCAN_DEBOUNCE_TIME) {
+      console.log("Scan ignored: debounce period active");
+      return;
+    }
+    
     console.log("Barcode scanned:", type, data);
     
-    if (scanned || loading) return;
+    // Set processing flags immediately
+    processingRef.current = true;
+    lastScannedData.current = data;
+    lastScannedTime.current = currentTime;
     
+    // Update UI state
     setScanned(true);
     setLoading(true);
     
-    processQRCode(data);
+    // Add a small delay to ensure state updates take effect
+    scanTimeoutRef.current = setTimeout(() => {
+      processQRCode(data);
+    }, 100);
   };
 
   // Handle manually entered QR code
@@ -66,8 +133,18 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
       return;
     }
     
+    if (processingRef.current || loading) {
+      console.log("Manual submit ignored: already processing");
+      return;
+    }
+    
+    processingRef.current = true;
     setLoading(true);
-    processQRCode(qrInput);
+    
+    // Small delay to ensure state updates
+    setTimeout(() => {
+      processQRCode(qrInput);
+    }, 100);
   };
   
   // Process QR code and handle multiple medications with user confirmation
@@ -75,13 +152,16 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
     try {
       console.log('Processing QR code:', qrData);
       
+      // Double-check we're not already processing
+      if (!processingRef.current) {
+        console.log("Process QR code called but processing flag is false. Aborting.");
+        return;
+      }
+      
       const prescriptionMeds = await processPrescriptionQR(qrData);
       
       if (prescriptionMeds && prescriptionMeds.length > 0) {
         console.log(`Found ${prescriptionMeds.length} medications`);
-        
-        // Close the modal first
-        setLoading(false);
         
         // Show confirmation dialog with medication details
         showMedicationConfirmation(prescriptionMeds);
@@ -94,14 +174,21 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
       Alert.alert(
         'Error',
         'Unable to process prescription data. Please try again.',
-        [{ text: 'OK', onPress: () => setScanned(false) }]
+        [{ 
+          text: 'OK', 
+          onPress: () => {
+            resetScanningState();
+          }
+        }]
       );
-      setLoading(false);
     }
   };
 
   // Show detailed medication confirmation dialog
   const showMedicationConfirmation = (medications) => {
+    // Reset loading state but keep processing flag until user decides
+    setLoading(false);
+    
     const medicationList = medications.map((med, index) => 
       `${index + 1}. ${med.name} - ${med.dosage} (${med.frequencies})`
     ).join('\n');
@@ -109,6 +196,23 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
     const message = medications.length > 1 
       ? `Found ${medications.length} medications:\n\n${medicationList}\n\nWhat would you like to do?`
       : `Found medication:\n\n${medicationList}\n\nAdd this medication?`;
+
+    const handleUserChoice = (action) => {
+      // Reset processing state
+      processingRef.current = false;
+      
+      onScanSuccess({
+        medications: medications,
+        totalCount: medications.length,
+        action: action
+      });
+      onClose();
+    };
+
+    const handleCancel = () => {
+      // Reset scanning state to allow new scans
+      resetScanningState();
+    };
 
     if (medications.length > 1) {
       // Multiple medications - show streamlined options
@@ -118,34 +222,16 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
         [
           {
             text: "Add All",
-            onPress: () => {
-              onScanSuccess({
-                medications: medications,
-                totalCount: medications.length,
-                action: 'add_all'
-              });
-              onClose();
-            }
+            onPress: () => handleUserChoice('add_all')
           },
           {
             text: "Review & Edit",
-            onPress: () => {
-              onScanSuccess({
-                medications: medications,
-                totalCount: medications.length,
-                action: 'review_edit'
-              });
-              onClose();
-            }
+            onPress: () => handleUserChoice('review_edit')
           },
           {
             text: "Cancel",
             style: "cancel",
-            onPress: () => {
-              // Don't close the modal, let user try again
-              setLoading(false);
-              setScanned(false);
-            }
+            onPress: handleCancel
           }
         ]
       );
@@ -157,33 +243,16 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
         [
           {
             text: "Add Medication",
-            onPress: () => {
-              onScanSuccess({
-                medications: medications,
-                totalCount: 1,
-                action: 'add_single'
-              });
-              onClose();
-            }
+            onPress: () => handleUserChoice('add_single')
           },
           {
             text: "Review & Edit",
-            onPress: () => {
-              onScanSuccess({
-                medications: medications,
-                totalCount: 1,
-                action: 'review_edit'
-              });
-              onClose();
-            }
+            onPress: () => handleUserChoice('review_edit')
           },
           {
             text: "Cancel",
             style: "cancel",
-            onPress: () => {
-              setLoading(false);
-              setScanned(false);
-            }
+            onPress: handleCancel
           }
         ]
       );
@@ -192,32 +261,48 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
 
   // Process demo QR codes with confirmation
   const handleQuickScan = async (demoType) => {
+    if (processingRef.current || loading) {
+      console.log("Demo scan ignored: already processing");
+      return;
+    }
+    
     try {
+      processingRef.current = true;
       setLoading(true);
       const demoQR = `DEMO:${demoType}:APT12345`;
       
-      await processQRCode(demoQR);
+      // Small delay to ensure state updates
+      setTimeout(() => {
+        processQRCode(demoQR);
+      }, 100);
     } catch (error) {
       console.error('Demo scan error:', error);
       Alert.alert(
         'Error',
         'Demo scan failed. Please try manual entry.',
-        [{ text: 'OK' }]
+        [{ 
+          text: 'OK',
+          onPress: () => resetScanningState()
+        }]
       );
-      setLoading(false);
     }
   };
 
   // Reset scanning state when exiting camera mode
   const handleToggleManualEntry = (showManual) => {
-    setScanned(false);
-    setLoading(false);
+    resetScanningState();
     setShowManualEntry(showManual);
   };
 
   // Toggle camera facing between front and back
   const toggleCameraFacing = () => {
     setFacing(current => (current === 'back' ? 'front' : 'back'));
+  };
+
+  // Enhanced scan again functionality
+  const handleScanAgain = () => {
+    console.log("Scan again pressed");
+    resetScanningState();
   };
 
   // Conditionally render the camera
@@ -255,13 +340,19 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
           <Text style={styles.scanInstructions}>
             Position QR code within the frame
           </Text>
-          {scanned && (
+          {scanned && !loading && (
             <TouchableOpacity
               style={styles.scanAgainButton}
-              onPress={() => setScanned(false)}
+              onPress={handleScanAgain}
             >
               <Text style={styles.scanAgainButtonText}>Tap to Scan Again</Text>
             </TouchableOpacity>
+          )}
+          {loading && (
+            <View style={styles.processingIndicator}>
+              <ActivityIndicator size="small" color="white" />
+              <Text style={styles.processingText}>Processing...</Text>
+            </View>
           )}
         </View>
         <View style={styles.cameraControls}>
@@ -318,18 +409,24 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
                 placeholderTextColor="#999"
               />
               
-              <TouchableOpacity style={styles.scanButton} onPress={handleManualSubmit}>
+              <TouchableOpacity 
+                style={[styles.scanButton, (loading || processingRef.current) && styles.disabledButton]} 
+                onPress={handleManualSubmit}
+                disabled={loading || processingRef.current}
+              >
                 <LinearGradient
                   colors={["#1a8e2d", "#146922"]}
                   style={styles.scanButtonGradient}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                 >
-                  <Text style={styles.scanButtonText}>Submit QR Code</Text>
+                  <Text style={styles.scanButtonText}>
+                    {loading || processingRef.current ? "Processing..." : "Submit QR Code"}
+                  </Text>
                 </LinearGradient>
               </TouchableOpacity>
               
-              {cameraAvailable && (
+              {cameraAvailable && !loading && !processingRef.current && (
                 <TouchableOpacity 
                   style={styles.toggleButton}
                   onPress={() => handleToggleManualEntry(false)}
@@ -349,29 +446,33 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
               <View style={styles.demoButtonsContainer}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <TouchableOpacity
-                    style={styles.demoButton}
+                    style={[styles.demoButton, (loading || processingRef.current) && styles.disabledButton]}
                     onPress={() => handleQuickScan('blood_pressure')}
+                    disabled={loading || processingRef.current}
                   >
                     <Text style={styles.demoButtonText}>Blood Pressure (2 meds)</Text>
                   </TouchableOpacity>
                   
                   <TouchableOpacity
-                    style={styles.demoButton}
+                    style={[styles.demoButton, (loading || processingRef.current) && styles.disabledButton]}
                     onPress={() => handleQuickScan('diabetes')}
+                    disabled={loading || processingRef.current}
                   >
                     <Text style={styles.demoButtonText}>Diabetes (2 meds)</Text>
                   </TouchableOpacity>
                   
                   <TouchableOpacity
-                    style={styles.demoButton}
+                    style={[styles.demoButton, (loading || processingRef.current) && styles.disabledButton]}
                     onPress={() => handleQuickScan('infection')}
+                    disabled={loading || processingRef.current}
                   >
                     <Text style={styles.demoButtonText}>Infection (2 meds)</Text>
                   </TouchableOpacity>
                   
                   <TouchableOpacity
-                    style={styles.demoButton}
+                    style={[styles.demoButton, (loading || processingRef.current) && styles.disabledButton]}
                     onPress={() => handleQuickScan('cholesterol')}
+                    disabled={loading || processingRef.current}
                   >
                     <Text style={styles.demoButtonText}>Cholesterol (2 meds)</Text>
                   </TouchableOpacity>
@@ -505,6 +606,9 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
   toggleButton: {
     flexDirection: 'row',
@@ -645,6 +749,19 @@ const styles = StyleSheet.create({
   scanAgainButtonText: {
     color: 'white',
     fontWeight: 'bold',
+  },
+  processingIndicator: {
+    marginTop: 20,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 15,
+  },
+  processingText: {
+    color: 'white',
+    marginTop: 8,
+    fontWeight: '500',
   },
   cameraControls: {
     position: 'absolute',

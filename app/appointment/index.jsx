@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+//app/appointment/index.jsx
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -9,38 +10,59 @@ import {
   TouchableOpacity,
   RefreshControl
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { DatabaseService, AuthService, Query } from '../../configs/AppwriteConfig';
+import { COLLECTIONS } from '../../constants'; // Import the same constants
 import AppointmentCard from '../../components/AppointmentCard';
 import PageHeader from '../../components/PageHeader';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 
 export default function AppointmentsScreen() {
   const router = useRouter();
+  const searchParams = useLocalSearchParams();
   const [appointments, setAppointments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('upcoming'); // 'upcoming' or 'past'
+  const [user, setUser] = useState(null);
+
+  // Get filter from search params if any
+  const filterParam = searchParams?.filter;
 
   useEffect(() => {
-    fetchAppointments();
-  }, []);
+    // Set initial tab based on filter parameter
+    if (filterParam === 'family' || filterParam === 'own') {
+      setActiveTab('upcoming'); // Show upcoming by default, but we'll filter by family/own
+    }
+  }, [filterParam]);
 
-  const fetchAppointments = async () => {
+  const fetchAppointments = useCallback(async (showLoader = true) => {
     try {
-      setIsLoading(true);
+      if (showLoader) {
+        setIsLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       
       // Get current user
       const currentUser = await AuthService.getCurrentUser();
+      setUser(currentUser);
       
       if (currentUser) {
-        // Fetch user's appointments
+        // Use the same query structure as HomeScreen
+        const queries = [
+          Query.equal('user_id', currentUser.$id),
+          Query.orderDesc('$createdAt'),
+          Query.limit(100)
+        ];
+        
         const response = await DatabaseService.listDocuments(
-            '67e0332c0001131d71ec', // Appointments collection ID
-            [Query.equal('user_id', currentUser.$id)], // Filter by current user
-            100 // Limit
+          COLLECTIONS.APPOINTMENTS, // Use the same constant as HomeScreen
+          queries
         );
-        setAppointments(response.documents);
+        
+        setAppointments(response.documents || []);
       }
     } catch (error) {
       console.error('Error fetching appointments:', error);
@@ -48,16 +70,32 @@ export default function AppointmentsScreen() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
-  const onRefresh = () => {
-    setRefreshing(true);
+  // Use useFocusEffect to refetch data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchAppointments(false);
+    }, [fetchAppointments])
+  );
+
+  useEffect(() => {
     fetchAppointments();
-  };
+  }, [fetchAppointments]);
 
-  // Filter appointments based on date
+  const onRefresh = useCallback(() => {
+    fetchAppointments(false);
+  }, [fetchAppointments]);
+
+  // Filter appointments based on date and status (same logic as HomeScreen)
   const filterAppointments = (appointmentList, type) => {
     return appointmentList.filter(appointment => {
+      // First check if appointment is cancelled or completed (same as HomeScreen)
+      const status = appointment.status?.toLowerCase();
+      if (status === 'cancelled' || status === 'completed') {
+        return false;
+      }
+
       // Parse appointment date
       const parts = appointment.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
       if (!parts) return false;
@@ -85,7 +123,17 @@ export default function AppointmentsScreen() {
     });
   };
 
-  // Sort appointments by date
+  // Apply family/own filter if specified
+  const applyFamilyFilter = (appointmentList) => {
+    if (filterParam === 'family') {
+      return appointmentList.filter(apt => apt.is_family_booking === true);
+    } else if (filterParam === 'own') {
+      return appointmentList.filter(apt => apt.is_family_booking !== true);
+    }
+    return appointmentList;
+  };
+
+  // Sort appointments by date (same logic as HomeScreen)
   const sortAppointments = (appointmentList, type) => {
     return [...appointmentList].sort((a, b) => {
       const partsA = a.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
@@ -110,19 +158,26 @@ export default function AppointmentsScreen() {
         parseInt(partsB[2])
       );
       
+      // If same date, sort by time
+      if (dateA.getTime() === dateB.getTime()) {
+        return (a.time_slot || '').localeCompare(b.time_slot || '');
+      }
+      
       // For upcoming, sort by earliest first
       // For past, sort by most recent first
       return type === 'upcoming' ? dateA - dateB : dateB - dateA;
     });
   };
 
+  // Apply all filters
+  const filteredAppointments = applyFamilyFilter(appointments);
   const upcomingAppointments = sortAppointments(
-    filterAppointments(appointments, 'upcoming'),
+    filterAppointments(filteredAppointments, 'upcoming'),
     'upcoming'
   );
   
   const pastAppointments = sortAppointments(
-    filterAppointments(appointments, 'past'),
+    filterAppointments(filteredAppointments, 'past'),
     'past'
   );
 
@@ -130,15 +185,23 @@ export default function AppointmentsScreen() {
   const displayedAppointments = activeTab === 'upcoming' ? upcomingAppointments : pastAppointments;
 
   const renderEmptyState = () => {
+    const isFiltered = filterParam === 'family' || filterParam === 'own';
+    const filterText = filterParam === 'family' ? 'Family ' : filterParam === 'own' ? 'Your ' : '';
+    
     if (activeTab === 'upcoming') {
       return (
         <View style={styles.emptyContainer}>
           <Ionicons name="calendar-outline" size={70} color="#d1d5db" />
-          <Text style={styles.emptyTitle}>No Upcoming Appointments</Text>
-          <Text style={styles.emptyText}>You don't have any scheduled appointments.</Text>
+          <Text style={styles.emptyTitle}>No Upcoming {filterText}Appointments</Text>
+          <Text style={styles.emptyText}>
+            {isFiltered 
+              ? `You don't have any upcoming ${filterText.toLowerCase()}appointments.`
+              : "You don't have any scheduled appointments."
+            }
+          </Text>
           <TouchableOpacity 
             style={styles.bookButton}
-            onPress={() => router.push('/')}
+            onPress={() => router.push('/appointment/appointmentBooking')}
           >
             <Text style={styles.bookButtonText}>Book an Appointment</Text>
           </TouchableOpacity>
@@ -148,16 +211,28 @@ export default function AppointmentsScreen() {
       return (
         <View style={styles.emptyContainer}>
           <Ionicons name="time-outline" size={70} color="#d1d5db" />
-          <Text style={styles.emptyTitle}>No Past Appointments</Text>
-          <Text style={styles.emptyText}>Your appointment history is empty.</Text>
+          <Text style={styles.emptyTitle}>No Past {filterText}Appointments</Text>
+          <Text style={styles.emptyText}>
+            {isFiltered 
+              ? `Your ${filterText.toLowerCase()}appointment history is empty.`
+              : "Your appointment history is empty."
+            }
+          </Text>
         </View>
       );
     }
   };
 
+  // Show filter indicator in title if applicable
+  const getPageTitle = () => {
+    if (filterParam === 'family') return 'Family Appointments';
+    if (filterParam === 'own') return 'Your Appointments';
+    return 'My Appointments';
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <PageHeader title="My Appointments" onPress={() => router.back()} />
+      <PageHeader title={getPageTitle()} onPress={() => router.back()} />
       
       {/* Tab Navigation */}
       <View style={styles.tabContainer}>
@@ -212,7 +287,7 @@ export default function AppointmentsScreen() {
           keyExtractor={(item) => item.$id}
           renderItem={({ item }) => (
             <View style={styles.appointmentContainer}>
-              <AppointmentCard appointment={item} />
+              <AppointmentCard appointment={item} currentUserId={user?.$id} />
             </View>
           )}
           contentContainerStyle={styles.listContainer}
@@ -233,7 +308,7 @@ export default function AppointmentsScreen() {
       {activeTab === 'upcoming' && (
         <TouchableOpacity 
           style={styles.fab}
-          onPress={() => router.push('/')}
+          onPress={() => router.push('/appointment/appointmentBooking')}
         >
           <Ionicons name="add" size={24} color="white" />
         </TouchableOpacity>
