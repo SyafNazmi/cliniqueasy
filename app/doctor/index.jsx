@@ -484,6 +484,19 @@ function DoctorDashboardContent() {
     }
   };
 
+  // Helper function to format full date
+  const getFullDateString = (day) => {
+    if (!day) return '';
+    
+    const targetDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+    return targetDate.toLocaleDateString('en-US', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+  };
+
   const handleSignOut = async () => {
     try {
       try {
@@ -544,7 +557,7 @@ function DoctorDashboardContent() {
             <View style={styles.appointmentModalTitle}>
               <Ionicons name="calendar" size={24} color="#4CAF50" />
               <Text style={styles.appointmentModalTitleText}>
-                Appointments for {selectedDay}
+                Appointments for {getFullDateString(selectedDay)}
               </Text>
             </View>
             <TouchableOpacity 
@@ -625,24 +638,6 @@ function DoctorDashboardContent() {
                       <Ionicons name="eye-outline" size={16} color="#4CAF50" />
                       <Text style={styles.modalActionText}>View Details</Text>
                     </TouchableOpacity>
-
-                    {!appointment.has_prescription && (
-                      <TouchableOpacity 
-                        style={[styles.modalActionButton, styles.modalPrescriptionButton]}
-                        onPress={() => {
-                          setShowAppointmentModal(false);
-                          router.push({
-                            pathname: '/doctor/prescriptions/create',
-                            params: { appointmentId: appointment.$id }
-                          });
-                        }}
-                      >
-                        <Ionicons name="medical-outline" size={16} color="white" />
-                        <Text style={[styles.modalActionText, { color: 'white' }]}>
-                          Add Prescription
-                        </Text>
-                      </TouchableOpacity>
-                    )}
                   </View>
 
                   {index < selectedDayAppointments.length - 1 && (
@@ -666,7 +661,7 @@ function DoctorDashboardContent() {
                 navigateToAppointments();
               }}
             >
-              <Text style={styles.modalViewAllText}>View All Appointments</Text>
+              <Text style={styles.modalViewAllText}>Manage All Appointments</Text>
               <Ionicons name="arrow-forward" size={16} color="#4CAF50" />
             </TouchableOpacity>
           </View>
@@ -674,6 +669,7 @@ function DoctorDashboardContent() {
       </View>
     </Modal>
   );
+
   const ProfileModal = () => (
     <Modal
       visible={showProfileModal}
@@ -2038,11 +2034,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flex: 1,
   },
   appointmentModalTitleText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#333',
+    flexShrink: 1,
   },
   modalCloseButton: {
     width: 32,
@@ -2146,10 +2144,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#4CAF50',
     backgroundColor: 'white',
-  },
-  modalPrescriptionButton: {
-    backgroundColor: '#4CAF50',
-    borderColor: '#4CAF50',
   },
   modalActionText: {
     fontSize: 12,

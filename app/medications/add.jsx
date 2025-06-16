@@ -1,4 +1,4 @@
-// app/medications/add.jsx - Enhanced Version with Prevention of Multiple Processing
+// app/medications/add.jsx - Enhanced Version with Prescription Data Lock
 import { View, Text, ScrollView, TextInput, TouchableOpacity, Switch, StyleSheet, Platform, Dimensions, Alert, Modal, ActivityIndicator } from 'react-native'
 import React, { useState, useRef } from 'react'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -165,12 +165,16 @@ const DURATIONS = [
 
 export default function AddMedicationScreen() {
     // State for simulated QR scanner
-    const [showQRModal, setShowQRModal] = useState(true); // Start with QR scanner open
+    const [showQRModal, setShowQRModal] = useState(true);
     
     // Get params from router if coming from elsewhere
     const params = useLocalSearchParams();
 
-    // NEW: State for multiple medications from prescription
+    // NEW: State for prescription lock
+    const [isPrescriptionLocked, setIsPrescriptionLocked] = useState(false);
+    const [prescriptionData, setPrescriptionData] = useState(null);
+
+    // State for multiple medications from prescription
     const [scannedMedications, setScannedMedications] = useState([]);
     const [selectedMedicationIndex, setSelectedMedicationIndex] = useState(0);
     const [showMedicationDropdown, setShowMedicationDropdown] = useState(false);
@@ -207,7 +211,7 @@ export default function AddMedicationScreen() {
     const scanProcessingRef = useRef(false);
     const lastProcessedResult = useRef(null);
 
-    // Enhanced handleScanSuccess to process multiple medications with duplicate prevention
+    // Enhanced handleScanSuccess to lock prescription data
     const handleScanSuccess = (scanResult) => {
         console.log("Scan success with result:", scanResult);
         
@@ -229,11 +233,18 @@ export default function AddMedicationScreen() {
         lastProcessedResult.current = resultKey;
         
         try {
-            const { medications, totalCount, action } = scanResult;
+            const { medications, totalCount, action, prescriptionId } = scanResult;
+            
+            // 🔒 NEW: Enable prescription lock mode
+            setIsPrescriptionLocked(true);
+            setPrescriptionData({
+                prescriptionId: prescriptionId || `prescription_${Date.now()}`,
+                isFromHealthPractitioner: true,
+                lockFields: ['name', 'type', 'illnessType', 'dosage', 'frequencies', 'duration']
+            });
             
             // Handle different actions
             if (action === 'add_all') {
-                // User chose to add all medications directly
                 handleAddAllMedications(medications);
                 return;
             }
@@ -242,17 +253,16 @@ export default function AddMedicationScreen() {
             if (medications && medications.length > 1) {
                 setScannedMedications(medications);
                 setSelectedMedicationIndex(0);
-                // Load the first medication by default
                 handleSingleMedication(medications[0]);
                 setShowQRModal(false);
                 
                 // Show info about multiple medications found
                 setTimeout(() => {
                     Alert.alert(
-                        "Multiple Medications Found! 💊",
-                        `Found ${medications.length} medications in this prescription. Use the dropdown above to switch between them, or add them all at once.`,
+                        "Prescription Scanned Successfully! 💊",
+                        `Found ${medications.length} medications in this prescription.\n\n⚠️ Medication details are locked as prescribed by your healthcare provider. You can only customize medication times.`,
                         [{ 
-                            text: "Got it!",
+                            text: "Understood",
                             onPress: () => {
                                 scanProcessingRef.current = false;
                             }
@@ -260,17 +270,26 @@ export default function AddMedicationScreen() {
                     );
                 }, 500);
             } else {
-                // Single medication - existing behavior
+                // Single medication
                 const medication = medications ? medications[0] : scanResult;
                 setScannedMedications([medication]);
                 setSelectedMedicationIndex(0);
                 handleSingleMedication(medication);
                 setShowQRModal(false);
                 
-                // Reset processing flag after a delay
+                // Show prescription lock notification
                 setTimeout(() => {
-                    scanProcessingRef.current = false;
-                }, 1000);
+                    Alert.alert(
+                        "Prescription Locked 🔒",
+                        "This medication was prescribed by your healthcare provider. Medication details are locked to ensure safety. You can customize medication times only.",
+                        [{ 
+                            text: "OK",
+                            onPress: () => {
+                                scanProcessingRef.current = false;
+                            }
+                        }]
+                    );
+                }, 500);
             }
         } catch (error) {
             console.error("Error handling scan success:", error);
@@ -285,10 +304,8 @@ export default function AddMedicationScreen() {
         // Use medication's times if available, otherwise use frequency default
         let medicationTimes = [];
         if (medication.times && Array.isArray(medication.times) && medication.times.length > 0) {
-            // Use existing times (preserves custom times)
             medicationTimes = medication.times;
         } else {
-            // Fall back to frequency-based times as default
             const frequencyData = FREQUENCIES.find(freq => freq.label === medication.frequencies);
             medicationTimes = frequencyData ? frequencyData.times : ["09:00"];
         }
@@ -302,7 +319,7 @@ export default function AddMedicationScreen() {
             frequencies: medication.frequencies || "",
             duration: medication.duration || "",
             startDate: new Date(),
-            times: medicationTimes, // Use medication's times or frequency default
+            times: medicationTimes,
             notes: medication.notes || "",
             reminderEnabled: true,
             refillReminder: false,
@@ -317,6 +334,42 @@ export default function AddMedicationScreen() {
         setSelectedDuration(medication.duration || "");
     };
 
+    // NEW: Check if field is locked
+    const isFieldLocked = (fieldName) => {
+        return isPrescriptionLocked && prescriptionData?.lockFields?.includes(fieldName);
+    };
+
+    // NEW: Handle attempts to modify locked fields
+    const handleLockedFieldTouch = (fieldName) => {
+        Alert.alert(
+            "Field Locked 🔒",
+            `This ${fieldName} was prescribed by your healthcare provider and cannot be modified for safety reasons.`,
+            [{ text: "OK" }]
+        );
+    };
+
+    // NEW: Render locked field indicator
+    const renderLockIndicator = () => {
+        if (!isPrescriptionLocked) return null;
+        
+        return (
+            <View style={styles.prescriptionLockBanner}>
+                <View style={styles.lockBannerContent}>
+                    <Ionicons name="shield-checkmark" size={20} color="#1a8e2d" />
+                    <Text style={styles.lockBannerText}>
+                        Prescription from Healthcare Provider
+                    </Text>
+                </View>
+                <View style={styles.lockBannerNote}>
+                    <Ionicons name="information-circle-outline" size={16} color="#666" />
+                    <Text style={styles.lockBannerNoteText}>
+                        Medication details are locked. Only times can be customized.
+                    </Text>
+                </View>
+            </View>
+        );
+    };
+
     // NEW: Handle medication selection from dropdown
     const handleMedicationSelect = (index) => {
         setSelectedMedicationIndex(index);
@@ -326,7 +379,6 @@ export default function AddMedicationScreen() {
 
     // NEW: Add all medications function with improved error handling
     const handleAddAllMedications = async (medications = scannedMedications) => {
-        // Prevent multiple calls
         if (loading) {
             console.log("Add all medications ignored: already processing");
             return;
@@ -371,15 +423,9 @@ export default function AddMedicationScreen() {
             
             for (const medication of medications) {
                 try {
-                    // 🚨 CRITICAL: For bulk save, use each medication's data as-is (preserves any custom times)
                     console.log("Processing medication for bulk save:", medication.name);
-                    console.log("Medication times:", medication.times);
                     
                     const medicationData = await prepareMedicationData(medication);
-                    
-                    console.log("Prepared data for", medication.name, ":", medicationData);
-                    console.log("Final times for", medication.name, ":", medicationData.times);
-                    
                     await addMedication(medicationData);
                     
                     if (medicationData.reminderEnabled) {
@@ -478,7 +524,6 @@ export default function AddMedicationScreen() {
                     </TouchableOpacity>
                 </View>
 
-                {/* Progress indicator */}
                 <View style={styles.progressIndicator}>
                     <View style={styles.progressBar}>
                         <View 
@@ -565,11 +610,69 @@ export default function AddMedicationScreen() {
         }, 500);
     };
 
-    // Rest of the component remains the same...
-    // (Including all the existing render functions, validation, save logic, etc.)
+    // NEW: Enable manual entry (unlock prescription)
+    const enableManualEntry = () => {
+        Alert.alert(
+            "Enable Manual Entry",
+            "Are you sure you want to enable manual entry? This will unlock all fields but medication data will no longer be verified by healthcare provider.",
+            [
+                {
+                    text: "Cancel",
+                    style: "cancel"
+                },
+                {
+                    text: "Enable Manual Entry",
+                    style: "destructive",
+                    onPress: () => {
+                        setIsPrescriptionLocked(false);
+                        setPrescriptionData(null);
+                        setScannedMedications([]);
+                        // Reset form to empty state
+                        setForm({
+                            name: "",
+                            type: "",
+                            illnessType: "",
+                            dosage: "",
+                            frequencies: "",
+                            duration: "",
+                            startDate: new Date(),
+                            times: ["09:00"],
+                            notes: "",
+                            reminderEnabled: true,
+                            refillReminder: false,
+                            currentSupply: "",
+                            refillAt: "",
+                        });
+                        setSelectedType("");
+                        setSelectedIllnessType("");
+                        setSelectedFrequency("");
+                        setSelectedDuration("");
+                    }
+                }
+            ]
+        );
+    };
 
-    // Render medication type options
+    // Enhanced render medication types with lock logic
     const renderMedicationTypes = () => {
+        if (isFieldLocked('type')) {
+            return (
+                <TouchableOpacity 
+                    style={styles.lockedFieldContainer}
+                    onPress={() => handleLockedFieldTouch('medication type')}
+                >
+                    <View style={styles.lockedFieldContent}>
+                        <View style={styles.lockedFieldInfo}>
+                            <Ionicons name="lock-closed" size={20} color="#666" />
+                            <Text style={styles.lockedFieldLabel}>Medication Type</Text>
+                        </View>
+                        <Text style={styles.lockedFieldValue}>{form.type}</Text>
+                        <Text style={styles.lockedFieldSubtext}>Prescribed by healthcare provider</Text>
+                    </View>
+                </TouchableOpacity>
+            );
+        }
+        
         return (
             <View style={styles.optionGrid}>
                 {MEDICATION_TYPES.map((type) => (
@@ -604,7 +707,26 @@ export default function AddMedicationScreen() {
         )
     }
 
+    // Enhanced render illness dropdown with lock logic
     const renderIllnessDropdown = () => {
+        if (isFieldLocked('illnessType')) {
+            return (
+                <TouchableOpacity 
+                    style={styles.lockedFieldContainer}
+                    onPress={() => handleLockedFieldTouch('illness type')}
+                >
+                    <View style={styles.lockedFieldContent}>
+                        <View style={styles.lockedFieldInfo}>
+                            <Ionicons name="lock-closed" size={20} color="#666" />
+                            <Text style={styles.lockedFieldLabel}>Illness Type</Text>
+                        </View>
+                        <Text style={styles.lockedFieldValue}>{form.illnessType}</Text>
+                        <Text style={styles.lockedFieldSubtext}>Prescribed by healthcare provider</Text>
+                    </View>
+                </TouchableOpacity>
+            );
+        }
+        
         return (
             <View>
                 <TouchableOpacity
@@ -657,7 +779,26 @@ export default function AddMedicationScreen() {
         )
     }
 
+    // Enhanced render frequency options with lock logic
     const renderFrequencyOptions = () => {
+        if (isFieldLocked('frequencies')) {
+            return (
+                <TouchableOpacity 
+                    style={styles.lockedFieldContainer}
+                    onPress={() => handleLockedFieldTouch('frequency')}
+                >
+                    <View style={styles.lockedFieldContent}>
+                        <View style={styles.lockedFieldInfo}>
+                            <Ionicons name="lock-closed" size={20} color="#666" />
+                            <Text style={styles.lockedFieldLabel}>Frequency</Text>
+                        </View>
+                        <Text style={styles.lockedFieldValue}>{form.frequencies}</Text>
+                        <Text style={styles.lockedFieldSubtext}>Prescribed by healthcare provider</Text>
+                    </View>
+                </TouchableOpacity>
+            );
+        }
+        
         return (
             <View style={styles.optionGrid}>
                 {FREQUENCIES.map((freq)=> (
@@ -667,7 +808,6 @@ export default function AddMedicationScreen() {
                         onPress={() => {
                             setSelectedFrequency(freq.label);
                             
-                            // Ask user if they want to update times when changing frequency
                             if (form.frequencies !== freq.label && form.times.length > 0) {
                                 Alert.alert(
                                     "Update Medication Times?",
@@ -675,12 +815,6 @@ export default function AddMedicationScreen() {
                                     [
                                         {
                                             text: "Keep Current Times",
-                                            onPress: () => {
-                                                setForm({ ...form, frequencies: freq.label });
-                                            }
-                                        },
-                                        {
-                                            text: "Update Times",
                                             onPress: () => {
                                                 setForm({ ...form, frequencies: freq.label, times: freq.times });
                                             }
@@ -717,7 +851,26 @@ export default function AddMedicationScreen() {
         )
     }
 
+    // Enhanced render duration options with lock logic
     const renderDurationOptions = () => {
+        if (isFieldLocked('duration')) {
+            return (
+                <TouchableOpacity 
+                    style={styles.lockedFieldContainer}
+                    onPress={() => handleLockedFieldTouch('duration')}
+                >
+                    <View style={styles.lockedFieldContent}>
+                        <View style={styles.lockedFieldInfo}>
+                            <Ionicons name="lock-closed" size={20} color="#666" />
+                            <Text style={styles.lockedFieldLabel}>Duration</Text>
+                        </View>
+                        <Text style={styles.lockedFieldValue}>{form.duration}</Text>
+                        <Text style={styles.lockedFieldSubtext}>Prescribed by healthcare provider</Text>
+                    </View>
+                </TouchableOpacity>
+            );
+        }
+        
         return (
             <View style={styles.optionGrid}>
                 {DURATIONS.map((dur)=> (
@@ -776,19 +929,13 @@ export default function AddMedicationScreen() {
         ];
         const randomColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
     
-        // 🚨 CRITICAL FIX: Always use the current form's times (preserves user customization)
         let medicationTimes = [];
         
-        // Priority 1: Use form.times (user's current selection/customization)
         if (Array.isArray(formData.times) && formData.times.length > 0) {
             medicationTimes = formData.times.map(time => String(time));
-            console.log("Using form times (custom):", medicationTimes);
-        } 
-        // Priority 2: If form.times is empty, use frequency default as fallback
-        else {
+        } else {
             const frequencyData = FREQUENCIES.find(freq => freq.label === formData.frequencies);
             medicationTimes = frequencyData ? frequencyData.times : ["09:00"];
-            console.log("Using frequency default times:", medicationTimes);
         }
     
         const medicationData = {
@@ -800,17 +947,20 @@ export default function AddMedicationScreen() {
             frequencies: formData.frequencies || "Once Daily",
             duration: formData.duration || "30 days",
             startDate: new Date().toISOString(),
-            times: medicationTimes, // 🚨 This should be the user's custom times
-            notes: formData.notes || "Added from prescription scan",
+            times: medicationTimes,
+            notes: formData.notes || (isPrescriptionLocked ? "Added from prescription scan" : ""),
             reminderEnabled: formData.reminderEnabled !== false,
             refillReminder: formData.refillReminder || false,
             currentSupply: 0,
             totalSupply: 0,
             refillAt: 0,
             color: randomColor,
+            // NEW: Add prescription metadata
+            isPrescription: isPrescriptionLocked,
+            prescriptionId: prescriptionData?.prescriptionId || null,
+            prescribedBy: isPrescriptionLocked ? "Healthcare Provider" : null,
         };
 
-        console.log("Final medication data being saved:", medicationData);
         return medicationData;
     };
 
@@ -822,15 +972,7 @@ export default function AddMedicationScreen() {
                 return false;
             }
 
-            console.log("Saving medication with form data:", form);
-            console.log("Form times before save:", form.times);
-
-            // 🚨 CRITICAL: Pass the entire form object to preserve custom times
             const medicationData = await prepareMedicationData(form);
-            
-            console.log("Medication data prepared for saving:", medicationData);
-            console.log("Times in prepared data:", medicationData.times);
-            
             await addMedication(medicationData);
 
             if (medicationData.reminderEnabled) {
@@ -840,14 +982,14 @@ export default function AddMedicationScreen() {
                     return false;
                 }
                 
-                console.log("Scheduling reminders for times:", medicationData.times);
                 await scheduleMedicationReminder(medicationData);
             }
 
             if (showSuccessAlert) {
+                const prescriptionNote = isPrescriptionLocked ? " (Prescription)" : "";
                 Alert.alert(
                     "Success",
-                    `Medication "${medicationData.name}" added with times: ${medicationData.times.join(", ")}`,
+                    `Medication "${medicationData.name}"${prescriptionNote} added with times: ${medicationData.times.join(", ")}`,
                     [{ text: "OK", onPress: () => router.back() }],
                     { cancelable: false }
                 );
@@ -994,32 +1136,64 @@ export default function AddMedicationScreen() {
                 <ScrollView showsVerticalScrollIndicator={false} style={{flex: 1}}
                     contentContainerStyle={styles.formContentContainer}>
                     
-                    {/* Option to open QR scanner again */}
-                    <TouchableOpacity 
-                        style={[styles.scanPrescriptionButton, loading && styles.disabledButton]}
-                        onPress={() => setShowQRModal(true)}
-                        disabled={loading}
-                    >
-                        <Ionicons name="qr-code" size={24} color="#1a8e2d" />
-                        <Text style={styles.scanPrescriptionText}>Scan Prescription QR</Text>
-                    </TouchableOpacity>
+                    {/* Option to open QR scanner again or enable manual entry */}
+                    {!isPrescriptionLocked ? (
+                        <TouchableOpacity 
+                            style={[styles.scanPrescriptionButton, loading && styles.disabledButton]}
+                            onPress={() => setShowQRModal(true)}
+                            disabled={loading}
+                        >
+                            <Ionicons name="qr-code" size={24} color="#1a8e2d" />
+                            <Text style={styles.scanPrescriptionText}>Scan Prescription QR</Text>
+                        </TouchableOpacity>
+                    ) : (
+                        <TouchableOpacity 
+                            style={styles.manualEntryButton}
+                            onPress={enableManualEntry}
+                        >
+                            <Ionicons name="create-outline" size={24} color="#ff6b35" />
+                            <Text style={styles.manualEntryText}>Switch to Manual Entry</Text>
+                        </TouchableOpacity>
+                    )}
 
-                    {/* NEW: Multiple Medication Selector */}
+                    {/* NEW: Prescription Lock Banner */}
+                    {renderLockIndicator()}
+
+                    {/* Multiple Medication Selector */}
                     {renderMedicationSelector()}
                     
                     <View style={styles.section}>
-                        {/* basic informations */}
+                        {/* Basic information */}
                         <View style={styles.inputContainer}>
-                            <TextInput style={[styles.mainInput, errors.name && styles.inputError]}
-                                placeholder='Medication Name' placeholderTextColor={'#999'}
+                            <TextInput 
+                                style={[
+                                    styles.mainInput, 
+                                    errors.name && styles.inputError,
+                                    isFieldLocked('name') && styles.lockedInput
+                                ]}
+                                placeholder='Medication Name' 
+                                placeholderTextColor={'#999'}
                                 value={form.name}
+                                editable={!isFieldLocked('name')}
                                 onChangeText={(text) =>{
-                                    setForm({...form, name:text})
-                                    if(errors.name){
-                                        setErrors({...errors, name: "" })
+                                    if (!isFieldLocked('name')) {
+                                        setForm({...form, name:text})
+                                        if(errors.name){
+                                            setErrors({...errors, name: "" })
+                                        }
+                                    }
+                                }}
+                                onTouchStart={() => {
+                                    if (isFieldLocked('name')) {
+                                        handleLockedFieldTouch('medication name');
                                     }
                                 }}
                             />
+                            {isFieldLocked('name') && (
+                                <View style={styles.lockIcon}>
+                                    <Ionicons name="lock-closed" size={16} color="#666" />
+                                </View>
+                            )}
                             {errors.name && (
                                 <Text style={styles.errorText}>{errors.name}</Text>
                             )}
@@ -1032,36 +1206,56 @@ export default function AddMedicationScreen() {
                                 <Text style={styles.errorText}>{errors.type}</Text>
                             )}
                             {renderMedicationTypes()}
+                            
                             <Text style={styles.sectionTitle}>Illness Type</Text>
                             {renderIllnessDropdown()}
                         </View>
                         
                         <View style={styles.inputContainer}>
-                            <TextInput style={[styles.mainInput, errors.dosage && styles.inputError]}
-                                placeholder='Dosage e.g(500mg)' placeholderTextColor={'#999'}
+                            <TextInput 
+                                style={[
+                                    styles.mainInput, 
+                                    errors.dosage && styles.inputError,
+                                    isFieldLocked('dosage') && styles.lockedInput
+                                ]}
+                                placeholder='Dosage e.g(500mg)' 
+                                placeholderTextColor={'#999'}
                                 value={form.dosage}
+                                editable={!isFieldLocked('dosage')}
                                 onChangeText={(text) =>{
-                                    setForm({...form, dosage:text})
-                                    if(errors.dosage){
-                                        setErrors({...errors, dosage: "" })
+                                    if (!isFieldLocked('dosage')) {
+                                        setForm({...form, dosage:text})
+                                        if(errors.dosage){
+                                            setErrors({...errors, dosage: "" })
+                                        }
+                                    }
+                                }}
+                                onTouchStart={() => {
+                                    if (isFieldLocked('dosage')) {
+                                        handleLockedFieldTouch('dosage');
                                     }
                                 }}
                             />
+                            {isFieldLocked('dosage') && (
+                                <View style={styles.lockIcon}>
+                                    <Ionicons name="lock-closed" size={16} color="#666" />
+                                </View>
+                            )}
                             {errors.dosage && (
                                 <Text style={styles.errorText}>{errors.dosage}</Text>
                             )}
                         </View>
                     </View>
+                    
                     {/* Schedule */}
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>How Often?</Text>
-                        {/* frequency option */}
                         {errors.frequencies && (
                             <Text style={styles.errorText}>{errors.frequencies}</Text>
                         )}
                         {renderFrequencyOptions()}
+                        
                         <Text style={styles.sectionTitle}>For How Long?</Text>
-                        {/* duration option */}
                         {renderDurationOptions()}
                         {errors.duration && (
                             <Text style={styles.errorText}>{errors.duration}</Text>
@@ -1085,10 +1279,16 @@ export default function AddMedicationScreen() {
                             />  
                         )}
 
+                        {/* ALWAYS ALLOW MEDICATION TIMES CUSTOMIZATION */}
                         {form.frequencies && form.frequencies !== 'As Needed' && (
                             <View style={styles.timesContainer}>
                                 <View style={styles.timesHeader}>
-                                    <Text style={styles.timesTitle}>Medication Times</Text>
+                                    <Text style={styles.timesTitle}>
+                                        Medication Times 
+                                        {isPrescriptionLocked && (
+                                            <Text style={styles.customizableLabel}> (Customizable)</Text>
+                                        )}
+                                    </Text>
                                     {form.frequencies && (
                                         <TouchableOpacity
                                             style={styles.resetTimesButton}
@@ -1120,15 +1320,21 @@ export default function AddMedicationScreen() {
                                     )}
                                 </View>
                                 <View style={styles.timesInfo}>
-                                    <Ionicons name="information-circle-outline" size={16} color="#666" />
+                                    <Ionicons name="information-circle-outline" size={16} color="#1a8e2d" />
                                     <Text style={styles.timesInfoText}>
-                                        Tap any time to customize when you take this medication
+                                        {isPrescriptionLocked 
+                                            ? "You can customize medication times to fit your schedule"
+                                            : "Tap any time to customize when you take this medication"
+                                        }
                                     </Text>
                                 </View>
                                 {form.times.map((time, index) => (
                                     <TouchableOpacity
                                         key={index}
-                                        style={styles.timeButton}
+                                        style={[
+                                            styles.timeButton,
+                                            isPrescriptionLocked && styles.customizableTimeButton
+                                        ]}
                                         onPress={() => {
                                             setCurrentTimeIndex(index);
                                             setShowTimePicker(true);
@@ -1143,7 +1349,7 @@ export default function AddMedicationScreen() {
                                         <Text style={styles.timeButtonText}>{time}</Text>
                                         <View style={styles.timeButtonActions}>
                                             <Text style={styles.customTimeLabel}>
-                                                {index === 0 ? "Tap to customize" : ""}
+                                                {isPrescriptionLocked ? "Customizable" : (index === 0 ? "Tap to customize" : "")}
                                             </Text>
                                             <Ionicons 
                                                 name='chevron-forward' 
@@ -1171,23 +1377,11 @@ export default function AddMedicationScreen() {
                                             hour12: false,
                                         });
                                         
-                                        console.log("🚨 User selected new time:", newTime);
-                                        console.log("🚨 Updating time at index:", currentTimeIndex);
-                                        console.log("🚨 Current form.times before update:", form.times);
-                                        
                                         const newTimes = form.times.map((t,i)=>(i===currentTimeIndex ? newTime : t));
-                                        
-                                        console.log("🚨 New times array:", newTimes);
-                                        
                                         setForm((prev) => ({
                                             ...prev,
                                             times: newTimes
                                         }));
-                                        
-                                        // Log after state update (will show in next render)
-                                        setTimeout(() => {
-                                            console.log("🚨 Form state after time update:", form.times);
-                                        }, 100);
                                     }
                                 }}
                             />
@@ -1218,11 +1412,16 @@ export default function AddMedicationScreen() {
                             </View>
                         </View>
                     </View>
+                    
                     {/* Notes */}
                     <View style={styles.section}>
                         <View style={styles.textAreaContainer}>
                             <TextInput style={styles.textArea}
-                                placeholder='Add Notes or special instructions...' placeholderTextColor='#999'
+                                placeholder={isPrescriptionLocked 
+                                    ? 'Add personal notes (prescription details are protected)...' 
+                                    : 'Add Notes or special instructions...'
+                                } 
+                                placeholderTextColor='#999'
                                 value={form.notes}
                                 onChangeText={(text) => setForm({ ...form, notes: text })}
                                 multiline
@@ -1249,7 +1448,7 @@ export default function AddMedicationScreen() {
                                 {isSubmitting ? "Saving..." : 
                                  scannedMedications.length > 1 ? 
                                  `Save Medication ${selectedMedicationIndex + 1}/${scannedMedications.length}` : 
-                                 "Add Medication"}
+                                 isPrescriptionLocked ? "Save Prescription" : "Add Medication"}
                             </Text>
                         </LinearGradient>
                     </TouchableOpacity>
@@ -1265,7 +1464,7 @@ export default function AddMedicationScreen() {
     );
 }
 
-// Add disabled button style
+// Enhanced styles with prescription lock styling
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -1328,6 +1527,7 @@ const styles = StyleSheet.create({
     },
     inputContainer: {
         marginBottom: 15,
+        position: 'relative',
     },
     mainInput: {
         backgroundColor: '#f5f5f5',
@@ -1340,10 +1540,114 @@ const styles = StyleSheet.create({
     inputError: {
         borderColor: 'red',
     },
+    // NEW: Locked input styles
+    lockedInput: {
+        backgroundColor: '#f8f8f8',
+        borderColor: '#ddd',
+        color: '#666',
+    },
+    lockIcon: {
+        position: 'absolute',
+        right: 12,
+        top: 12,
+    },
     errorText: {
         color: 'red',
         fontSize: 12,
         marginTop: 5,
+    },
+    // NEW: Prescription lock banner styles
+    prescriptionLockBanner: {
+        backgroundColor: '#f0f9f0',
+        borderRadius: 12,
+        padding: 15,
+        marginBottom: 20,
+        borderWidth: 2,
+        borderColor: '#1a8e2d20',
+    },
+    lockBannerContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    lockBannerText: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#1a8e2d',
+        marginLeft: 8,
+    },
+    lockBannerNote: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    lockBannerNoteText: {
+        fontSize: 13,
+        color: '#666',
+        marginLeft: 6,
+        flex: 1,
+    },
+    // NEW: Locked field container styles
+    lockedFieldContainer: {
+        backgroundColor: '#f8f8f8',
+        borderRadius: 10,
+        padding: 15,
+        marginBottom: 15,
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+    },
+    lockedFieldContent: {
+        alignItems: 'flex-start',
+    },
+    lockedFieldInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    lockedFieldLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#666',
+        marginLeft: 8,
+    },
+    lockedFieldValue: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#333',
+        marginBottom: 4,
+    },
+    lockedFieldSubtext: {
+        fontSize: 12,
+        color: '#888',
+        fontStyle: 'italic',
+    },
+    // NEW: Manual entry button
+    manualEntryButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fff5f0',
+        borderRadius: 10,
+        padding: 15,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#ff6b3520',
+        justifyContent: 'center',
+    },
+    manualEntryText: {
+        color: '#ff6b35',
+        fontWeight: 'bold',
+        fontSize: 16,
+        marginLeft: 10,
+    },
+    // Enhanced time customization styles
+    customizableLabel: {
+        fontSize: 14,
+        fontWeight: 'normal',
+        color: '#1a8e2d',
+        fontStyle: 'italic',
+    },
+    customizableTimeButton: {
+        borderColor: '#1a8e2d20',
+        backgroundColor: '#f8fdf9',
     },
     optionGrid: {
         flexDirection: 'row',
@@ -1446,7 +1750,7 @@ const styles = StyleSheet.create({
         color: '#1a8e2d',
         fontWeight: 'bold',
     },
-    // NEW: Multiple Medication Selector Styles
+    // Multiple Medication Selector Styles
     medicationSelectorContainer: {
         backgroundColor: '#fff',
         borderRadius: 12,

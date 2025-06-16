@@ -709,90 +709,150 @@ export default function AppointmentDetail() {
 
         {/* Prescription Status */}
         <View style={styles.infoCard}>
-          <View style={styles.cardHeader}>
+        <View style={styles.cardHeader}>
             <Ionicons name="document-text" size={20} color="#1a8e2d" />
             <Text style={styles.cardTitle}>Prescription Status</Text>
-          </View>
-          <View style={styles.prescriptionStatus}>
+        </View>
+        <View style={styles.prescriptionStatus}>
             <View style={[
-              styles.prescriptionBadge,
-              { backgroundColor: appointment.has_prescription ? '#F0FDF4' : '#FEF2F2' }
+            styles.prescriptionBadge,
+            { backgroundColor: appointment.has_prescription ? '#F0FDF4' : '#FEF2F2' }
             ]}>
-              <Ionicons 
+            <Ionicons 
                 name={appointment.has_prescription ? "checkmark-circle" : "close-circle"} 
                 size={16} 
                 color={appointment.has_prescription ? '#0AD476' : '#EF4444'} 
-              />
-              <Text style={[
+            />
+            <Text style={[
                 styles.prescriptionText,
                 { color: appointment.has_prescription ? '#0AD476' : '#EF4444' }
-              ]}>
+            ]}>
                 {appointment.has_prescription ? 'Prescription Added' : 'No Prescription'}
-              </Text>
+            </Text>
             </View>
             
-            {!appointment.has_prescription && (
-              <TouchableOpacity 
+            {/* Conditional rendering based on appointment status */}
+            {appointment.status === APPOINTMENT_STATUS.COMPLETED ? (
+            // Appointment is completed - show prescription actions
+            !appointment.has_prescription ? (
+                <TouchableOpacity 
                 style={styles.addPrescriptionButton}
                 onPress={() => router.push({
-                  pathname: '/doctor/prescriptions/create',
-                  params: { appointmentId: appointment.$id }
+                    pathname: '/doctor/prescriptions/create',
+                    params: { appointmentId: appointment.$id }
                 })}
-              >
+                >
                 <Ionicons name="add" size={16} color="white" />
                 <Text style={styles.addPrescriptionText}>Add Prescription</Text>
-              </TouchableOpacity>
-            )}
-
-            {appointment.has_prescription && (
-              <TouchableOpacity 
+                </TouchableOpacity>
+            ) : (
+                <TouchableOpacity 
                 style={styles.viewPrescriptionButton}
                 onPress={() => router.push({
-                  pathname: '/doctor/prescriptions/view',
-                  params: { appointmentId: appointment.$id }
+                    pathname: '/doctor/prescriptions/view',
+                    params: { appointmentId: appointment.$id }
                 })}
-              >
+                >
                 <Ionicons name="eye" size={16} color="#1a8e2d" />
                 <Text style={styles.viewPrescriptionText}>View Prescription</Text>
-              </TouchableOpacity>
+                </TouchableOpacity>
+            )
+            ) : (
+            // Appointment is not completed - show status message
+            <View style={styles.prescriptionDisabledContainer}>
+                <View style={styles.prescriptionDisabledBadge}>
+                <Ionicons name="time" size={14} color="#F59E0B" />
+                <Text style={styles.prescriptionDisabledText}>
+                    {appointment.status === APPOINTMENT_STATUS.CANCELLED ? 
+                    'Appointment Cancelled' :
+                    appointment.status === APPOINTMENT_STATUS.NO_SHOW ?
+                    'Patient No Show' :
+                    'Complete appointment first'
+                    }
+                </Text>
+                </View>
+                <Text style={styles.prescriptionDisabledSubtext}>
+                {appointment.status === APPOINTMENT_STATUS.CANCELLED || 
+                appointment.status === APPOINTMENT_STATUS.NO_SHOW ? 
+                    'Cannot create prescription' :
+                    'Mark as completed to add prescription'
+                }
+                </Text>
+            </View>
             )}
-          </View>
+        </View>
+        
+        {/* Helper text for better UX */}
+        {appointment.status !== APPOINTMENT_STATUS.COMPLETED && 
+        appointment.status !== APPOINTMENT_STATUS.CANCELLED && 
+        appointment.status !== APPOINTMENT_STATUS.NO_SHOW && (
+            <View style={styles.prescriptionHelpContainer}>
+            <Ionicons name="information-circle" size={16} color="#6B7280" />
+            <Text style={styles.prescriptionHelpText}>
+                Use the "Complete" button above to mark this appointment as finished, then you can add a prescription.
+            </Text>
+            </View>
+        )}
         </View>
 
         {/* Quick Status Updates */}
         <View style={styles.infoCard}>
-          <View style={styles.cardHeader}>
+        <View style={styles.cardHeader}>
             <Ionicons name="settings" size={20} color="#1a8e2d" />
             <Text style={styles.cardTitle}>Quick Status Updates</Text>
-          </View>
-          <View style={styles.statusButtons}>
+            {/* Show hint if appointment needs to be completed for prescription */}
+            {appointment.status !== APPOINTMENT_STATUS.COMPLETED && 
+            appointment.status !== APPOINTMENT_STATUS.CANCELLED && 
+            appointment.status !== APPOINTMENT_STATUS.NO_SHOW && (
+            <View style={styles.prescriptionPendingBadge}>
+                <Ionicons name="medical" size={12} color="#8B5CF6" />
+                <Text style={styles.prescriptionPendingText}>Prescription pending</Text>
+            </View>
+            )}
+        </View>
+        <View style={styles.statusButtons}>
             <TouchableOpacity 
-              style={[styles.statusButton, { backgroundColor: '#F0FDF4' }]}
-              onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.CONFIRMED)}
-              disabled={appointment.status === APPOINTMENT_STATUS.CONFIRMED}
+            style={[styles.statusButton, { backgroundColor: '#F0FDF4' }]}
+            onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.CONFIRMED)}
+            disabled={appointment.status === APPOINTMENT_STATUS.CONFIRMED}
             >
-              <Ionicons name="checkmark-circle" size={16} color="#0AD476" />
-              <Text style={[styles.statusButtonText, { color: '#0AD476' }]}>Confirm</Text>
+            <Ionicons name="checkmark-circle" size={16} color="#0AD476" />
+            <Text style={[styles.statusButtonText, { color: '#0AD476' }]}>Confirm</Text>
             </TouchableOpacity>
             
             <TouchableOpacity 
-              style={[styles.statusButton, { backgroundColor: '#EFF6FF' }]}
-              onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.COMPLETED)}
-              disabled={appointment.status === APPOINTMENT_STATUS.COMPLETED}
+            style={[
+                styles.statusButton, 
+                { 
+                backgroundColor: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? '#EFF6FF' : '#E0E7FF',
+                borderWidth: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? 2 : 0,
+                borderColor: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? '#3B82F6' : 'transparent'
+                }
+            ]}
+            onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.COMPLETED)}
+            disabled={appointment.status === APPOINTMENT_STATUS.COMPLETED}
             >
-              <Ionicons name="checkmark-done-circle" size={16} color="#3B82F6" />
-              <Text style={[styles.statusButtonText, { color: '#3B82F6' }]}>Complete</Text>
+            <Ionicons name="checkmark-done-circle" size={16} color="#3B82F6" />
+            <Text style={[styles.statusButtonText, { 
+                color: '#3B82F6',
+                fontWeight: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? 'bold' : '600'
+            }]}>
+                Complete
+                {appointment.status !== APPOINTMENT_STATUS.COMPLETED && (
+                <Text style={styles.completeHintText}> ✨</Text>
+                )}
+            </Text>
             </TouchableOpacity>
             
             <TouchableOpacity 
-              style={[styles.statusButton, { backgroundColor: '#F5F3FF' }]}
-              onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.NO_SHOW)}
-              disabled={appointment.status === APPOINTMENT_STATUS.NO_SHOW}
+            style={[styles.statusButton, { backgroundColor: '#F5F3FF' }]}
+            onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.NO_SHOW)}
+            disabled={appointment.status === APPOINTMENT_STATUS.NO_SHOW}
             >
-              <Ionicons name="alert-circle" size={16} color="#8B5CF6" />
-              <Text style={[styles.statusButtonText, { color: '#8B5CF6' }]}>No Show</Text>
+            <Ionicons name="alert-circle" size={16} color="#8B5CF6" />
+            <Text style={[styles.statusButtonText, { color: '#8B5CF6' }]}>No Show</Text>
             </TouchableOpacity>
-          </View>
+        </View>
         </View>
 
         {/* Action Buttons */}
@@ -1193,6 +1253,49 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  // Prescription disabled states
+prescriptionDisabledContainer: {
+  flex: 1,
+  alignItems: 'flex-end',
+},
+prescriptionDisabledBadge: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#FFFBEB',
+  paddingHorizontal: 10,
+  paddingVertical: 6,
+  borderRadius: 12,
+  gap: 4,
+  marginBottom: 4,
+},
+prescriptionDisabledText: {
+  fontSize: 12,
+  color: '#F59E0B',
+  fontWeight: '600',
+},
+prescriptionDisabledSubtext: {
+  fontSize: 10,
+  color: '#9CA3AF',
+  fontStyle: 'italic',
+  textAlign: 'right',
+},
+
+// Help container
+prescriptionHelpContainer: {
+  flexDirection: 'row',
+  alignItems: 'flex-start',
+  backgroundColor: '#F9FAFB',
+  padding: 12,
+  borderRadius: 8,
+  marginTop: 12,
+  gap: 8,
+},
+prescriptionHelpText: {
+  fontSize: 13,
+  color: '#6B7280',
+  lineHeight: 18,
+  flex: 1,
+},
   
   // Status Buttons
   statusButtons: {
@@ -1212,6 +1315,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+
+  prescriptionPendingBadge: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#F5F3FF',
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+  borderRadius: 8,
+  gap: 4,
+},
+prescriptionPendingText: {
+  fontSize: 11,
+  color: '#8B5CF6',
+  fontWeight: '600',
+},
+completeHintText: {
+  fontSize: 12,
+  color: '#F59E0B',
+},
   
   // Action Buttons
   actionButtons: {

@@ -31,6 +31,7 @@ export default function ViewPrescriptionScreen() {
     }
   }, [appointmentId]);
   
+  // FIXED: Updated loadData function for View Prescription
   const loadData = async () => {
     try {
       setLoading(true);
@@ -43,13 +44,13 @@ export default function ViewPrescriptionScreen() {
       );
       setAppointment(appointmentData);
       
-      // Get patient name
-      if (appointmentData.user_id) {
-        await fetchPatientName(appointmentData.user_id);
+      // Get patient name using the entire appointment object (FIXED)
+      if (appointmentData) {
+        await fetchPatientName(appointmentData); // Pass entire appointment object
       }
       
       // Get the prescription and medications using the correct function
-      const prescriptionData = await getPrescriptions(appointmentId); // ✅ Fixed function call
+      const prescriptionData = await getPrescriptions(appointmentId);
       console.log("Prescription data:", prescriptionData);
       
       if (prescriptionData.prescription) {
@@ -80,33 +81,84 @@ export default function ViewPrescriptionScreen() {
       setLoading(false);
     }
   };
-  
-  const fetchPatientName = async (userId) => {
+
+  // FIXED: Updated fetchPatientName function to match appointment detail logic
+  const fetchPatientName = async (appointmentData) => {
     try {
-      console.log("Fetching patient name for user ID:", userId);
+      console.log('Fetching patient info for appointment:', appointmentData.$id);
+      console.log('Is family booking:', appointmentData?.is_family_booking);
+      console.log('Patient name from appointment:', appointmentData?.patient_name);
+      console.log('Patient ID from appointment:', appointmentData?.patient_id);
+      console.log('User ID from appointment:', appointmentData?.user_id);
       
-      // Query by userId field (which we now know is the correct field)
-      const usersResponse = await DatabaseService.listDocuments(
-        '67e032ec0025cf1956ff', // Users collection
-        [Query.equal('userId', userId)]
-      );
+      let patientName = 'Unknown Patient';
       
-      if (usersResponse.documents && usersResponse.documents.length > 0) {
-        const user = usersResponse.documents[0];
-        
-        // We know fullName is the correct field
-        if (user.fullName) {
-          setPatientName(user.fullName);
-          console.log(`Found patient name: ${user.fullName}`);
-          return;
+      // Use the same logic as the appointment detail view for consistency
+      if (appointmentData.is_family_booking && appointmentData.patient_name) {
+        // Family booking with patient name - use it directly
+        patientName = appointmentData.patient_name;
+        console.log(`Using family booking patient name: ${patientName}`);
+      } 
+      else if (appointmentData.is_family_booking && appointmentData.patient_id) {
+        // Family booking with patient_id but no name
+        try {
+          const patientResponse = await DatabaseService.listDocuments(
+            '67e032ec0025cf1956ff', // Patient profiles collection
+            [Query.equal('$id', appointmentData.patient_id)]
+          );
+          
+          if (patientResponse.documents && patientResponse.documents.length > 0) {
+            const patientData = patientResponse.documents[0];
+            patientName = patientData.fullName || patientData.name || patientData.displayName || 'Family Member';
+            console.log(`Found family member by patient_id: ${patientName}`);
+          } else {
+            patientName = 'Family Member';
+            console.log('Family member not found in patient profiles, using default');
+          }
+        } catch (error) {
+          console.log('Error fetching family member by patient_id:', error);
+          patientName = 'Family Member';
+        }
+      }
+      else if (appointmentData.user_id) {
+        // Regular booking - fetch by user_id
+        try {
+          const usersResponse = await DatabaseService.listDocuments(
+            '67e032ec0025cf1956ff', // Users collection
+            [Query.equal('userId', appointmentData.user_id)]
+          );
+          
+          if (usersResponse.documents && usersResponse.documents.length > 0) {
+            const user = usersResponse.documents[0];
+            patientName = user.fullName || user.name || user.displayName || 
+              (appointmentData.user_id.includes('@') ? 
+                appointmentData.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+                `Patient ${appointmentData.user_id.substring(0, 8)}`);
+            console.log(`Found account holder by user_id: ${patientName}`);
+          } else {
+            // Fallback formatting for user_id
+            patientName = appointmentData.user_id.includes('@') ? 
+              appointmentData.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+              `Patient ${appointmentData.user_id.substring(0, 8)}`;
+            console.log(`Using fallback formatting for user_id: ${patientName}`);
+          }
+        } catch (error) {
+          console.error('Error fetching account holder by user_id:', error);
+          patientName = `Patient ${appointmentData.user_id.substring(0, 8)}`;
         }
       }
       
-      // Fallback if lookup fails for any reason
-      setPatientName(`Patient (${userId.substring(0, 8)})`);
+      setPatientName(patientName);
+      console.log(`Final patient name set: ${patientName}`);
+      
     } catch (error) {
-      console.error('Error fetching patient name:', error);
-      setPatientName(`Patient (${userId.substring(0, 8)})`);
+      console.error('Error in fetchPatientName:', error);
+      // Fallback to appointment data
+      const fallbackName = appointmentData?.patient_name || 
+                          (appointmentData?.user_id?.includes('@') ? 
+                            appointmentData.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
+                            'Unknown Patient');
+      setPatientName(fallbackName);
     }
   };
   

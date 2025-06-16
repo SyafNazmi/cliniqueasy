@@ -7,9 +7,7 @@ import { router } from 'expo-router';
 import PageHeader from '../../../components/PageHeader';
 import { DatabaseService, Query } from '../../../configs/AppwriteConfig';
 import { getLocalStorage } from '../../../service/Storage';
-
-const USERS_COLLECTION_ID = '67e032ec0025cf1956ff';
-const APPOINTMENTS_COLLECTION_ID = '67e0332c0001131d71ec';
+import { COLLECTIONS } from '../../../constants';
 
 export default function PatientsManagement() {
   const [patients, setPatients] = useState([]);
@@ -37,9 +35,9 @@ export default function PatientsManagement() {
         return;
       }
 
-      // Load all users (patients)
+      // Load all users (patients) - using COLLECTIONS constant
       const usersResponse = await DatabaseService.listDocuments(
-        USERS_COLLECTION_ID,
+        COLLECTIONS.PATIENT_PROFILES,
         []
       );
       
@@ -72,32 +70,102 @@ export default function PatientsManagement() {
 
   const loadPatientAppointmentCounts = async (patientList) => {
     try {
-      // Load all appointments
+      // Load all appointments - using COLLECTIONS constant
       const appointmentsResponse = await DatabaseService.listDocuments(
-        APPOINTMENTS_COLLECTION_ID,
+        COLLECTIONS.APPOINTMENTS,
         []
       );
       
       const appointments = appointmentsResponse.documents || [];
       const appointmentCounts = {};
+      const familyMembers = {}; // Track family members
       
-      // Count appointments for each patient
-      patientList.forEach(patient => {
-        const patientAppointments = appointments.filter(apt => 
-          apt.user_id === patient.userId || apt.user_id === patient.$id
-        );
+      // First, identify family members from appointments
+      appointments.forEach(apt => {
+        if (apt.is_family_booking && apt.patient_name && apt.patient_id && apt.user_id) {
+          const familyKey = `${apt.user_id}-${apt.patient_name}`;
+          if (!familyMembers[familyKey]) {
+            familyMembers[familyKey] = {
+              patientId: apt.patient_id,
+              patientName: apt.patient_name,
+              accountHolderUserId: apt.user_id,
+              appointments: []
+            };
+          }
+          familyMembers[familyKey].appointments.push(apt);
+        }
+      });
+      
+      // Add family members to patient list
+      const familyMemberProfiles = Object.values(familyMembers).map(fm => ({
+        $id: fm.patientId,
+        userId: fm.patientId, // Use patient_id as userId for family members
+        fullName: fm.patientName,
+        name: fm.patientName,
+        displayName: fm.patientName,
+        isFamilyMember: true,
+        accountHolderUserId: fm.accountHolderUserId
+      }));
+      
+      // Add family members to the patients list
+      patientList.push(...familyMemberProfiles);
+      
+      // Count appointments for each patient (including family members)
+      [...patientList, ...familyMemberProfiles].forEach(patient => {
+        const patientId = patient.userId || patient.$id;
+        const patientDocId = patient.$id; // Document ID from patient profiles
         
-        appointmentCounts[patient.userId || patient.$id] = {
+        // Enhanced: Filter appointments using multiple criteria
+        const patientAppointments = appointments.filter(apt => {
+          // For family members, match by patient_name and patient_id
+          if (patient.isFamilyMember) {
+            return apt.is_family_booking && 
+                   apt.patient_name === patient.fullName && 
+                   apt.patient_id === patient.$id;
+          }
+          
+          // For regular patients
+          // Method 1: Check if appointment patient_id matches this patient's document ID
+          if (apt.patient_id === patientDocId) {
+            return true;
+          }
+          
+          // Method 2: Check if appointment user_id matches this patient's userId (non-family bookings)
+          if (apt.user_id === patientId && !apt.is_family_booking) {
+            return true;
+          }
+          
+          return false;
+        });
+        
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        
+        appointmentCounts[patientId] = {
           total: patientAppointments.length,
           upcoming: patientAppointments.filter(apt => {
             const aptDate = parseAppointmentDate(apt.date);
-            return aptDate >= new Date();
+            return aptDate >= now && apt.status !== 'Cancelled' && apt.status !== 'Completed';
           }).length,
           lastVisit: patientAppointments.length > 0 ? 
-            patientAppointments.sort((a, b) => 
-              parseAppointmentDate(b.date) - parseAppointmentDate(a.date)
-            )[0].date : null
+            patientAppointments
+              .sort((a, b) => parseAppointmentDate(b.date) - parseAppointmentDate(a.date))[0].date 
+            : null
         };
+      });
+      
+      // Update the main patients state to include family members
+      setPatients(prevPatients => {
+        const combined = [...prevPatients, ...familyMemberProfiles];
+        // Remove duplicates and sort
+        const unique = combined.filter((patient, index, self) => 
+          index === self.findIndex(p => (p.userId || p.$id) === (patient.userId || patient.$id))
+        );
+        return unique.sort((a, b) => {
+          const nameA = getPatientDisplayName(a).toLowerCase();
+          const nameB = getPatientDisplayName(b).toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
       });
       
       setPatientAppointments(appointmentCounts);
@@ -188,11 +256,22 @@ export default function PatientsManagement() {
   };
 
   const navigateToPatientDetail = (patient) => {
+    // For family members, use the patient_id and patient name
+    const patientId = patient.isFamilyMember ? patient.$id : (patient.userId || patient.$id);
+    const patientName = getPatientDisplayName(patient);
+    
+    console.log('Navigating to patient detail:', {
+      patientId,
+      patientName,
+      isFamilyMember: patient.isFamilyMember,
+      originalPatient: patient
+    });
+    
     router.push({
       pathname: '/doctor/patients/detail',
       params: { 
-        patientId: patient.userId || patient.$id,
-        patientName: getPatientDisplayName(patient)
+        patientId: patientId,
+        patientName: patientName
       }
     });
   };
@@ -255,6 +334,7 @@ export default function PatientsManagement() {
             <View style={styles.patientDetails}>
             <Text style={styles.patientName}>
                 {getPatientDisplayName(patient)}
+                {patient.isFamilyMember && <Text style={styles.familyMemberBadge}> (Family)</Text>}
             </Text>
             <Text style={styles.patientMeta}>
                 ID: {patientId.substring(0, 12)}
@@ -382,6 +462,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
     marginLeft: 15,
+    flex: 1,
   },
   content: {
     flex: 1,
@@ -448,7 +529,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   loadingContainer: {
-    padding: 40,
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   loadingText: {
@@ -528,6 +610,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
     marginBottom: 4,
+  },
+  familyMemberBadge: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#4CAF50',
+    fontStyle: 'italic',
   },
   patientMeta: {
     color: '#666',

@@ -71,15 +71,15 @@ export default function AppointmentCard({ appointment, showCancelled = false, cu
     "Emma Lee": "doctor-emma.png",
     "Ahmad Razak": "doctor-ahmad.png",
     // Add mapping for doctors that appear with "Dr. Dr." prefix
-    "Richard Teo": "doctor3.png",  // Fixed: Map Richard Teo to doctor3.png
-    "Priya Sharma": "doctor-emma.png"  // Add Priya Sharma mapping
+    "Richard Teo": "doctor3.png", 
+    "Priya Sharma": "doctor-emma.png"
   };
   
   // First try exact match with cleaned name
   const imageKey = doctorImageMap[cleanName];
   
   if (imageKey && doctorImages[imageKey]) {
-    console.log(`Found exact match for ${cleanName}: ${imageKey}`);
+    // console.log(`Found exact match for ${cleanName}: ${imageKey}`);
     return doctorImages[imageKey];
   }
   
