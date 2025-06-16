@@ -1,4 +1,4 @@
-// app/profile/appointment-details.jsx 
+// app/profile/appointment-details.jsx - ENHANCED WITH CANCELLATION REQUEST FLOW
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -15,10 +15,10 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { DatabaseService } from '@/configs/AppwriteConfig';
+import { account, DatabaseService, Query } from '@/configs/AppwriteConfig';
 import { COLLECTIONS } from '@/constants';
 import Toast from 'react-native-toast-message';
-import { appointmentManager, APPOINTMENT_STATUS } from '@/service/appointmentUtils';
+import { APPOINTMENT_STATUS, CANCELLATION_STATUS } from '@/service/appointmentUtils'
 
 export default function EnhancedAppointmentDetails() {
   const router = useRouter();
@@ -27,7 +27,6 @@ export default function EnhancedAppointmentDetails() {
   const [appointment, setAppointment] = useState(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
-  const [realtimeSubscription, setRealtimeSubscription] = useState(null); 
   const [isUpdating, setIsUpdating] = useState(false);
   
   // Parse appointment data from params or ID
@@ -40,25 +39,6 @@ export default function EnhancedAppointmentDetails() {
     } else if (appointmentId) {
       loadAppointmentDetails();
     }
-    
-    if (appointmentId) {
-      const subscription = appointmentManager.subscribeToAppointments((update) => {
-        console.log('Appointment details received update:', update);
-        
-        // Check if the update is for the current appointment
-        if (update.appointment.$id === appointmentId) {
-          handleRealtimeUpdate(update);
-        }
-      });
-      
-      setRealtimeSubscription(subscription);
-    }
-  
-    return () => {
-      if (realtimeSubscription) {
-        appointmentManager.unsubscribe(realtimeSubscription);
-      }
-    };
   }, [appointmentId]);
 
   const loadAppointmentDetails = async () => {
@@ -80,67 +60,6 @@ export default function EnhancedAppointmentDetails() {
       setIsLoading(false);
     }
   };
-
-  const handleRealtimeUpdate = (update) => {
-    setIsUpdating(true);
-    
-    switch (update.type) {
-      case 'updated':
-        setAppointment(update.appointment);
-        Toast.show({
-          type: 'info',
-          text1: 'Appointment Updated',
-          text2: 'This appointment has been updated',
-        });
-        break;
-        
-      case 'deleted':
-        Toast.show({
-          type: 'success',
-          text1: 'Appointment Cancelled',
-          text2: 'This appointment has been cancelled',
-        });
-        // Navigate back after a delay
-        setTimeout(() => {
-          router.back();
-        }, 2000);
-        break;
-        
-      default:
-        break;
-    }
-    
-    // Reset updating indicator after a short delay
-    setTimeout(() => setIsUpdating(false), 500);
-  };
-  
-  if (!appointment && !appointmentId) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
-        <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle" size={50} color="#FF3B30" />
-          <Text style={styles.errorTitle}>Appointment Not Found</Text>
-          <Text style={styles.errorText}>Unable to load appointment details</Text>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Text style={styles.backButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#0AD476" />
-          <Text style={styles.loadingText}>Loading appointment details...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
   
   const isDatePast = (dateString) => {
     if (!dateString) return false;
@@ -172,10 +91,18 @@ export default function EnhancedAppointmentDetails() {
   
   const isPast = isDatePast(appointment?.date);
   const isCancelled = appointment?.status === APPOINTMENT_STATUS.CANCELLED;
+  const cancellationStatus = appointment?.cancellation_status;
+  const hasPendingCancellation = cancellationStatus === CANCELLATION_STATUS.REQUESTED;
+  const isCancellationDenied = cancellationStatus === CANCELLATION_STATUS.DENIED;
+  const isCancellationApproved = cancellationStatus === CANCELLATION_STATUS.APPROVED;
   
   const getStatusInfo = () => {
     if (isCancelled) {
       return { color: '#FF3B30', text: 'Cancelled', icon: 'close-circle' };
+    } else if (hasPendingCancellation) {
+      return { color: '#FF9500', text: 'Cancellation Pending', icon: 'hourglass' };
+    } else if (isCancellationDenied) {
+      return { color: '#8E8E93', text: 'Cancellation Denied', icon: 'close-circle-outline' };
     } else if (isPast) {
       return { color: '#8E8E93', text: 'Completed', icon: 'checkmark-circle' };
     } else {
@@ -195,59 +122,125 @@ export default function EnhancedAppointmentDetails() {
       return;
     }
     
+    if (hasPendingCancellation) {
+      Toast.show({
+        type: 'info',
+        text1: 'Already Requested',
+        text2: 'You have already requested cancellation for this appointment.',
+      });
+      return;
+    }
+    
     setShowCancelModal(true);
   };
   
-  const confirmCancelAppointment = async () => {
+  // Request cancellation instead of directly cancelling
+  const requestCancellation = async () => {
     try {
       setIsLoading(true);
       setShowCancelModal(false);
       
-      const result = await appointmentManager.cancelAppointment(
+      // Update appointment with cancellation request
+      const updateData = {
+        cancellation_status: CANCELLATION_STATUS.REQUESTED,
+        cancellation_reason: cancelReason,
+        cancellation_requested_at: new Date().toISOString(),
+        cancellation_requested_by: 'patient'
+      };
+      
+      await DatabaseService.updateDocument(
+        COLLECTIONS.APPOINTMENTS,
         appointment.$id,
-        cancelReason,
-        'patient'
+        updateData
       );
       
-      if (result.success) {
-        Toast.show({
-          type: 'success',
-          text1: 'Appointment Cancelled',
-          text2: 'Your appointment has been successfully cancelled.',
-        });
-        
-        // Update local state immediately for better UX
-        setAppointment(prev => ({ ...prev, status: APPOINTMENT_STATUS.CANCELLED }));
-        
-        setTimeout(() => {
-          router.back();
-        }, 2000);
-      } else {
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: result.error || 'Failed to cancel appointment.',
-        });
-      }
+      // Update local state immediately for better UX
+      setAppointment(prev => ({ 
+        ...prev, 
+        ...updateData
+      }));
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Cancellation Requested',
+        text2: 'Your cancellation request has been sent to the health practitioner.',
+      });
+      
     } catch (error) {
-      console.error('Error cancelling appointment:', error);
+      console.error('Error requesting cancellation:', error);
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'Failed to cancel appointment. Please try again.',
+        text2: 'Failed to request cancellation. Please try again.',
       });
     } finally {
       setIsLoading(false);
       setCancelReason('');
     }
   };
+
+  // Withdraw cancellation request
+  const withdrawCancellationRequest = () => {
+    Alert.alert(
+      'Withdraw Request',
+      'Are you sure you want to withdraw your cancellation request?',
+      [
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes', onPress: performWithdrawRequest }
+      ]
+    );
+  };
+
+  const performWithdrawRequest = async () => {
+    try {
+      setIsLoading(true);
+      
+      const updateData = {
+        cancellation_status: CANCELLATION_STATUS.NONE,
+        cancellation_reason: null,
+        cancellation_requested_at: null,
+        cancellation_requested_by: null
+      };
+      
+      await DatabaseService.updateDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointment.$id,
+        updateData
+      );
+      
+      setAppointment(prev => ({ 
+        ...prev, 
+        ...updateData
+      }));
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Request Withdrawn',
+        text2: 'Your cancellation request has been withdrawn.',
+      });
+      
+    } catch (error) {
+      console.error('Error withdrawing request:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to withdraw request.',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
   
   const handleReschedule = () => {
-    if (isPast || isCancelled) {
+    if (isPast || isCancelled || hasPendingCancellation) {
+      let message = isPast ? 'This appointment has already been completed.' : 
+                   isCancelled ? 'Cannot reschedule a cancelled appointment.' :
+                   'Cannot reschedule while cancellation is pending.';
+      
       Toast.show({
         type: 'error',
         text1: 'Cannot Reschedule',
-        text2: isPast ? 'This appointment has already been completed.' : 'Cannot reschedule a cancelled appointment.',
+        text2: message,
       });
       return;
     }
@@ -266,6 +259,51 @@ export default function EnhancedAppointmentDetails() {
       }
     });
   };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return 'Unknown date';
+    
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      return 'Invalid date';
+    }
+  };
+  
+  if (!appointment && !appointmentId) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle" size={50} color="#FF3B30" />
+          <Text style={styles.errorTitle}>Appointment Not Found</Text>
+          <Text style={styles.errorText}>Unable to load appointment details</Text>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#0AD476" />
+          <Text style={styles.loadingText}>Loading appointment details...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
   
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -294,244 +332,343 @@ export default function EnhancedAppointmentDetails() {
         </View>
         
         <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      {/* Status Badge */}
-      <View style={styles.statusContainer}>
-        <View style={[styles.statusBadge, { backgroundColor: statusInfo.color }]}>
-          <Ionicons 
-            name={statusInfo.icon} 
-            size={16} 
-            color="#FFFFFF" 
-          />
-          <Text style={styles.statusText}>{statusInfo.text}</Text>
-        </View>
-        
-        {/* Show rescheduled indicator if applicable */}
-        {appointment?.rescheduled_at && (
-          <View style={styles.rescheduledBadge}>
-            <Ionicons name="refresh" size={14} color="#FF9500" />
-            <Text style={styles.rescheduledText}>Rescheduled</Text>
+          {/* Status Badge */}
+          <View style={styles.statusContainer}>
+            <View style={[styles.statusBadge, { backgroundColor: statusInfo.color }]}>
+              <Ionicons 
+                name={statusInfo.icon} 
+                size={16} 
+                color="#FFFFFF" 
+              />
+              <Text style={styles.statusText}>{statusInfo.text}</Text>
+            </View>
+            
+            {/* Show rescheduled indicator if applicable */}
+            {appointment?.rescheduled_at && (
+              <View style={styles.rescheduledBadge}>
+                <Ionicons name="refresh" size={14} color="#FF9500" />
+                <Text style={styles.rescheduledText}>Rescheduled</Text>
+              </View>
+            )}
           </View>
-        )}
-      </View>
+
+          {/* Cancellation Request Status Section */}
+          {(hasPendingCancellation || isCancellationDenied || isCancellationApproved) && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Cancellation Request</Text>
+              
+              {hasPendingCancellation && (
+                <View style={styles.cancellationRequestCard}>
+                  <View style={styles.cancellationRequestHeader}>
+                    <Ionicons name="hourglass" size={20} color="#FF9500" />
+                    <Text style={styles.cancellationRequestTitle}>Request Pending</Text>
+                  </View>
+                  <Text style={styles.cancellationRequestText}>
+                    Your cancellation request is pending approval from the health practitioner.
+                  </Text>
+                  <Text style={styles.cancellationRequestReason}>
+                    Reason: {appointment.cancellation_reason || 'Not specified'}
+                  </Text>
+                  <Text style={styles.cancellationRequestTime}>
+                    Requested: {formatDate(appointment.cancellation_requested_at)}
+                  </Text>
+                  <TouchableOpacity 
+                    style={styles.withdrawButton}
+                    onPress={withdrawCancellationRequest}
+                    disabled={isLoading}
+                  >
+                    <Ionicons name="close" size={16} color="#FF3B30" />
+                    <Text style={styles.withdrawButtonText}>Withdraw Request</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {isCancellationDenied && (
+                <View style={styles.cancellationDeniedCard}>
+                  <View style={styles.cancellationDeniedHeader}>
+                    <Ionicons name="close-circle" size={20} color="#FF3B30" />
+                    <Text style={styles.cancellationDeniedTitle}>Request Denied</Text>
+                  </View>
+                  <Text style={styles.cancellationDeniedText}>
+                    Your cancellation request has been denied by the health practitioner.
+                  </Text>
+                  {appointment.cancellation_denial_reason && (
+                    <Text style={styles.cancellationDenialReason}>
+                      Reason: {appointment.cancellation_denial_reason}
+                    </Text>
+                  )}
+                  <Text style={styles.cancellationDeniedSubtext}>
+                    You can submit a new cancellation request if needed.
+                  </Text>
+                  <Text style={styles.cancellationRequestTime}>
+                    Reviewed: {formatDate(appointment.cancellation_reviewed_at)}
+                  </Text>
+                </View>
+              )}
+
+              {isCancellationApproved && (
+                <View style={styles.cancellationApprovedCard}>
+                  <View style={styles.cancellationApprovedHeader}>
+                    <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                    <Text style={styles.cancellationApprovedTitle}>Request Approved</Text>
+                  </View>
+                  <Text style={styles.cancellationApprovedText}>
+                    Your cancellation request was approved and the appointment has been cancelled.
+                  </Text>
+                  <Text style={styles.cancellationRequestTime}>
+                    Approved: {formatDate(appointment.cancellation_approved_at)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
       
-      {/* Appointment Information */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Appointment Information</Text>
-        
-        <View style={styles.infoRow}>
-          <View style={styles.infoIcon}>
-            <Ionicons name="calendar" size={20} color="#0AD476" />
-          </View>
-          <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Date</Text>
-            <Text style={styles.infoValue}>{appointment?.date || 'Not specified'}</Text>
-          </View>
-        </View>
-        
-        <View style={styles.infoRow}>
-          <View style={styles.infoIcon}>
-            <Ionicons name="time" size={20} color="#0AD476" />
-          </View>
-          <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Time</Text>
-            <Text style={styles.infoValue}>{appointment?.time_slot || 'Not specified'}</Text>
-          </View>
-        </View>
-        
-        <View style={styles.infoRow}>
-          <View style={styles.infoIcon}>
-            <Ionicons name="person" size={20} color="#0AD476" />
-          </View>
-          <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Doctor</Text>
-            <Text style={styles.infoValue}>{appointment?.doctor_name || 'Not specified'}</Text>
-          </View>
-        </View>
-        
-        <View style={styles.infoRow}>
-          <View style={styles.infoIcon}>
-            <Ionicons name="medical" size={20} color="#0AD476" />
-          </View>
-          <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Service</Text>
-            <Text style={styles.infoValue}>{appointment?.service_name || 'Not specified'}</Text>
-          </View>
-        </View>
-        
-        <View style={styles.infoRow}>
-          <View style={styles.infoIcon}>
-            <Ionicons name="location" size={20} color="#0AD476" />
-          </View>
-          <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Branch</Text>
-            <Text style={styles.infoValue}>{appointment?.branch_name || 'Not specified'}</Text>
-          </View>
-        </View>
-      </View>
-      
-      {/* Show original appointment details if rescheduled */}
-      {appointment?.rescheduled_at && appointment?.original_date && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Original Appointment</Text>
-          
-          <View style={styles.infoRow}>
-            <View style={styles.infoIcon}>
-              <Ionicons name="calendar-outline" size={20} color="#8E8E93" />
-            </View>
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Original Date</Text>
-              <Text style={styles.infoValue}>{appointment.original_date}</Text>
-            </View>
-          </View>
-          
-          <View style={styles.infoRow}>
-            <View style={styles.infoIcon}>
-              <Ionicons name="time-outline" size={20} color="#8E8E93" />
-            </View>
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Original Time</Text>
-              <Text style={styles.infoValue}>{appointment.original_time_slot}</Text>
-            </View>
-          </View>
-        </View>
-      )}
-      
-      {/* Cancellation details if cancelled */}
-      {isCancelled && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Cancellation Details</Text>
-          
-          <View style={styles.infoRow}>
-            <View style={styles.infoIcon}>
-              <Ionicons name="time" size={20} color="#FF3B30" />
-            </View>
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Cancelled At</Text>
-              <Text style={styles.infoValue}>
-                {appointment?.cancelled_at ? 
-                  new Date(appointment.cancelled_at).toLocaleString() : 
-                  'Not specified'
-                }
-              </Text>
-            </View>
-          </View>
-          
-          {appointment?.cancellation_reason && (
+          {/* Appointment Information */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Appointment Information</Text>
+            
             <View style={styles.infoRow}>
               <View style={styles.infoIcon}>
-                <Ionicons name="document-text" size={20} color="#FF3B30" />
+                <Ionicons name="calendar" size={20} color="#0AD476" />
               </View>
               <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>Reason</Text>
-                <Text style={styles.infoValue}>{appointment.cancellation_reason}</Text>
+                <Text style={styles.infoLabel}>Date</Text>
+                <Text style={styles.infoValue}>{appointment?.date || 'Not specified'}</Text>
+              </View>
+            </View>
+            
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}>
+                <Ionicons name="time" size={20} color="#0AD476" />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Time</Text>
+                <Text style={styles.infoValue}>{appointment?.time_slot || 'Not specified'}</Text>
+              </View>
+            </View>
+            
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}>
+                <Ionicons name="person" size={20} color="#0AD476" />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Doctor</Text>
+                <Text style={styles.infoValue}>{appointment?.doctor_name || 'Not specified'}</Text>
+              </View>
+            </View>
+            
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}>
+                <Ionicons name="medical" size={20} color="#0AD476" />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Service</Text>
+                <Text style={styles.infoValue}>{appointment?.service_name || 'Not specified'}</Text>
+              </View>
+            </View>
+            
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}>
+                <Ionicons name="location" size={20} color="#0AD476" />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Branch</Text>
+                <Text style={styles.infoValue}>{appointment?.branch_name || 'Not specified'}</Text>
+              </View>
+            </View>
+
+            {/* Family booking information */}
+            {appointment?.is_family_booking && (
+              <View style={styles.infoRow}>
+                <View style={styles.infoIcon}>
+                  <Ionicons name="people" size={20} color="#8B5CF6" />
+                </View>
+                <View style={styles.infoContent}>
+                  <Text style={styles.infoLabel}>Patient</Text>
+                  <Text style={[styles.infoValue, { color: '#8B5CF6' }]}>
+                    {appointment.patient_name || 'Family Member'}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
+      
+          {/* Show original appointment details if rescheduled */}
+          {appointment?.rescheduled_at && appointment?.original_date && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Original Appointment</Text>
+              
+              <View style={styles.infoRow}>
+                <View style={styles.infoIcon}>
+                  <Ionicons name="calendar-outline" size={20} color="#8E8E93" />
+                </View>
+                <View style={styles.infoContent}>
+                  <Text style={styles.infoLabel}>Original Date</Text>
+                  <Text style={styles.infoValue}>{appointment.original_date}</Text>
+                </View>
+              </View>
+              
+              <View style={styles.infoRow}>
+                <View style={styles.infoIcon}>
+                  <Ionicons name="time-outline" size={20} color="#8E8E93" />
+                </View>
+                <View style={styles.infoContent}>
+                  <Text style={styles.infoLabel}>Original Time</Text>
+                  <Text style={styles.infoValue}>{appointment.original_time_slot}</Text>
+                </View>
               </View>
             </View>
           )}
-        </View>
-      )}
       
-      {/* Appointment ID */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Reference</Text>
-        <View style={styles.infoRow}>
-          <View style={styles.infoIcon}>
-            <Ionicons name="document-text" size={20} color="#0AD476" />
-          </View>
-          <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Appointment ID</Text>
-            <Text style={styles.infoValue}>{appointment?.$id?.substring(0, 8) || 'N/A'}</Text>
-          </View>
-        </View>
-      </View>
-      
-      {/* Action Buttons - Only show for upcoming appointments */}
-      {!isPast && !isCancelled && (
-        <View style={styles.actionSection}>
-          <TouchableOpacity 
-            style={styles.rescheduleButton}
-            onPress={handleReschedule}
-            disabled={isLoading}
-          >
-            <Ionicons name="calendar-outline" size={20} color="#0AD476" />
-            <Text style={styles.rescheduleButtonText}>Reschedule</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.cancelButton}
-            onPress={handleCancelAppointment}
-            disabled={isLoading}
-          >
-            <Ionicons name="close-circle-outline" size={20} color="#FF3B30" />
-            <Text style={styles.cancelButtonText}>Cancel Appointment</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-      
-      {/* Cancel Appointment Modal */}
-      <Modal
-        visible={showCancelModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowCancelModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Cancel Appointment</Text>
-            <Text style={styles.modalSubtitle}>
-              Are you sure you want to cancel this appointment? This action cannot be undone.
-            </Text>
-            
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Reason for cancellation (optional)</Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder="Please provide a reason..."
-                value={cancelReason}
-                onChangeText={setCancelReason}
-                multiline={true}
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
+          {/* Cancellation details if cancelled */}
+          {isCancelled && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Cancellation Details</Text>
+              
+              <View style={styles.infoRow}>
+                <View style={styles.infoIcon}>
+                  <Ionicons name="time" size={20} color="#FF3B30" />
+                </View>
+                <View style={styles.infoContent}>
+                  <Text style={styles.infoLabel}>Cancelled At</Text>
+                  <Text style={styles.infoValue}>
+                    {appointment?.cancelled_at ? 
+                      formatDate(appointment.cancelled_at) : 
+                      'Not specified'
+                    }
+                  </Text>
+                </View>
+              </View>
+              
+              {appointment?.cancellation_reason && (
+                <View style={styles.infoRow}>
+                  <View style={styles.infoIcon}>
+                    <Ionicons name="document-text" size={20} color="#FF3B30" />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>Reason</Text>
+                    <Text style={styles.infoValue}>{appointment.cancellation_reason}</Text>
+                  </View>
+                </View>
+              )}
             </View>
-            
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.modalCancelButton}
-                onPress={() => {
-                  setShowCancelModal(false);
-                  setCancelReason('');
-                }}
+          )}
+      
+          {/* Appointment ID */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Reference</Text>
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}>
+                <Ionicons name="document-text" size={20} color="#0AD476" />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Appointment ID</Text>
+                <Text style={styles.infoValue}>{appointment?.$id?.substring(0, 8) || 'N/A'}</Text>
+              </View>
+            </View>
+          </View>
+      
+          {/* Action Buttons - Updated logic for cancellation requests */}
+          {!isPast && !isCancelled && !isCancellationApproved && (
+            <View style={styles.actionSection}>
+              <TouchableOpacity 
+                style={[
+                  styles.rescheduleButton,
+                  hasPendingCancellation && styles.disabledButton
+                ]}
+                onPress={handleReschedule}
+                disabled={isLoading || hasPendingCancellation}
               >
-                <Text style={styles.modalCancelText}>Keep Appointment</Text>
+                <Ionicons name="calendar-outline" size={20} color={hasPendingCancellation ? "#8E8E93" : "#0AD476"} />
+                <Text style={[
+                  styles.rescheduleButtonText,
+                  hasPendingCancellation && styles.disabledButtonText
+                ]}>Reschedule</Text>
               </TouchableOpacity>
               
-              <TouchableOpacity
-                style={styles.modalConfirmButton}
-                onPress={confirmCancelAppointment}
-                disabled={isLoading}
+              <TouchableOpacity 
+                style={[
+                  styles.cancelButton,
+                  hasPendingCancellation && styles.disabledButton
+                ]}
+                onPress={handleCancelAppointment}
+                disabled={isLoading || hasPendingCancellation}
               >
-                {isLoading ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={styles.modalConfirmText}>Cancel Appointment</Text>
-                )}
+                <Ionicons name="close-circle-outline" size={20} color={hasPendingCancellation ? "#8E8E93" : "#FF3B30"} />
+                <Text style={[
+                  styles.cancelButtonText,
+                  hasPendingCancellation && styles.disabledButtonText
+                ]}>
+                  {hasPendingCancellation ? 'Request Pending' : 'Request Cancellation'}
+                </Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </Modal>
+          )}
       
-      <Toast />
+          {/* Cancel Appointment Modal - Updated for request flow */}
+          <Modal
+            visible={showCancelModal}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setShowCancelModal(false)}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <Text style={styles.modalTitle}>Request Cancellation</Text>
+                <Text style={styles.modalSubtitle}>
+                  Submit a cancellation request for this appointment. The health practitioner will review and respond to your request.
+                </Text>
+                
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Reason for cancellation</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Please provide a reason for requesting cancellation..."
+                    value={cancelReason}
+                    onChangeText={setCancelReason}
+                    multiline={true}
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                  />
+                </View>
+                
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.modalCancelButton}
+                    onPress={() => {
+                      setShowCancelModal(false);
+                      setCancelReason('');
+                    }}
+                  >
+                    <Text style={styles.modalCancelText}>Keep Appointment</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={styles.modalConfirmButton}
+                    onPress={requestCancellation}
+                    disabled={isLoading || !cancelReason.trim()}
+                  >
+                    {isLoading ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.modalConfirmText}>Submit Request</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
       
-      {/* Bottom padding */}
-      <View style={{ height: 50 }} />
-      </ScrollView>
+          <Toast />
+      
+          {/* Bottom padding */}
+          <View style={{ height: 50 }} />
+        </ScrollView>
       </View>
     </SafeAreaView>
   );
 }
 
-// MISSING STYLESHEET - ADD THIS:
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -661,6 +798,126 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: 2,
   },
+
+  // Cancellation Request Styles
+  cancellationRequestCard: {
+    backgroundColor: '#FFF8E1',
+    borderRadius: 12,
+    padding: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF9500',
+    marginBottom: 10,
+  },
+  cancellationRequestHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  cancellationRequestTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FF9500',
+    marginLeft: 8,
+  },
+  cancellationRequestText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+    lineHeight: 20,
+  },
+  cancellationRequestReason: {
+    fontSize: 13,
+    color: '#333',
+    fontStyle: 'italic',
+    marginBottom: 8,
+  },
+  cancellationRequestTime: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 12,
+  },
+  withdrawButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF5F5',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#FF3B30',
+  },
+  withdrawButtonText: {
+    color: '#FF3B30',
+    fontSize: 12,
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+
+  cancellationDeniedCard: {
+    backgroundColor: '#FFF5F5',
+    borderRadius: 12,
+    padding: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF3B30',
+    marginBottom: 10,
+  },
+  cancellationDeniedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  cancellationDeniedTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FF3B30',
+    marginLeft: 8,
+  },
+  cancellationDeniedText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+    lineHeight: 20,
+  },
+  cancellationDenialReason: {
+    fontSize: 13,
+    color: '#333',
+    fontStyle: 'italic',
+    marginBottom: 8,
+  },
+  cancellationDeniedSubtext: {
+    fontSize: 12,
+    color: '#999',
+    fontStyle: 'italic',
+    marginBottom: 8,
+  },
+
+  cancellationApprovedCard: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    padding: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#10B981',
+    marginBottom: 10,
+  },
+  cancellationApprovedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  cancellationApprovedTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#10B981',
+    marginLeft: 8,
+  },
+  cancellationApprovedText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+    lineHeight: 20,
+  },
+
   section: {
     backgroundColor: '#fff',
     marginTop: 10,
@@ -742,6 +999,17 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     fontSize: 14,
   },
+
+  // Disabled button styles
+  disabledButton: {
+    backgroundColor: '#F5F5F5',
+    borderColor: '#E0E0E0',
+    opacity: 0.6,
+  },
+  disabledButtonText: {
+    color: '#8E8E93',
+  },
+
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -809,7 +1077,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     borderRadius: 8,
-    backgroundColor: '#FF3B30',
+    backgroundColor: '#FF9500',
     alignItems: 'center',
   },
   modalConfirmText: {

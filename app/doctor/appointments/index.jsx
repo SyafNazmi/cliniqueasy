@@ -1,5 +1,4 @@
-
-// app/doctor/appointments/index.jsx - FIXED with real-time updates and focus refresh
+// app/doctor/appointments/index.jsx - Enhanced with Cancellation Requests Integration
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, 
@@ -22,19 +21,10 @@ import PageHeader from '../../../components/PageHeader';
 import { DatabaseService, Query } from '../../../configs/AppwriteConfig';
 import { getLocalStorage } from '../../../service/Storage';
 import { COLLECTIONS } from '../../../constants';
-import { useFocusEffect } from '@react-navigation/native'; // Added for focus refresh
-import { appointmentManager } from '../../../service/appointmentUtils'; // Added for real-time updates
+import { useFocusEffect } from '@react-navigation/native';
+import { appointmentManager, APPOINTMENT_STATUS, CANCELLATION_STATUS } from '../../../service/appointmentUtils';
 
 const { width } = Dimensions.get('window');
-
-const APPOINTMENT_STATUS = {
-  BOOKED: 'Booked',
-  CONFIRMED: 'Confirmed',
-  RESCHEDULED: 'Rescheduled',
-  CANCELLED: 'Cancelled',
-  COMPLETED: 'Completed',
-  NO_SHOW: 'No Show'
-};
 
 export default function EnhancedAppointmentsManagement() {
   const [allAppointments, setAllAppointments] = useState([]);
@@ -58,6 +48,15 @@ export default function EnhancedAppointmentsManagement() {
   
   const [availableServices, setAvailableServices] = useState([]);
   const [availableRegions, setAvailableRegions] = useState([]);
+  
+  // NEW: Cancellation request stats
+  const [cancellationStats, setCancellationStats] = useState({
+    pending: 0,
+    approved: 0,
+    denied: 0,
+    total: 0
+  });
+  
   const [statsData, setStatsData] = useState({
     total: 0,
     upcoming: 0,
@@ -73,14 +72,14 @@ export default function EnhancedAppointmentsManagement() {
     loadAppointments();
   }, []);
 
-  // ADDED: Focus effect to refresh data when returning to screen
+  // Focus effect to refresh data when returning to screen
   useFocusEffect(
     useCallback(() => {
-      loadAppointments(false); // Don't show loader when refocusing
+      loadAppointments(false);
     }, [])
   );
 
-  // ADDED: Set up real-time subscription for appointments
+  // Set up real-time subscription for appointments
   useEffect(() => {
     let subscriptionKey = null;
 
@@ -92,11 +91,9 @@ export default function EnhancedAppointmentsManagement() {
             (event) => {
               console.log('Doctor appointments management received update:', event);
               
-              // Refresh appointments when any appointment changes
               const retryFetch = async (attempt = 1, maxAttempts = 3) => {
                 await loadAppointments(false);
                 
-                // Check if the appointment change is reflected
                 const appointmentId = event.appointment?.$id;
                 if (appointmentId && attempt < maxAttempts) {
                   setTimeout(() => {
@@ -113,7 +110,6 @@ export default function EnhancedAppointmentsManagement() {
                 }
               };
               
-              // Start the retry process with a delay
               setTimeout(() => retryFetch(), 1000);
             }
           );
@@ -125,7 +121,6 @@ export default function EnhancedAppointmentsManagement() {
 
     setupRealtimeSubscription();
 
-    // Cleanup subscription on unmount
     return () => {
       if (subscriptionKey) {
         appointmentManager.unsubscribe(subscriptionKey);
@@ -137,7 +132,7 @@ export default function EnhancedAppointmentsManagement() {
     filterAppointments();
   }, [allAppointments, searchQuery, filter, selectedServices, selectedRegions, selectedStatuses, selectedDateRange, customDateFrom, customDateTo]);
 
-  // UPDATED: Enhanced loadAppointments with same logic as patient HomeScreen
+  // Enhanced loadAppointments with cancellation stats
   const loadAppointments = async (showLoader = true) => {
     try {
       if (showLoader) {
@@ -152,7 +147,6 @@ export default function EnhancedAppointmentsManagement() {
         return;
       }
 
-      // Enhanced query with ordering (same as patient HomeScreen)
       const queries = [
         Query.orderDesc('$createdAt'),
         Query.limit(100)
@@ -165,7 +159,6 @@ export default function EnhancedAppointmentsManagement() {
       
       let allAppointments = appointmentsResponse.documents || [];
       
-      // Sort appointments by date (same logic as patient HomeScreen)
       allAppointments.sort((a, b) => {
         try {
           const dateA = parseAppointmentDate(a.date);
@@ -188,13 +181,10 @@ export default function EnhancedAppointmentsManagement() {
       await fetchBranchNames(allAppointments);
       await fetchServiceNames(allAppointments);
       
-      // Extract services first
       extractAvailableOptions(allAppointments);
-      
-      // Calculate stats
       calculateStats(allAppointments);
+      calculateCancellationStats(allAppointments); // NEW: Calculate cancellation stats
       
-      // Update regions after branch data is loaded
       setTimeout(() => {
         updateAvailableRegions();
       }, 100);
@@ -210,6 +200,31 @@ export default function EnhancedAppointmentsManagement() {
 
   const onRefresh = async () => {
     await loadAppointments(false);
+  };
+
+  // NEW: Calculate cancellation request statistics
+  const calculateCancellationStats = (appointments) => {
+    const stats = {
+      pending: 0,
+      approved: 0,
+      denied: 0,
+      total: 0
+    };
+
+    appointments.forEach(apt => {
+      if (apt.cancellation_status === CANCELLATION_STATUS.REQUESTED) {
+        stats.pending++;
+        stats.total++;
+      } else if (apt.cancellation_status === CANCELLATION_STATUS.APPROVED) {
+        stats.approved++;
+        stats.total++;
+      } else if (apt.cancellation_status === CANCELLATION_STATUS.DENIED) {
+        stats.denied++;
+        stats.total++;
+      }
+    });
+
+    setCancellationStats(stats);
   };
 
   const parseAppointmentDate = (dateString) => {
@@ -255,7 +270,7 @@ export default function EnhancedAppointmentsManagement() {
     }
   };
 
-  // Enhanced patient name fetching with proper family booking support (same as dashboard)
+  // Enhanced patient name fetching with proper family booking support
   const fetchPatientNames = async (appointments) => {
     try {
       const nameMap = {};
@@ -264,14 +279,11 @@ export default function EnhancedAppointmentsManagement() {
         let patientName = 'Unknown Patient';
         
         try {
-          // Check if this is a family booking with patient_name
           if (appointment.is_family_booking && appointment.patient_name) {
             patientName = appointment.patient_name;
           } 
-          // If family booking but no patient_name, try to fetch by patient_id
           else if (appointment.is_family_booking && appointment.patient_id) {
             try {
-              // Try to get patient profile by patient_id
               const patientResponse = await DatabaseService.listDocuments(
                 COLLECTIONS.PATIENT_PROFILES,
                 [Query.equal('$id', appointment.patient_id)]
@@ -287,7 +299,6 @@ export default function EnhancedAppointmentsManagement() {
               patientName = appointment.patient_name || 'Family Member';
             }
           }
-          // Regular booking - fetch by user_id
           else if (appointment.user_id) {
             try {
               const usersResponse = await DatabaseService.listDocuments(
@@ -310,7 +321,6 @@ export default function EnhancedAppointmentsManagement() {
             }
           }
           
-          // Create a unique key for the appointment
           const appointmentKey = `${appointment.$id}`;
           nameMap[appointmentKey] = patientName;
           
@@ -380,7 +390,6 @@ export default function EnhancedAppointmentsManagement() {
       
       setBranchNames(branchMap);
       
-      // Update available regions after branch names are set
       if (allAppointments.length > 0) {
         const regions = [...new Set(
           allAppointments.map(apt => {
@@ -474,12 +483,9 @@ export default function EnhancedAppointmentsManagement() {
   };
 
   const extractAvailableOptions = (appointments) => {
-    // Extract unique services
     const services = [...new Set(appointments.map(apt => apt.service_name).filter(Boolean))];
     setAvailableServices(services.sort());
     
-    // Extract unique regions - need to wait for branchNames to be populated
-    // This will be called after fetchBranchNames completes
     const regions = [...new Set(
       appointments.map(apt => {
         const branchInfo = getBranchInfo(apt.branch_id);
@@ -489,7 +495,6 @@ export default function EnhancedAppointmentsManagement() {
     setAvailableRegions(regions.sort());
   };
 
-  // New function to update available regions after branch data is loaded
   const updateAvailableRegions = () => {
     const regions = [...new Set(
       allAppointments.map(apt => {
@@ -500,7 +505,6 @@ export default function EnhancedAppointmentsManagement() {
     setAvailableRegions(regions.sort());
   };
 
-  // UPDATED: Enhanced stats calculation with same logic as patient HomeScreen
   const calculateStats = (appointments) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -522,7 +526,6 @@ export default function EnhancedAppointmentsManagement() {
       
       const status = apt.status?.toLowerCase() || 'booked';
 
-      // Count by status
       switch (status) {
         case 'booked':
           stats.booked++;
@@ -538,17 +541,14 @@ export default function EnhancedAppointmentsManagement() {
           break;
       }
 
-      // Count upcoming (same logic as patient HomeScreen)
       if (aptDate >= today && status !== 'cancelled' && status !== 'completed') {
         stats.upcoming++;
       }
 
-      // Count today's appointments
       if (aptDate.getTime() === today.getTime()) {
         stats.today++;
       }
 
-      // Count past appointments (same logic as patient HomeScreen)
       if (aptDate < today || status === 'completed' || status === 'cancelled') {
         stats.past++;
       }
@@ -592,7 +592,6 @@ export default function EnhancedAppointmentsManagement() {
     }
   };
 
-  // UPDATED: Enhanced filterAppointments with same logic as patient HomeScreen
   const filterAppointments = () => {
     let filtered = allAppointments;
     const now = new Date();
@@ -601,7 +600,6 @@ export default function EnhancedAppointmentsManagement() {
     switch (filter) {
       case 'upcoming':
         filtered = filtered.filter(apt => {
-          // Same logic as patient HomeScreen
           const status = apt.status?.toLowerCase();
           if (status === 'cancelled' || status === 'completed') {
             return false;
@@ -613,7 +611,6 @@ export default function EnhancedAppointmentsManagement() {
         break;
       case 'past':
         filtered = filtered.filter(apt => {
-          // Same logic as patient HomeScreen
           const status = apt.status?.toLowerCase();
           if (status === 'cancelled' || status === 'completed') {
             return true;
@@ -631,6 +628,14 @@ export default function EnhancedAppointmentsManagement() {
           aptDate.setHours(0, 0, 0, 0);
           return aptDate.getTime() === today.getTime();
         });
+        break;
+      // NEW: Add cancellation request filters
+      case 'cancellation_requests':
+        filtered = filtered.filter(apt => 
+          apt.cancellation_status === CANCELLATION_STATUS.REQUESTED ||
+          apt.cancellation_status === CANCELLATION_STATUS.APPROVED ||
+          apt.cancellation_status === CANCELLATION_STATUS.DENIED
+        );
         break;
     }
 
@@ -679,7 +684,6 @@ export default function EnhancedAppointmentsManagement() {
     setFilteredAppointments(filtered);
   };
 
-  // Updated patient name getter to use appointment-specific key
   const getPatientName = (appointment) => {
     if (!appointment) return "Unknown Patient";
     const appointmentKey = `${appointment.$id}`;
@@ -707,6 +711,7 @@ export default function EnhancedAppointmentsManagement() {
     }
   };
 
+  // NEW: Enhanced stats with cancellation requests
   const renderQuickStats = () => (
     <View style={styles.statsContainer}>
       <TouchableOpacity 
@@ -745,21 +750,73 @@ export default function EnhancedAppointmentsManagement() {
         </Text>
       </TouchableOpacity>
       
+      {/* NEW: Cancellation Requests Quick Stat */}
       <TouchableOpacity 
-        style={[styles.statCard, filter === 'past' && styles.activeStatCard]}
-        onPress={() => setFilter('past')}
+        style={[styles.statCard, filter === 'cancellation_requests' && styles.activeStatCard]}
+        onPress={() => setFilter('cancellation_requests')}
       >
-        <Text style={[styles.statNumber, { color: '#6B7280' }, filter === 'past' && styles.activeStatText]}>
-          {statsData.past}
+        <Text style={[styles.statNumber, { color: '#F59E0B' }, filter === 'cancellation_requests' && styles.activeStatText]}>
+          {cancellationStats.pending}
         </Text>
-        <Text style={[styles.statLabel, filter === 'past' && styles.activeStatText]}>
-          Past
+        <Text style={[styles.statLabel, filter === 'cancellation_requests' && styles.activeStatText]}>
+          Requests
         </Text>
+        {cancellationStats.pending > 0 && (
+          <View style={styles.urgentBadge}>
+            <Text style={styles.urgentBadgeText}>!</Text>
+          </View>
+        )}
       </TouchableOpacity>
     </View>
   );
 
-    const renderFilterModal = () => (
+  // NEW: Enhanced cancellation request quick actions section
+  const renderCancellationRequestsSection = () => {
+    if (cancellationStats.total === 0) return null;
+
+    return (
+      <View style={styles.cancellationSection}>
+        <View style={styles.cancellationHeader}>
+          <View style={styles.cancellationTitleContainer}>
+            <Ionicons name="hourglass" size={20} color="#F59E0B" />
+            <Text style={styles.cancellationTitle}>Cancellation Requests</Text>
+            {cancellationStats.pending > 0 && (
+              <View style={styles.pendingBadge}>
+                <Text style={styles.pendingBadgeText}>{cancellationStats.pending}</Text>
+              </View>
+            )}
+          </View>
+          <TouchableOpacity 
+            style={styles.viewAllRequestsButton}
+            onPress={() => router.push('/doctor/appointments/cancellation-requests')}
+          >
+            <Text style={styles.viewAllRequestsText}>View All</Text>
+            <Ionicons name="arrow-forward" size={16} color="#F59E0B" />
+          </TouchableOpacity>
+        </View>
+        
+        <View style={styles.cancellationStatsGrid}>
+          <View style={styles.cancellationStatItem}>
+            <Text style={styles.cancellationStatNumber}>{cancellationStats.pending}</Text>
+            <Text style={styles.cancellationStatLabel}>Pending</Text>
+            <View style={[styles.cancellationStatIndicator, { backgroundColor: '#F59E0B' }]} />
+          </View>
+          <View style={styles.cancellationStatItem}>
+            <Text style={styles.cancellationStatNumber}>{cancellationStats.approved}</Text>
+            <Text style={styles.cancellationStatLabel}>Approved</Text>
+            <View style={[styles.cancellationStatIndicator, { backgroundColor: '#10B981' }]} />
+          </View>
+          <View style={styles.cancellationStatItem}>
+            <Text style={styles.cancellationStatNumber}>{cancellationStats.denied}</Text>
+            <Text style={styles.cancellationStatLabel}>Denied</Text>
+            <View style={[styles.cancellationStatIndicator, { backgroundColor: '#EF4444' }]} />
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  const renderFilterModal = () => (
     <Modal
       visible={showFilterModal}
       animationType="slide"
@@ -936,22 +993,41 @@ export default function EnhancedAppointmentsManagement() {
       </View>
     </Modal>
   );
-    
 
+  // NEW: Enhanced appointment card with cancellation status indicator
   const renderMinimalAppointmentCard = ({ item: appointment }) => {
     const statusInfo = getStatusInfo(appointment.status);
     const branchInfo = getBranchInfo(appointment.branch_id);
     const appointmentDate = parseAppointmentDate(appointment.date);
     const patientName = getPatientName(appointment);
 
+    // NEW: Check for cancellation request status
+    const hasCancellationRequest = appointment.cancellation_status && 
+      appointment.cancellation_status !== CANCELLATION_STATUS.NONE;
+
     return (
       <TouchableOpacity 
-        style={styles.minimalCard}
+        style={[
+          styles.minimalCard,
+          hasCancellationRequest && styles.cardWithCancellationRequest
+        ]}
         onPress={() => router.push({
           pathname: '/doctor/appointments/detail',
           params: { appointmentId: appointment.$id }
         })}
       >
+        {/* NEW: Cancellation request indicator stripe */}
+        {hasCancellationRequest && (
+          <View style={[
+            styles.cancellationRequestStripe,
+            { backgroundColor: 
+                appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? '#F59E0B' :
+                appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? '#10B981' :
+                '#EF4444'
+            }
+          ]} />
+        )}
+
         {/* Patient Avatar and Info */}
         <View style={styles.cardMainRow}>
           <View style={[styles.patientAvatar, { backgroundColor: statusInfo.color }]}>
@@ -967,6 +1043,36 @@ export default function EnhancedAppointmentsManagement() {
             <Text style={styles.appointmentDateTime}>
               {appointmentDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} • {appointment.time_slot}
             </Text>
+            {/* NEW: Show cancellation request status */}
+            {hasCancellationRequest && (
+              <View style={styles.cancellationStatusContainer}>
+                <Ionicons 
+                  name={
+                    appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? "hourglass" :
+                    appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? "checkmark-circle" :
+                    "close-circle"
+                  }
+                  size={12} 
+                  color={
+                    appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? '#F59E0B' :
+                    appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? '#10B981' :
+                    '#EF4444'
+                  } 
+                />
+                <Text style={[
+                  styles.cancellationStatusText,
+                  { color: 
+                    appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? '#F59E0B' :
+                    appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? '#10B981' :
+                    '#EF4444'
+                  }
+                ]}>
+                  {appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? 'Cancellation Requested' :
+                   appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? 'Cancellation Approved' :
+                   'Cancellation Denied'}
+                </Text>
+              </View>
+            )}
           </View>
           
           <View style={[styles.statusBadge, { backgroundColor: statusInfo.bgColor }]}>
@@ -1023,7 +1129,7 @@ export default function EnhancedAppointmentsManagement() {
         style={styles.headerGradient}
       />
       
-      {/* FIXED: Properly positioned header */}
+      {/* Header */}
       <View style={styles.header}>
         <PageHeader onPress={() => router.back()} />
         <View style={styles.headerContent}>
@@ -1044,6 +1150,7 @@ export default function EnhancedAppointmentsManagement() {
       </View>
 
       {renderQuickStats()}
+      {renderCancellationRequestsSection()}
 
       <View style={styles.searchSection}>
         <View style={styles.searchContainer}>
@@ -1116,6 +1223,7 @@ export default function EnhancedAppointmentsManagement() {
   );
 }
 
+// Enhanced styles with new cancellation request components
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1133,7 +1241,7 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   
-  // FIXED: Header positioning and layout
+  // Header positioning and layout
   headerGradient: {
     height: 120,
     width: '100%',
@@ -1188,6 +1296,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     borderRadius: 12,
+    position: 'relative',
   },
   activeStatCard: {
     backgroundColor: '#1a8e2d',
@@ -1206,6 +1315,103 @@ const styles = StyleSheet.create({
   },
   activeStatText: {
     color: 'white',
+  },
+  urgentBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 8,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  urgentBadgeText: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+
+  // NEW: Cancellation Requests Section
+  cancellationSection: {
+    backgroundColor: 'white',
+    marginHorizontal: 20,
+    marginBottom: 20,
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  cancellationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  cancellationTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  cancellationTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginLeft: 8,
+  },
+  pendingBadge: {
+    backgroundColor: '#EF4444',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginLeft: 8,
+    minWidth: 20,
+    alignItems: 'center',
+  },
+  pendingBadgeText: {
+    color: 'white',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  viewAllRequestsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  viewAllRequestsText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F59E0B',
+  },
+  cancellationStatsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  cancellationStatItem: {
+    alignItems: 'center',
+    position: 'relative',
+  },
+  cancellationStatNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 4,
+  },
+  cancellationStatLabel: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '500',
+  },
+  cancellationStatIndicator: {
+    position: 'absolute',
+    bottom: -8,
+    width: 20,
+    height: 3,
+    borderRadius: 1.5,
   },
   
   // Search and Filter Section
@@ -1260,27 +1466,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#FF6B6B',
   },
-
-  // Active Filters
-  activeFiltersContainer: {
-    paddingHorizontal: 20,
-    marginBottom: 16,
-  },
-  activeFilterChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginRight: 8,
-    gap: 6,
-  },
-  activeFilterText: {
-    fontSize: 12,
-    color: '#1a8e2d',
-    fontWeight: '500',
-  },
   
   // List Container
   listContainer: {
@@ -1288,7 +1473,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   
-  // MINIMAL APPOINTMENT CARD (like image 2)
+  // ENHANCED APPOINTMENT CARD with cancellation request support
   minimalCard: {
     backgroundColor: 'white',
     borderRadius: 12,
@@ -1299,6 +1484,19 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 1,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  cardWithCancellationRequest: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#F59E0B',
+  },
+  cancellationRequestStripe: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 4,
+    height: '100%',
   },
 
   // Main row with avatar, patient info, and status
@@ -1332,6 +1530,17 @@ const styles = StyleSheet.create({
   appointmentDateTime: {
     fontSize: 12,
     color: '#666',
+    marginBottom: 4,
+  },
+  // NEW: Cancellation status indicator
+  cancellationStatusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  cancellationStatusText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   statusBadge: {
     flexDirection: 'row',

@@ -1,4 +1,4 @@
-// app/doctor/index.jsx - Complete optimized dashboard with compact appointment tab
+// app/doctor/index.jsx - Enhanced dashboard with cancellation requests section
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, Image } from 'react-native';
 import { router } from 'expo-router';
@@ -10,8 +10,8 @@ import { DatabaseService, Query, account } from '../../configs/AppwriteConfig';
 import { COLLECTIONS } from '../../constants';
 import RoleProtected from '../../components/RoleProtected';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect } from '@react-navigation/native'; // Added for focus refresh
-import { appointmentManager } from '../../service/appointmentUtils'; // Added for real-time updates
+import { useFocusEffect } from '@react-navigation/native';
+import { appointmentManager, CANCELLATION_STATUS } from '../../service/appointmentUtils'; // Enhanced import
 
 export default function DoctorDashboard() {
   return (
@@ -38,6 +38,14 @@ function DoctorDashboardContent() {
   const [showAppointmentModal, setShowAppointmentModal] = useState(false);
   const [selectedDayAppointments, setSelectedDayAppointments] = useState([]);
   const [selectedDay, setSelectedDay] = useState(null);
+
+  // NEW: Cancellation request stats
+  const [cancellationStats, setCancellationStats] = useState({
+    pending: 0,
+    approved: 0,
+    denied: 0,
+    total: 0
+  });
 
   const { logout } = useAuth();
   
@@ -70,7 +78,7 @@ function DoctorDashboardContent() {
     }
   };
 
-  // UPDATED: Enhanced loadAppointments with real-time subscription and consistent filtering
+  // ENHANCED: loadAppointments now includes cancellation stats calculation
   const loadAppointments = async (doctorId, showLoader = true) => {
     try {
       if (showLoader) {
@@ -115,6 +123,9 @@ function DoctorDashboardContent() {
         fetchPatientNames(allAppointments),
         fetchBranchNames(allAppointments)
       ]);
+      
+      // NEW: Calculate cancellation request statistics
+      calculateCancellationStats(allAppointments);
       
       // UPDATED: Filter upcoming appointments (same logic as patient HomeScreen)
       const today = new Date();
@@ -172,6 +183,31 @@ function DoctorDashboardContent() {
         setLoadingAppointments(false);
       }
     }
+  };
+
+  // NEW: Calculate cancellation request statistics
+  const calculateCancellationStats = (appointments) => {
+    const stats = {
+      pending: 0,
+      approved: 0,
+      denied: 0,
+      total: 0
+    };
+
+    appointments.forEach(apt => {
+      if (apt.cancellation_status === CANCELLATION_STATUS.REQUESTED) {
+        stats.pending++;
+        stats.total++;
+      } else if (apt.cancellation_status === CANCELLATION_STATUS.APPROVED) {
+        stats.approved++;
+        stats.total++;
+      } else if (apt.cancellation_status === CANCELLATION_STATUS.DENIED) {
+        stats.denied++;
+        stats.total++;
+      }
+    });
+
+    setCancellationStats(stats);
   };
 
   // ADDED: Set up real-time subscription for appointments (same as patient HomeScreen)
@@ -543,6 +579,65 @@ function DoctorDashboardContent() {
     return name.substring(0, 2).toUpperCase();
   };
 
+  // NEW: Cancellation Requests Section Component
+  const renderCancellationRequestsSection = () => {
+    if (cancellationStats.total === 0) return null;
+
+    return (
+      <View style={styles.cancellationSection}>
+        <View style={styles.cancellationHeader}>
+          <View style={styles.cancellationTitleContainer}>
+            <Ionicons name="hourglass" size={20} color="#F59E0B" />
+            <Text style={styles.cancellationTitle}>Cancellation Requests</Text>
+            {cancellationStats.pending > 0 && (
+              <View style={styles.pendingBadge}>
+                <Text style={styles.pendingBadgeText}>{cancellationStats.pending}</Text>
+              </View>
+            )}
+          </View>
+          <TouchableOpacity 
+            style={styles.viewAllRequestsButton}
+            onPress={() => router.push('/doctor/appointments/cancellation-requests')}
+          >
+            <Text style={styles.viewAllRequestsText}>View All</Text>
+            <Ionicons name="arrow-forward" size={16} color="#F59E0B" />
+          </TouchableOpacity>
+        </View>
+        
+        <View style={styles.cancellationStatsGrid}>
+          <View style={styles.cancellationStatItem}>
+            <Text style={styles.cancellationStatNumber}>{cancellationStats.pending}</Text>
+            <Text style={styles.cancellationStatLabel}>Pending</Text>
+            <View style={[styles.cancellationStatIndicator, { backgroundColor: '#F59E0B' }]} />
+          </View>
+          <View style={styles.cancellationStatItem}>
+            <Text style={styles.cancellationStatNumber}>{cancellationStats.approved}</Text>
+            <Text style={styles.cancellationStatLabel}>Approved</Text>
+            <View style={[styles.cancellationStatIndicator, { backgroundColor: '#10B981' }]} />
+          </View>
+          <View style={styles.cancellationStatItem}>
+            <Text style={styles.cancellationStatNumber}>{cancellationStats.denied}</Text>
+            <Text style={styles.cancellationStatLabel}>Denied</Text>
+            <View style={[styles.cancellationStatIndicator, { backgroundColor: '#EF4444' }]} />
+          </View>
+        </View>
+
+        {/* Quick Action Button for pending requests */}
+        {cancellationStats.pending > 0 && (
+          <TouchableOpacity 
+            style={styles.quickReviewButton}
+            onPress={() => router.push('/doctor/appointments/cancellation-requests')}
+          >
+            <Ionicons name="flash" size={16} color="white" />
+            <Text style={styles.quickReviewText}>
+              Review {cancellationStats.pending} Pending Request{cancellationStats.pending > 1 ? 's' : ''}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
   // Appointment Modal Component
   const AppointmentModal = () => (
     <Modal
@@ -601,6 +696,37 @@ function DoctorDashboardContent() {
                             {appointment.service_name || 'General Consultation'}
                           </Text>
                         </View>
+                        {/* NEW: Show cancellation request status in modal */}
+                        {appointment.cancellation_status && appointment.cancellation_status !== CANCELLATION_STATUS.NONE && (
+                          <View style={styles.modalDetailRow}>
+                            <Ionicons 
+                              name={
+                                appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? "hourglass" :
+                                appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? "checkmark-circle" :
+                                "close-circle"
+                              }
+                              size={16} 
+                              color={
+                                appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? '#F59E0B' :
+                                appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? '#10B981' :
+                                '#EF4444'
+                              } 
+                            />
+                            <Text style={[
+                              styles.modalDetailText,
+                              { 
+                                color: appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? '#F59E0B' :
+                                       appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? '#10B981' :
+                                       '#EF4444',
+                                fontWeight: '600'
+                              }
+                            ]}>
+                              {appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? 'Cancellation Requested' :
+                               appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? 'Cancellation Approved' :
+                               'Cancellation Denied'}
+                            </Text>
+                          </View>
+                        )}
                       </View>
                     </View>
                     <View style={styles.modalStatusContainer}>
@@ -807,6 +933,9 @@ function DoctorDashboardContent() {
         </LinearGradient>
       </View>
 
+      {/* NEW: Cancellation Requests Section */}
+      {renderCancellationRequestsSection()}
+
       {/* Statistics Dashboard */}
       <View style={styles.statsSection}>
         <Text style={styles.sectionTitle}>Today's Overview</Text>
@@ -893,6 +1022,36 @@ function DoctorDashboardContent() {
                       {appointment.service_name || 'General appointment'}
                     </Text>
                   </View>
+                  {/* NEW: Show cancellation request indicator on appointment cards */}
+                  {appointment.cancellation_status && appointment.cancellation_status !== CANCELLATION_STATUS.NONE && (
+                    <View style={styles.cancellationRequestIndicator}>
+                      <Ionicons 
+                        name={
+                          appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? "hourglass" :
+                          appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? "checkmark-circle" :
+                          "close-circle"
+                        }
+                        size={12} 
+                        color={
+                          appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? '#F59E0B' :
+                          appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? '#10B981' :
+                          '#EF4444'
+                        } 
+                      />
+                      <Text style={[
+                        styles.cancellationRequestText,
+                        { color: 
+                          appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? '#F59E0B' :
+                          appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? '#10B981' :
+                          '#EF4444'
+                        }
+                      ]}>
+                        {appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED ? 'Cancellation Requested' :
+                         appointment.cancellation_status === CANCELLATION_STATUS.APPROVED ? 'Cancellation Approved' :
+                         'Cancellation Denied'}
+                      </Text>
+                    </View>
+                  )}
                 </View>
                 <View style={styles.appointmentStatus}>
                   {appointment.has_prescription ? (
@@ -1312,7 +1471,7 @@ function DoctorDashboardContent() {
         {activeTab === 'prescriptions' && renderPrescriptionsTab()}
       </View>
       
-      {/* Enhanced Tab Bar */}
+      {/* Enhanced Tab Bar with Cancellation Request Badge */}
       <View style={styles.tabBar}>
         <TouchableOpacity 
           style={[styles.tabItem, activeTab === 'appointments' && styles.tabItemActive]}
@@ -1326,6 +1485,12 @@ function DoctorDashboardContent() {
           <Text style={[styles.tabLabel, activeTab === 'appointments' && styles.tabLabelActive]}>
             Appointments
           </Text>
+          {/* NEW: Show cancellation requests badge */}
+          {cancellationStats.pending > 0 && (
+            <View style={styles.cancellationBadge}>
+              <Text style={styles.cancellationBadgeText}>{cancellationStats.pending}</Text>
+            </View>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity 
@@ -1380,6 +1545,7 @@ function DoctorDashboardContent() {
   );
 }
 
+// Enhanced styles with cancellation request components
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1564,6 +1730,159 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
 
+  // Cancellation Requests
+    cancellationSection: {
+    backgroundColor: 'white',
+    marginHorizontal: 20,
+    marginBottom: 16, // Reduced from 20
+    borderRadius: 12, // Reduced from 16
+    padding: 12, // Reduced from 16
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 }, // Reduced shadow
+    shadowOpacity: 0.05, // Reduced opacity
+    shadowRadius: 2, // Reduced radius
+    elevation: 2, // Reduced elevation
+  },
+  
+  cancellationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10, // Reduced from 16
+  },
+  
+  cancellationTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  
+  cancellationTitle: {
+    fontSize: 15, // Reduced from 16
+    fontWeight: '600',
+    color: '#333',
+    marginLeft: 6, // Reduced from 8
+  },
+  
+  pendingBadge: {
+    backgroundColor: '#EF4444',
+    borderRadius: 8, // Reduced from 10
+    paddingHorizontal: 5, // Reduced from 6
+    paddingVertical: 1, // Reduced from 2
+    marginLeft: 6, // Reduced from 8
+    minWidth: 16, // Reduced from 20
+    alignItems: 'center',
+  },
+  
+  pendingBadgeText: {
+    color: 'white',
+    fontSize: 10, // Reduced from 11
+    fontWeight: 'bold',
+  },
+  
+  viewAllRequestsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3, // Reduced from 4
+  },
+  
+  viewAllRequestsText: {
+    fontSize: 13, // Reduced from 14
+    fontWeight: '600',
+    color: '#F59E0B',
+  },
+  
+  // Compact stats grid
+  cancellationStatsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 8, // Reduced from 12
+    paddingVertical: 4, // Added small padding
+  },
+  
+  cancellationStatItem: {
+    alignItems: 'center',
+    position: 'relative',
+    paddingVertical: 2, // Added small padding
+  },
+  
+  cancellationStatNumber: {
+    fontSize: 20, // Reduced from 24
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 2, // Reduced from 4
+  },
+  
+  cancellationStatLabel: {
+    fontSize: 11, // Reduced from 12
+    color: '#666',
+    fontWeight: '500',
+  },
+  
+  cancellationStatIndicator: {
+    position: 'absolute',
+    bottom: -6, // Reduced from -8
+    width: 16, // Reduced from 20
+    height: 2, // Reduced from 3
+    borderRadius: 1,
+  },
+  
+  // Compact quick review button
+  quickReviewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F59E0B',
+    paddingVertical: 8, // Reduced from 10
+    paddingHorizontal: 12, // Reduced from 16
+    borderRadius: 6, // Reduced from 8
+    gap: 4, // Reduced from 6
+    marginTop: 4, // Reduced from 8
+  },
+  
+  quickReviewText: {
+    color: 'white',
+    fontSize: 12, // Reduced from 13
+    fontWeight: '600',
+  },
+  
+  // Compact cancellation request indicators on appointment cards
+  cancellationRequestIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF4E6',
+    paddingHorizontal: 4, // Reduced from 6
+    paddingVertical: 1, // Reduced from 2
+    borderRadius: 4, // Reduced from 6
+    marginTop: 3, // Reduced from 4
+    alignSelf: 'flex-start',
+    gap: 3, // Reduced from 4
+  },
+  
+  cancellationRequestText: {
+    fontSize: 9, // Reduced from 10
+    fontWeight: '600',
+  },
+  
+  // Smaller cancellation badge on tab bar
+  cancellationBadge: {
+    position: 'absolute',
+    top: 3, // Reduced from 4
+    right: 6, // Reduced from 8
+    backgroundColor: '#F59E0B',
+    borderRadius: 8, // Reduced from 10
+    minWidth: 16, // Reduced from 18
+    height: 16, // Reduced from 18
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  cancellationBadgeText: {
+    color: 'white',
+    fontSize: 9, // Reduced from 10
+    fontWeight: 'bold',
+  },
+  
   // Stats Section
   statsSection: {
     marginBottom: 20,
@@ -2370,6 +2689,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 4,
+    position: 'relative',
   },
   tabItemActive: {
     // Active state for regular tabs

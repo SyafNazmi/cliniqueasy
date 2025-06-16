@@ -1,4 +1,4 @@
-// service/appointmentUtils.js - ENHANCED VERSION for Expo SDK 53
+// service/appointmentUtils.js - FIXED VERSION MATCHING DATABASE SCHEMA
 import { DatabaseService, Query, RealtimeService } from '../configs/AppwriteConfig';
 import { COLLECTIONS } from '../constants';
 
@@ -12,6 +12,14 @@ export const APPOINTMENT_STATUS = {
   NO_SHOW: 'No Show'
 };
 
+// Cancellation status constants - FIXED to match your schema
+export const CANCELLATION_STATUS = {
+  NONE: null,
+  REQUESTED: 'cancellation_requested',
+  APPROVED: 'cancellation_approved',
+  DENIED: 'cancellation_denied'
+};
+
 export class EnhancedAppointmentManager {
   constructor() {
     this.subscriptions = new Map();
@@ -19,7 +27,272 @@ export class EnhancedAppointmentManager {
     this.isDestroyed = false;
   }
 
-  // NEW: Get booked slots for a specific doctor and date (with exclusion option)
+  // Get pending cancellation requests count for doctor dashboard
+  async getPendingCancellationRequestsCount(doctorId = null) {
+    try {
+      let queries = [Query.equal('cancellation_status', CANCELLATION_STATUS.REQUESTED)];
+      
+      // If doctorId provided, filter by doctor
+      if (doctorId) {
+        queries.push(Query.equal('doctor_id', doctorId));
+      }
+      
+      const response = await DatabaseService.listDocuments(
+        COLLECTIONS.APPOINTMENTS,
+        queries
+      );
+      
+      return response.documents.length;
+    } catch (error) {
+      console.error('Error getting pending cancellation requests count:', error);
+      return 0;
+    }
+  }
+
+  // Request appointment cancellation (Patient side)
+  async requestCancellation(appointmentId, reason = '', requestedBy = 'patient') {
+    try {
+      if (!appointmentId) {
+        return { success: false, error: 'Appointment ID is required' };
+      }
+
+      // Get current appointment
+      const currentAppointment = await DatabaseService.getDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId
+      );
+
+      if (!currentAppointment) {
+        return { success: false, error: 'Appointment not found' };
+      }
+
+      if (currentAppointment.status === APPOINTMENT_STATUS.CANCELLED) {
+        return { success: false, error: 'Appointment is already cancelled' };
+      }
+
+      if (currentAppointment.status === APPOINTMENT_STATUS.COMPLETED) {
+        return { success: false, error: 'Cannot request cancellation for completed appointment' };
+      }
+
+      if (currentAppointment.cancellation_status === CANCELLATION_STATUS.REQUESTED) {
+        return { success: false, error: 'Cancellation request already exists' };
+      }
+
+      // Request cancellation - FIXED: Only use existing fields
+      const updateData = {
+        cancellation_status: CANCELLATION_STATUS.REQUESTED,
+        cancellation_reason: reason,
+        cancellation_requested_at: new Date().toISOString(),
+        cancellation_requested_by: requestedBy
+      };
+
+      const result = await DatabaseService.updateDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId,
+        updateData
+      );
+
+      return { success: true, data: result };
+    } catch (error) {
+      console.error('Error requesting cancellation:', error);
+      return { success: false, error: error.message || 'Failed to request cancellation' };
+    }
+  }
+
+  // Withdraw cancellation request (Patient side)
+  async withdrawCancellationRequest(appointmentId) {
+    try {
+      if (!appointmentId) {
+        return { success: false, error: 'Appointment ID is required' };
+      }
+
+      // Get current appointment
+      const currentAppointment = await DatabaseService.getDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId
+      );
+
+      if (!currentAppointment) {
+        return { success: false, error: 'Appointment not found' };
+      }
+
+      if (currentAppointment.cancellation_status !== CANCELLATION_STATUS.REQUESTED) {
+        return { success: false, error: 'No pending cancellation request found' };
+      }
+
+      // Remove cancellation request - FIXED: Only use existing fields
+      const updateData = {
+        cancellation_status: CANCELLATION_STATUS.NONE,
+        cancellation_reason: null,
+        cancellation_requested_at: null,
+        cancellation_requested_by: null
+      };
+
+      const result = await DatabaseService.updateDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId,
+        updateData
+      );
+
+      return { success: true, data: result };
+    } catch (error) {
+      console.error('Error withdrawing cancellation request:', error);
+      return { success: false, error: error.message || 'Failed to withdraw cancellation request' };
+    }
+  }
+
+  // Approve cancellation request (Doctor side) - FIXED
+  async approveCancellationRequest(appointmentId, reviewedBy = 'doctor') {
+    try {
+      if (!appointmentId) {
+        return { success: false, error: 'Appointment ID is required' };
+      }
+
+      // Get current appointment
+      const currentAppointment = await DatabaseService.getDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId
+      );
+
+      if (!currentAppointment) {
+        return { success: false, error: 'Appointment not found' };
+      }
+
+      if (currentAppointment.cancellation_status !== CANCELLATION_STATUS.REQUESTED) {
+        return { success: false, error: 'No pending cancellation request found' };
+      }
+
+      // Approve cancellation and cancel appointment - FIXED: Only use existing fields
+      const updateData = {
+        status: APPOINTMENT_STATUS.CANCELLED,
+        cancellation_status: CANCELLATION_STATUS.APPROVED,
+        cancellation_reviewed_at: new Date().toISOString(),
+        cancellation_reviewed_by: reviewedBy,
+        cancellation_approved_at: new Date().toISOString()
+        // REMOVED: cancelled_at and cancelled_by (don't exist in schema)
+      };
+
+      const result = await DatabaseService.updateDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId,
+        updateData
+      );
+
+      return { success: true, data: result };
+    } catch (error) {
+      console.error('Error approving cancellation request:', error);
+      return { success: false, error: error.message || 'Failed to approve cancellation request' };
+    }
+  }
+
+  // Deny cancellation request (Doctor side) - FIXED
+  async denyCancellationRequest(appointmentId, denialReason = '', reviewedBy = 'doctor') {
+    try {
+      if (!appointmentId) {
+        return { success: false, error: 'Appointment ID is required' };
+      }
+
+      if (!denialReason.trim()) {
+        return { success: false, error: 'Denial reason is required' };
+      }
+
+      // Get current appointment
+      const currentAppointment = await DatabaseService.getDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId
+      );
+
+      if (!currentAppointment) {
+        return { success: false, error: 'Appointment not found' };
+      }
+
+      if (currentAppointment.cancellation_status !== CANCELLATION_STATUS.REQUESTED) {
+        return { success: false, error: 'No pending cancellation request found' };
+      }
+
+      // Deny cancellation - FIXED: Only use existing fields
+      const updateData = {
+        cancellation_status: CANCELLATION_STATUS.DENIED,
+        cancellation_reviewed_at: new Date().toISOString(),
+        cancellation_reviewed_by: reviewedBy,
+        cancellation_denial_reason: denialReason
+      };
+
+      const result = await DatabaseService.updateDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId,
+        updateData
+      );
+
+      return { success: true, data: result };
+    } catch (error) {
+      console.error('Error denying cancellation request:', error);
+      return { success: false, error: error.message || 'Failed to deny cancellation request' };
+    }
+  }
+
+  // Get cancellation requests with filtering options
+  async getCancellationRequests(options = {}) {
+    try {
+      const {
+        status = 'all', // 'pending', 'approved', 'denied', 'all'
+        doctorId = null,
+        limit = 100,
+        offset = 0,
+        sortBy = 'desc' // 'asc' or 'desc'
+      } = options;
+
+      let queries = [];
+
+      // Filter by cancellation status
+      if (status === 'pending') {
+        queries.push(Query.equal('cancellation_status', CANCELLATION_STATUS.REQUESTED));
+      } else if (status === 'approved') {
+        queries.push(Query.equal('cancellation_status', CANCELLATION_STATUS.APPROVED));
+      } else if (status === 'denied') {
+        queries.push(Query.equal('cancellation_status', CANCELLATION_STATUS.DENIED));
+      } else if (status === 'all') {
+        // Use Query.or for multiple conditions - FIXED
+        queries.push(
+          Query.or([
+            Query.equal('cancellation_status', CANCELLATION_STATUS.REQUESTED),
+            Query.equal('cancellation_status', CANCELLATION_STATUS.APPROVED),
+            Query.equal('cancellation_status', CANCELLATION_STATUS.DENIED)
+          ])
+        );
+      }
+
+      // Filter by doctor
+      if (doctorId) {
+        queries.push(Query.equal('doctor_id', doctorId));
+      }
+
+      // Add ordering
+      if (sortBy === 'desc') {
+        queries.push(Query.orderDesc('cancellation_requested_at'));
+      } else {
+        queries.push(Query.orderAsc('cancellation_requested_at'));
+      }
+
+      // Add pagination
+      queries.push(Query.limit(limit));
+      if (offset > 0) {
+        queries.push(Query.offset(offset));
+      }
+
+      const response = await DatabaseService.listDocuments(
+        COLLECTIONS.APPOINTMENTS,
+        queries
+      );
+
+      return { success: true, data: response.documents, total: response.total };
+    } catch (error) {
+      console.error('Error getting cancellation requests:', error);
+      return { success: false, error: error.message || 'Failed to get cancellation requests' };
+    }
+  }
+
+  // Get booked slots for a specific doctor and date
   async getBookedSlots(doctorId, date, excludeAppointmentId = null) {
     try {
       if (!doctorId || !date) {
@@ -27,18 +300,15 @@ export class EnhancedAppointmentManager {
         return [];
       }
 
-      // Format the date to match the format stored in database
       const formattedDate = this.formatDateForQuery(date);
       console.log('Fetching booked slots for doctor:', doctorId, 'on date:', formattedDate);
 
-      // Build queries
       const queries = [
         Query.equal('doctor_id', doctorId),
         Query.equal('date', formattedDate),
         Query.notEqual('status', APPOINTMENT_STATUS.CANCELLED) // Exclude cancelled appointments
       ];
 
-      // Exclude a specific appointment if provided (useful for rescheduling)
       if (excludeAppointmentId) {
         queries.push(Query.notEqual('$id', excludeAppointmentId));
       }
@@ -49,8 +319,6 @@ export class EnhancedAppointmentManager {
       );
 
       console.log('Found appointments:', response.documents);
-
-      // Extract time slots from the appointments
       const bookedSlots = response.documents.map(appointment => appointment.time_slot);
       
       console.log('Booked time slots:', bookedSlots);
@@ -62,7 +330,7 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // NEW: Check if a specific slot is available (with exclusion option)
+  // Check if a specific slot is available
   async checkSlotAvailability(doctorId, date, timeSlot, excludeAppointmentId = null) {
     try {
       if (!doctorId || !date || !timeSlot) {
@@ -73,7 +341,6 @@ export class EnhancedAppointmentManager {
       const formattedDate = this.formatDateForQuery(date);
       console.log('Checking availability for:', { doctorId, formattedDate, timeSlot });
 
-      // Build queries
       const queries = [
         Query.equal('doctor_id', doctorId),
         Query.equal('date', formattedDate),
@@ -81,7 +348,6 @@ export class EnhancedAppointmentManager {
         Query.notEqual('status', APPOINTMENT_STATUS.CANCELLED)
       ];
 
-      // Exclude a specific appointment if provided (useful for rescheduling)
       if (excludeAppointmentId) {
         queries.push(Query.notEqual('$id', excludeAppointmentId));
       }
@@ -98,11 +364,11 @@ export class EnhancedAppointmentManager {
 
     } catch (error) {
       console.error('Error checking slot availability:', error);
-      return false; // Assume not available on error for safety
+      return false;
     }
   }
 
-  // NEW: Helper method to format date consistently for database queries
+  // Helper method to format date consistently
   formatDateForQuery(date) {
     if (typeof date === 'string') {
       return date;
@@ -119,19 +385,18 @@ export class EnhancedAppointmentManager {
     return '';
   }
 
-  // NEW: Helper method to format date for display (same as query format)
+  // Helper method to format date for display
   formatDateForDisplay(date) {
     return this.formatDateForQuery(date);
   }
 
-  // NEW: Enhanced reschedule method
+  // Enhanced reschedule method - FIXED
   async rescheduleAppointment(appointmentId, newDate, newTimeSlot, reason = '') {
     try {
       if (!appointmentId || !newDate || !newTimeSlot) {
         return { success: false, error: 'Missing required parameters' };
       }
 
-      // Get current appointment
       const currentAppointment = await DatabaseService.getDocument(
         COLLECTIONS.APPOINTMENTS,
         appointmentId
@@ -149,7 +414,11 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'Cannot reschedule a completed appointment' };
       }
 
-      // Check if new slot is available (excluding current appointment)
+      // Check if there's a pending cancellation request
+      if (currentAppointment.cancellation_status === CANCELLATION_STATUS.REQUESTED) {
+        return { success: false, error: 'Cannot reschedule while cancellation request is pending' };
+      }
+
       const isAvailable = await this.checkSlotAvailability(
         currentAppointment.doctor_id,
         newDate,
@@ -163,7 +432,7 @@ export class EnhancedAppointmentManager {
 
       const formattedNewDate = this.formatDateForQuery(newDate);
 
-      // Prepare update data
+      // FIXED: Only use existing fields
       const updateData = {
         date: formattedNewDate,
         time_slot: newTimeSlot,
@@ -189,7 +458,7 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // ROBUST: Subscribe to real-time appointment updates
+  // Subscribe to real-time appointment updates with cancellation support
   subscribeToAppointments(callback, options = {}) {
     if (this.isDestroyed) {
       console.warn('AppointmentManager is destroyed, cannot create new subscriptions');
@@ -199,7 +468,6 @@ export class EnhancedAppointmentManager {
     try {
       const subscriptionKey = `appointments_${JSON.stringify(options)}_${Date.now()}`;
       
-      // Clean up existing subscription if it exists
       if (this.subscriptions.has(subscriptionKey)) {
         this.unsubscribe(subscriptionKey);
       }
@@ -227,7 +495,6 @@ export class EnhancedAppointmentManager {
             const eventString = events.join(' ').toLowerCase();
             console.log('Event string:', eventString);
             
-            // More robust event detection
             let eventType = 'unknown';
             let message = 'Appointment updated';
             
@@ -243,7 +510,6 @@ export class EnhancedAppointmentManager {
               message = 'Appointment deleted';
             }
             
-            // Call the callback with processed data
             const processedEvent = {
               type: eventType,
               appointment: payload,
@@ -259,7 +525,6 @@ export class EnhancedAppointmentManager {
             console.error('Error processing appointment realtime event:', eventError);
             console.error('Event data that caused error:', { events, payload });
             
-            // Call callback with error info but don't crash
             try {
               callback({
                 type: 'error',
@@ -289,7 +554,7 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // ROBUST: Subscribe to specific appointment changes
+  // Subscribe to specific appointment changes
   subscribeToAppointment(appointmentId, callback) {
     if (this.isDestroyed) {
       console.warn('AppointmentManager is destroyed, cannot create new subscriptions');
@@ -360,11 +625,21 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // Detect what type of update occurred
+  // Detect update type including cancellation requests
   detectUpdateType(appointment) {
     if (!appointment) return 'general_update';
     
     try {
+      // Check for cancellation-related updates first
+      if (appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED) {
+        return 'cancellation_requested';
+      } else if (appointment.cancellation_status === CANCELLATION_STATUS.APPROVED) {
+        return 'cancellation_approved';
+      } else if (appointment.cancellation_status === CANCELLATION_STATUS.DENIED) {
+        return 'cancellation_denied';
+      }
+      
+      // Check for status updates
       if (appointment.status === APPOINTMENT_STATUS.CANCELLED) {
         return 'cancelled';
       } else if (appointment.rescheduled_at) {
@@ -374,6 +649,7 @@ export class EnhancedAppointmentManager {
       } else if (appointment.status === APPOINTMENT_STATUS.COMPLETED) {
         return 'completed';
       }
+      
       return 'general_update';
     } catch (error) {
       console.error('Error detecting update type:', error);
@@ -381,7 +657,7 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // Get user-friendly message for updates
+  // Get user-friendly message for updates including cancellation requests
   getUpdateMessage(updateType, appointment) {
     try {
       if (!appointment) return 'Appointment updated';
@@ -390,6 +666,12 @@ export class EnhancedAppointmentManager {
       const timeStr = appointment.time_slot || 'Unknown time';
       
       switch (updateType) {
+        case 'cancellation_requested':
+          return `Cancellation requested for: ${dateStr} at ${timeStr}`;
+        case 'cancellation_approved':
+          return `Cancellation approved for: ${dateStr} at ${timeStr}`;
+        case 'cancellation_denied':
+          return `Cancellation denied for: ${dateStr} at ${timeStr}`;
         case 'cancelled':
           return `Appointment cancelled: ${dateStr} at ${timeStr}`;
         case 'rescheduled':
@@ -407,6 +689,7 @@ export class EnhancedAppointmentManager {
     }
   }
 
+  // Get single appointment
   async getAppointment(appointmentId) {
     try {
       console.log('📖 Getting appointment:', appointmentId);
@@ -429,14 +712,13 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // Enhanced cancellation with detailed status tracking
+  // Enhanced cancellation - FIXED: Only use existing fields
   async cancelAppointment(appointmentId, reason = '', cancelledBy = 'patient') {
     try {
       if (!appointmentId) {
         return { success: false, error: 'Appointment ID is required' };
       }
 
-      // First check if appointment can be cancelled
       const currentAppointment = await DatabaseService.getDocument(
         COLLECTIONS.APPOINTMENTS, 
         appointmentId
@@ -454,13 +736,11 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'Cannot cancel a completed appointment' };
       }
 
-      // Only include fields that exist in your database schema
+      // FIXED: Only use existing fields
       const updateData = {
         status: APPOINTMENT_STATUS.CANCELLED,
-        cancelled_at: new Date().toISOString(),
-        cancellation_reason: reason,
-        cancelled_by: cancelledBy
-        // Removed original_status since it doesn't exist in your database
+        cancellation_reason: reason
+        // REMOVED: cancelled_at and cancelled_by (don't exist in schema)
       };
 
       const result = await DatabaseService.updateDocument(

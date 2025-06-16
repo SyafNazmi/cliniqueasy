@@ -1,4 +1,4 @@
-// app/(tabs)/Profile.jsx - Updated with enhanced appointment logic from HomeScreen
+// app/(tabs)/Profile.jsx - Enhanced with Cancellation History
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native'
 import React, { useEffect, useState } from 'react'
 import { useRouter } from 'expo-router'
@@ -8,6 +8,7 @@ import { useAuth } from '@/app/_layout';
 import Toast from 'react-native-toast-message'
 import { Ionicons } from '@expo/vector-icons'
 import { COLLECTIONS, PROFILE_TYPES } from '@/constants'
+import { CANCELLATION_STATUS } from '@/service/appointmentUtils'
 
 export default function Profile() {
   const router = useRouter();
@@ -15,6 +16,11 @@ export default function Profile() {
   const [appointments, setAppointments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [familyMemberCount, setFamilyMemberCount] = useState(0);
+  
+  // NEW: Cancellation history state
+  const [cancellationRequestsCount, setCancellationRequestsCount] = useState(0);
+  const [pendingCancellationsCount, setPendingCancellationsCount] = useState(0);
+  
   const { logout } = useAuth();
 
   // Enhanced date parsing function (matching HomeScreen logic)
@@ -91,6 +97,44 @@ export default function Profile() {
       
       return status === 'completed' || (isPast && status !== 'cancelled');
     });
+  };
+
+  // NEW: Load cancellation history count
+  const loadCancellationHistory = async (userId) => {
+    try {
+      console.log('Loading cancellation history for user:', userId);
+      
+      // Get all appointments for this user that have had cancellation requests
+      const queries = [
+        Query.equal('user_id', userId),
+        Query.or([
+          Query.equal('cancellation_status', CANCELLATION_STATUS.REQUESTED),
+          Query.equal('cancellation_status', CANCELLATION_STATUS.APPROVED),
+          Query.equal('cancellation_status', CANCELLATION_STATUS.DENIED)
+        ])
+      ];
+
+      const response = await DatabaseService.listDocuments(
+        COLLECTIONS.APPOINTMENTS,
+        queries
+      );
+
+      console.log('Found cancellation requests:', response.documents.length);
+      
+      const requests = response.documents || [];
+      setCancellationRequestsCount(requests.length);
+      
+      // Count pending requests
+      const pendingRequests = requests.filter(req => 
+        req.cancellation_status === CANCELLATION_STATUS.REQUESTED
+      );
+      setPendingCancellationsCount(pendingRequests.length);
+      
+    } catch (error) {
+      console.error('Error loading cancellation history:', error);
+      setCancellationRequestsCount(0);
+      setPendingCancellationsCount(0);
+    }
   };
 
   useEffect(() => {
@@ -190,6 +234,9 @@ export default function Profile() {
         });
         
         setAppointments(sortedAppointments);
+        
+        // NEW: Load cancellation history after getting user
+        await loadCancellationHistory(currentUser.$id);
       }
     } catch (error) {
       console.error('Error loading data:', error);
@@ -443,6 +490,45 @@ export default function Profile() {
                   <Ionicons name="add" size={16} color="#0AD476" />
                 </TouchableOpacity>
               </View>
+            )}
+
+            {/* NEW: Cancellation History */}
+            {cancellationRequestsCount > 0 && (
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={() => router.push('/profile/cancellation-history')}
+              >
+                <View style={styles.menuItemLeft}>
+                  <View style={[styles.iconContainer, { backgroundColor: '#FEF3C7' }]}>
+                    <Ionicons name="hourglass-outline" size={20} color="#F59E0B" />
+                    {pendingCancellationsCount > 0 && (
+                      <View style={styles.pendingCancellationBadge}>
+                        <Text style={styles.pendingCancellationText}>{pendingCancellationsCount}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View>
+                    <Text style={styles.menuItemText}>Cancellation History</Text>
+                    <Text style={styles.menuItemSubtext}>
+                      {cancellationRequestsCount} cancellation request{cancellationRequestsCount > 1 ? 's' : ''}
+                      {pendingCancellationsCount > 0 && ` (${pendingCancellationsCount} pending)`}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.cancellationBadgeContainer}>
+                  {pendingCancellationsCount > 0 ? (
+                    <View style={styles.pendingBadge}>
+                      <Text style={styles.pendingBadgeText}>Pending</Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.appointmentBadge, { backgroundColor: '#FEF3C7' }]}>
+                      <Text style={[styles.appointmentBadgeText, { color: '#F59E0B' }]}>
+                        {cancellationRequestsCount}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </TouchableOpacity>
             )}
 
             {/* Enhanced Past Appointments */}
@@ -729,6 +815,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
   },
+  
+  // NEW: Cancellation history specific styles
+  pendingCancellationBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#DC2626',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  pendingCancellationText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  cancellationBadgeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  pendingBadge: {
+    backgroundColor: '#DC2626',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  pendingBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  
   menuItemText: {
     fontSize: 16,
     fontWeight: '500',

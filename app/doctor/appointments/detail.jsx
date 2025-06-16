@@ -1,4 +1,4 @@
-// app/doctor/appointments/detail.jsx - FIXED VERSION WITH CONSISTENT PATIENT NAME LOGIC
+// app/doctor/appointments/detail.jsx - ENHANCED VERSION WITH BETTER VALIDATION
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -35,7 +35,7 @@ const TIME_SLOTS = [
   '2:00 PM', '2:30 PM', '3:00 PM', '3:30 PM', '4:00 PM', '4:30 PM', '5:00 PM'
 ];
 
-export default function AppointmentDetail() {
+export default function EnhancedAppointmentDetail() {
   const { appointmentId } = useLocalSearchParams();
   const [appointment, setAppointment] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -43,6 +43,7 @@ export default function AppointmentDetail() {
   const [branchInfo, setBranchInfo] = useState(null);
   const [doctorInfo, setDoctorInfo] = useState(null);
   const [serviceInfo, setServiceInfo] = useState(null);
+  const [loadingSlots, setLoadingSlots] = useState(false);
   
   // Reschedule modal states
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
@@ -87,24 +88,14 @@ export default function AppointmentDetail() {
     }
   };
 
-  // FIXED: Consistent patient info fetching logic matching the list view
   const fetchPatientInfo = async (appointmentData) => {
     try {
-      console.log('Fetching patient info for appointment:', appointmentData.$id);
-      console.log('Is family booking:', appointmentData?.is_family_booking);
-      console.log('Patient name from appointment:', appointmentData?.patient_name);
-      console.log('Patient ID from appointment:', appointmentData?.patient_id);
-      console.log('User ID from appointment:', appointmentData?.user_id);
-      
       let patientData = null;
       let patientName = 'Unknown Patient';
       
-      // Use the same logic as the list view for consistency
       if (appointmentData.is_family_booking && appointmentData.patient_name) {
-        // Family booking with patient name - use it directly
         patientName = appointmentData.patient_name;
         
-        // Try to get additional details if patient_id exists
         if (appointmentData.patient_id) {
           try {
             const patientResponse = await DatabaseService.listDocuments(
@@ -114,7 +105,6 @@ export default function AppointmentDetail() {
             
             if (patientResponse.documents && patientResponse.documents.length > 0) {
               patientData = patientResponse.documents[0];
-              // Keep the name from appointment but get other details from profile
               patientData.displayName = patientName;
             }
           } catch (error) {
@@ -123,7 +113,6 @@ export default function AppointmentDetail() {
         }
       } 
       else if (appointmentData.is_family_booking && appointmentData.patient_id) {
-        // Family booking with patient_id but no name
         try {
           const patientResponse = await DatabaseService.listDocuments(
             COLLECTIONS.PATIENT_PROFILES,
@@ -141,7 +130,6 @@ export default function AppointmentDetail() {
         }
       }
       else if (appointmentData.user_id) {
-        // Regular booking - fetch by user_id
         try {
           const usersResponse = await DatabaseService.listDocuments(
             COLLECTIONS.PATIENT_PROFILES,
@@ -163,7 +151,6 @@ export default function AppointmentDetail() {
         }
       }
       
-      // Create final patient info object
       const finalPatientInfo = {
         ...patientData,
         displayName: patientName,
@@ -177,11 +164,9 @@ export default function AppointmentDetail() {
       };
       
       setPatientInfo(finalPatientInfo);
-      console.log('Final patient info set:', finalPatientInfo);
       
     } catch (error) {
       console.error('Error fetching patient info:', error);
-      // Fallback to appointment data
       setPatientInfo({
         displayName: appointmentData?.patient_name || 'Unknown Patient',
         fullName: appointmentData?.patient_name || 'Unknown Patient',
@@ -195,20 +180,12 @@ export default function AppointmentDetail() {
     }
   };
 
-  // FIXED: Updated branch fetching logic
   const fetchBranchInfo = async (branchId) => {
     try {
-      console.log('Fetching branch info for branch ID:', branchId);
-      
       let branch = null;
       try {
-        // Method 1: Try to get branch by document ID first
         branch = await DatabaseService.getDocument(COLLECTIONS.BRANCHES, branchId);
-        console.log('Found branch by document ID:', branch);
       } catch (docError) {
-        console.log('Branch not found by document ID, trying branch_id field...');
-        
-        // Method 2: Try to find by branch_id field
         const response = await DatabaseService.listDocuments(
           COLLECTIONS.BRANCHES,
           [Query.equal('branch_id', String(branchId))]
@@ -216,7 +193,6 @@ export default function AppointmentDetail() {
         
         if (response.documents && response.documents.length > 0) {
           branch = response.documents[0];
-          console.log('Found branch by branch_id field:', branch);
         }
       }
       
@@ -224,8 +200,6 @@ export default function AppointmentDetail() {
         let regionInfo = null;
         if (branch.region_id && branch.region_id !== null) {
           try {
-            console.log('Fetching region info for region_id:', branch.region_id);
-            
             const regionResponse = await DatabaseService.listDocuments(
               COLLECTIONS.REGIONS,
               [Query.equal('region_id', String(branch.region_id))]
@@ -233,9 +207,7 @@ export default function AppointmentDetail() {
             
             if (regionResponse.documents && regionResponse.documents.length > 0) {
               regionInfo = regionResponse.documents[0];
-              console.log('Found region info:', regionInfo);
             } else {
-              // Fallback to hardcoded regions
               const hardcodedRegions = {
                 'tawau': 'Tawau',
                 'semporna': 'Semporna', 
@@ -244,7 +216,6 @@ export default function AppointmentDetail() {
               regionInfo = { name: hardcodedRegions[branch.region_id] || branch.region_id };
             }
           } catch (regionError) {
-            console.error('Error fetching region info:', regionError);
             const hardcodedRegions = {
               'tawau': 'Tawau',
               'semporna': 'Semporna', 
@@ -259,7 +230,6 @@ export default function AppointmentDetail() {
           regionName: regionInfo?.name || 'Unknown Region'
         });
       } else {
-        console.log('No branch found with ID:', branchId);
         setBranchInfo({
           name: 'Unknown Branch',
           regionName: 'Unknown Region',
@@ -325,6 +295,101 @@ export default function AppointmentDetail() {
     }
   };
 
+  // NEW: Enhanced validation functions for action availability
+  const canRescheduleAppointment = () => {
+    if (!appointment) return false;
+    
+    const status = appointment.status;
+    
+    if (status === APPOINTMENT_STATUS.CANCELLED || 
+        status === APPOINTMENT_STATUS.COMPLETED || 
+        status === APPOINTMENT_STATUS.NO_SHOW) {
+      return false;
+    }
+    
+    const appointmentDate = parseAppointmentDate(appointment.date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (appointmentDate < today) {
+      return false;
+    }
+    
+    return true;
+  };
+
+  const canCancelAppointment = () => {
+    if (!appointment) return false;
+    
+    const status = appointment.status;
+    
+    if (status === APPOINTMENT_STATUS.CANCELLED || 
+        status === APPOINTMENT_STATUS.COMPLETED || 
+        status === APPOINTMENT_STATUS.NO_SHOW) {
+      return false;
+    }
+    
+    return true;
+  };
+
+  const canUpdateStatus = () => {
+    if (!appointment) return false;
+    
+    const status = appointment.status;
+    
+    return status !== APPOINTMENT_STATUS.COMPLETED && status !== APPOINTMENT_STATUS.CANCELLED;
+  };
+
+  const parseAppointmentDate = (dateString) => {
+    try {
+      if (dateString && dateString.includes(',')) {
+        const [, datePart] = dateString.split(', ');
+        const [day, month, year] = datePart.split(' ');
+        const monthIndex = getMonthIndex(month);
+        return new Date(year, monthIndex, parseInt(day));
+      }
+      return new Date();
+    } catch (error) {
+      return new Date();
+    }
+  };
+
+  const getMonthIndex = (monthName) => {
+    const months = {
+      'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+      'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+    };
+    return months[monthName] || 0;
+  };
+
+  // NEW: Function to get action restriction message
+  const getActionRestrictionMessage = () => {
+    if (!appointment) return '';
+    
+    const status = appointment.status;
+    const appointmentDate = parseAppointmentDate(appointment.date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (status === APPOINTMENT_STATUS.CANCELLED) {
+      return 'This appointment has been cancelled. No further actions are available.';
+    }
+    
+    if (status === APPOINTMENT_STATUS.COMPLETED) {
+      return 'This appointment has been completed. Only prescription management is available.';
+    }
+    
+    if (status === APPOINTMENT_STATUS.NO_SHOW) {
+      return 'Patient did not show up for this appointment. No further actions are available.';
+    }
+    
+    if (appointmentDate < today) {
+      return 'This appointment date has passed. Consider updating the status or managing prescriptions.';
+    }
+    
+    return '';
+  };
+
   const formatDateForDisplay = (date) => {
     if (date instanceof Date) {
       const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -339,19 +404,68 @@ export default function AppointmentDetail() {
     if (!appointment?.doctor_id || !selectedDate) return;
     
     try {
+      setLoadingSlots(true);
       const formattedDate = formatDateForDisplay(selectedDate);
       const bookedSlots = await appointmentManager.getBookedSlots(
         appointment.doctor_id, 
         formattedDate, 
-        appointmentId // Exclude current appointment
+        appointmentId
       );
       
       const available = TIME_SLOTS.filter(slot => !bookedSlots.includes(slot));
       setAvailableSlots(available);
     } catch (error) {
       console.error('Error loading available slots:', error);
-      setAvailableSlots(TIME_SLOTS); // Fallback to all slots
+      setAvailableSlots(TIME_SLOTS);
+    } finally {
+      setLoadingSlots(false);
     }
+  };
+
+  const generateDates = () => {
+    return Array.from({ length: 14 }).map((_, i) => {
+      const date = new Date();
+      date.setDate(date.getDate() + i + 1);
+      return date;
+    });
+  };
+
+  const formatDateForModal = (date) => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    return {
+      day: days[date.getDay()],
+      date: date.getDate(),
+      month: months[date.getMonth()],
+      fullDate: `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`
+    };
+  };
+
+  const getDateLabel = (date) => {
+    const today = new Date();
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    if (date.toDateString() === today.toDateString()) return 'Today';
+    if (date.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
+    return formatDateForModal(date).day;
+  };
+
+  const handleDateSelectModal = (date) => {
+    setRescheduleDate(date);
+    setRescheduleTimeSlot('');
+    setAvailableSlots([]);
+    setLoadingSlots(true);
+    loadAvailableSlots(date);
+  };
+
+  const handleTimeSlotSelectModal = (timeSlot) => {
+    if (!availableSlots.includes(timeSlot)) {
+      Alert.alert('Unavailable', 'This time slot is already booked. Please select another time.');
+      return;
+    }
+    setRescheduleTimeSlot(timeSlot);
   };
 
   const handleReschedule = async () => {
@@ -376,7 +490,7 @@ export default function AppointmentDetail() {
           'Appointment has been rescheduled successfully',
           [{ text: 'OK', onPress: () => {
             setShowRescheduleModal(false);
-            loadAppointmentDetails(); // Reload appointment details
+            loadAppointmentDetails();
           }}]
         );
       } else {
@@ -422,7 +536,7 @@ export default function AppointmentDetail() {
           'Appointment has been cancelled successfully',
           [{ text: 'OK', onPress: () => {
             setShowCancelModal(false);
-            loadAppointmentDetails(); // Reload appointment details
+            loadAppointmentDetails();
           }}]
         );
       } else {
@@ -464,30 +578,19 @@ export default function AppointmentDetail() {
   };
 
   const openRescheduleModal = () => {
-    if (appointment?.status === APPOINTMENT_STATUS.CANCELLED || 
-        appointment?.status === APPOINTMENT_STATUS.COMPLETED) {
-      Alert.alert('Error', 'Cannot reschedule a cancelled or completed appointment');
-      return;
-    }
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
     
-    setRescheduleDate(new Date());
+    setRescheduleDate(tomorrow);
     setRescheduleTimeSlot('');
     setRescheduleReason('');
-    loadAvailableSlots(new Date());
+    setAvailableSlots([]);
+    setLoadingSlots(true);
+    loadAvailableSlots(tomorrow);
     setShowRescheduleModal(true);
   };
 
   const openCancelModal = () => {
-    if (appointment?.status === APPOINTMENT_STATUS.CANCELLED) {
-      Alert.alert('Info', 'This appointment is already cancelled');
-      return;
-    }
-    
-    if (appointment?.status === APPOINTMENT_STATUS.COMPLETED) {
-      Alert.alert('Error', 'Cannot cancel a completed appointment');
-      return;
-    }
-    
     setCancelReason('');
     setShowCancelModal(true);
   };
@@ -514,6 +617,7 @@ export default function AppointmentDetail() {
   }
 
   const statusInfo = getStatusInfo(appointment.status);
+  const actionRestrictionMessage = getActionRestrictionMessage();
 
   return (
     <View style={styles.container}>
@@ -565,6 +669,17 @@ export default function AppointmentDetail() {
             <Text style={styles.appointmentTime}>{appointment.time_slot}</Text>
           </View>
         </View>
+
+        {/* NEW: Action Restriction Notice */}
+        {actionRestrictionMessage && (
+          <View style={styles.restrictionNotice}>
+            <View style={styles.restrictionHeader}>
+              <Ionicons name="information-circle" size={20} color="#F59E0B" />
+              <Text style={styles.restrictionTitle}>Action Limitations</Text>
+            </View>
+            <Text style={styles.restrictionMessage}>{actionRestrictionMessage}</Text>
+          </View>
+        )}
 
         {/* Patient Information */}
         <View style={styles.infoCard}>
@@ -709,170 +824,226 @@ export default function AppointmentDetail() {
 
         {/* Prescription Status */}
         <View style={styles.infoCard}>
-        <View style={styles.cardHeader}>
+          <View style={styles.cardHeader}>
             <Ionicons name="document-text" size={20} color="#1a8e2d" />
             <Text style={styles.cardTitle}>Prescription Status</Text>
-        </View>
-        <View style={styles.prescriptionStatus}>
+          </View>
+          <View style={styles.prescriptionStatus}>
             <View style={[
-            styles.prescriptionBadge,
-            { backgroundColor: appointment.has_prescription ? '#F0FDF4' : '#FEF2F2' }
+              styles.prescriptionBadge,
+              { backgroundColor: appointment.has_prescription ? '#F0FDF4' : '#FEF2F2' }
             ]}>
-            <Ionicons 
+              <Ionicons 
                 name={appointment.has_prescription ? "checkmark-circle" : "close-circle"} 
                 size={16} 
                 color={appointment.has_prescription ? '#0AD476' : '#EF4444'} 
-            />
-            <Text style={[
+              />
+              <Text style={[
                 styles.prescriptionText,
                 { color: appointment.has_prescription ? '#0AD476' : '#EF4444' }
-            ]}>
+              ]}>
                 {appointment.has_prescription ? 'Prescription Added' : 'No Prescription'}
-            </Text>
+              </Text>
             </View>
             
             {/* Conditional rendering based on appointment status */}
             {appointment.status === APPOINTMENT_STATUS.COMPLETED ? (
-            // Appointment is completed - show prescription actions
-            !appointment.has_prescription ? (
+              // Appointment is completed - show prescription actions
+              !appointment.has_prescription ? (
                 <TouchableOpacity 
-                style={styles.addPrescriptionButton}
-                onPress={() => router.push({
+                  style={styles.addPrescriptionButton}
+                  onPress={() => router.push({
                     pathname: '/doctor/prescriptions/create',
                     params: { appointmentId: appointment.$id }
-                })}
+                  })}
                 >
-                <Ionicons name="add" size={16} color="white" />
-                <Text style={styles.addPrescriptionText}>Add Prescription</Text>
+                  <Ionicons name="add" size={16} color="white" />
+                  <Text style={styles.addPrescriptionText}>Add Prescription</Text>
                 </TouchableOpacity>
-            ) : (
+              ) : (
                 <TouchableOpacity 
-                style={styles.viewPrescriptionButton}
-                onPress={() => router.push({
+                  style={styles.viewPrescriptionButton}
+                  onPress={() => router.push({
                     pathname: '/doctor/prescriptions/view',
                     params: { appointmentId: appointment.$id }
-                })}
+                  })}
                 >
-                <Ionicons name="eye" size={16} color="#1a8e2d" />
-                <Text style={styles.viewPrescriptionText}>View Prescription</Text>
+                  <Ionicons name="eye" size={16} color="#1a8e2d" />
+                  <Text style={styles.viewPrescriptionText}>View Prescription</Text>
                 </TouchableOpacity>
-            )
+              )
             ) : (
-            // Appointment is not completed - show status message
-            <View style={styles.prescriptionDisabledContainer}>
+              // Appointment is not completed - show status message
+              <View style={styles.prescriptionDisabledContainer}>
                 <View style={styles.prescriptionDisabledBadge}>
-                <Ionicons name="time" size={14} color="#F59E0B" />
-                <Text style={styles.prescriptionDisabledText}>
+                  <Ionicons name="time" size={14} color="#F59E0B" />
+                  <Text style={styles.prescriptionDisabledText}>
                     {appointment.status === APPOINTMENT_STATUS.CANCELLED ? 
-                    'Appointment Cancelled' :
-                    appointment.status === APPOINTMENT_STATUS.NO_SHOW ?
-                    'Patient No Show' :
-                    'Complete appointment first'
+                      'Appointment Cancelled' :
+                      appointment.status === APPOINTMENT_STATUS.NO_SHOW ?
+                      'Patient No Show' :
+                      'Complete appointment first'
                     }
-                </Text>
+                  </Text>
                 </View>
                 <Text style={styles.prescriptionDisabledSubtext}>
-                {appointment.status === APPOINTMENT_STATUS.CANCELLED || 
-                appointment.status === APPOINTMENT_STATUS.NO_SHOW ? 
+                  {appointment.status === APPOINTMENT_STATUS.CANCELLED || 
+                   appointment.status === APPOINTMENT_STATUS.NO_SHOW ? 
                     'Cannot create prescription' :
                     'Mark as completed to add prescription'
-                }
+                  }
                 </Text>
-            </View>
+              </View>
             )}
-        </View>
-        
-        {/* Helper text for better UX */}
-        {appointment.status !== APPOINTMENT_STATUS.COMPLETED && 
-        appointment.status !== APPOINTMENT_STATUS.CANCELLED && 
-        appointment.status !== APPOINTMENT_STATUS.NO_SHOW && (
-            <View style={styles.prescriptionHelpContainer}>
-            <Ionicons name="information-circle" size={16} color="#6B7280" />
-            <Text style={styles.prescriptionHelpText}>
-                Use the "Complete" button above to mark this appointment as finished, then you can add a prescription.
-            </Text>
-            </View>
-        )}
-        </View>
-
-        {/* Quick Status Updates */}
-        <View style={styles.infoCard}>
-        <View style={styles.cardHeader}>
-            <Ionicons name="settings" size={20} color="#1a8e2d" />
-            <Text style={styles.cardTitle}>Quick Status Updates</Text>
-            {/* Show hint if appointment needs to be completed for prescription */}
-            {appointment.status !== APPOINTMENT_STATUS.COMPLETED && 
-            appointment.status !== APPOINTMENT_STATUS.CANCELLED && 
-            appointment.status !== APPOINTMENT_STATUS.NO_SHOW && (
-            <View style={styles.prescriptionPendingBadge}>
-                <Ionicons name="medical" size={12} color="#8B5CF6" />
-                <Text style={styles.prescriptionPendingText}>Prescription pending</Text>
-            </View>
-            )}
-        </View>
-        <View style={styles.statusButtons}>
-            <TouchableOpacity 
-            style={[styles.statusButton, { backgroundColor: '#F0FDF4' }]}
-            onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.CONFIRMED)}
-            disabled={appointment.status === APPOINTMENT_STATUS.CONFIRMED}
-            >
-            <Ionicons name="checkmark-circle" size={16} color="#0AD476" />
-            <Text style={[styles.statusButtonText, { color: '#0AD476' }]}>Confirm</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-            style={[
-                styles.statusButton, 
-                { 
-                backgroundColor: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? '#EFF6FF' : '#E0E7FF',
-                borderWidth: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? 2 : 0,
-                borderColor: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? '#3B82F6' : 'transparent'
-                }
-            ]}
-            onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.COMPLETED)}
-            disabled={appointment.status === APPOINTMENT_STATUS.COMPLETED}
-            >
-            <Ionicons name="checkmark-done-circle" size={16} color="#3B82F6" />
-            <Text style={[styles.statusButtonText, { 
-                color: '#3B82F6',
-                fontWeight: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? 'bold' : '600'
-            }]}>
-                Complete
-                {appointment.status !== APPOINTMENT_STATUS.COMPLETED && (
-                <Text style={styles.completeHintText}> ✨</Text>
-                )}
-            </Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-            style={[styles.statusButton, { backgroundColor: '#F5F3FF' }]}
-            onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.NO_SHOW)}
-            disabled={appointment.status === APPOINTMENT_STATUS.NO_SHOW}
-            >
-            <Ionicons name="alert-circle" size={16} color="#8B5CF6" />
-            <Text style={[styles.statusButtonText, { color: '#8B5CF6' }]}>No Show</Text>
-            </TouchableOpacity>
-        </View>
-        </View>
-
-        {/* Action Buttons */}
-        <View style={styles.actionButtons}>
-          <TouchableOpacity 
-            style={styles.rescheduleButton}
-            onPress={openRescheduleModal}
-          >
-            <Ionicons name="calendar" size={18} color="white" />
-            <Text style={styles.rescheduleButtonText}>Reschedule</Text>
-          </TouchableOpacity>
+          </View>
           
-          <TouchableOpacity 
-            style={styles.cancelButton}
-            onPress={openCancelModal}
-          >
-            <Ionicons name="close-circle" size={18} color="white" />
-            <Text style={styles.cancelButtonText}>Cancel</Text>
-          </TouchableOpacity>
+          {/* Helper text for better UX */}
+          {appointment.status !== APPOINTMENT_STATUS.COMPLETED && 
+           appointment.status !== APPOINTMENT_STATUS.CANCELLED && 
+           appointment.status !== APPOINTMENT_STATUS.NO_SHOW && (
+            <View style={styles.prescriptionHelpContainer}>
+              <Ionicons name="information-circle" size={16} color="#6B7280" />
+              <Text style={styles.prescriptionHelpText}>
+                Use the "Complete" button below to mark this appointment as finished, then you can add a prescription.
+              </Text>
+            </View>
+          )}
         </View>
+
+        {/* Quick Status Updates - ENHANCED with better validation */}
+        {canUpdateStatus() && (
+          <View style={styles.infoCard}>
+            <View style={styles.cardHeader}>
+              <Ionicons name="settings" size={20} color="#1a8e2d" />
+              <Text style={styles.cardTitle}>Quick Status Updates</Text>
+              {appointment.status !== APPOINTMENT_STATUS.COMPLETED && 
+               appointment.status !== APPOINTMENT_STATUS.CANCELLED && 
+               appointment.status !== APPOINTMENT_STATUS.NO_SHOW && (
+                <View style={styles.prescriptionPendingBadge}>
+                  <Ionicons name="medical" size={12} color="#8B5CF6" />
+                  <Text style={styles.prescriptionPendingText}>Prescription pending</Text>
+                </View>
+              )}
+            </View>
+            <View style={styles.statusButtons}>
+              <TouchableOpacity 
+                style={[
+                  styles.statusButton, 
+                  { backgroundColor: '#F0FDF4' },
+                  appointment.status === APPOINTMENT_STATUS.CONFIRMED && styles.disabledButton
+                ]}
+                onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.CONFIRMED)}
+                disabled={appointment.status === APPOINTMENT_STATUS.CONFIRMED}
+              >
+                <Ionicons name="checkmark-circle" size={16} color="#0AD476" />
+                <Text style={[styles.statusButtonText, { color: '#0AD476' }]}>
+                  {appointment.status === APPOINTMENT_STATUS.CONFIRMED ? 'Confirmed ✓' : 'Confirm'}
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[
+                  styles.statusButton, 
+                  { 
+                    backgroundColor: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? '#EFF6FF' : '#E0E7FF',
+                    borderWidth: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? 2 : 0,
+                    borderColor: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? '#3B82F6' : 'transparent'
+                  },
+                  appointment.status === APPOINTMENT_STATUS.COMPLETED && styles.disabledButton
+                ]}
+                onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.COMPLETED)}
+                disabled={appointment.status === APPOINTMENT_STATUS.COMPLETED}
+              >
+                <Ionicons name="checkmark-done-circle" size={16} color="#3B82F6" />
+                <Text style={[styles.statusButtonText, { 
+                  color: '#3B82F6',
+                  fontWeight: appointment.status !== APPOINTMENT_STATUS.COMPLETED ? 'bold' : '600'
+                }]}>
+                  {appointment.status === APPOINTMENT_STATUS.COMPLETED ? 'Completed ✓' : 'Complete'}
+                  {appointment.status !== APPOINTMENT_STATUS.COMPLETED && (
+                    <Text style={styles.completeHintText}> ✨</Text>
+                  )}
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[
+                  styles.statusButton, 
+                  { backgroundColor: '#F5F3FF' },
+                  appointment.status === APPOINTMENT_STATUS.NO_SHOW && styles.disabledButton
+                ]}
+                onPress={() => handleStatusUpdate(APPOINTMENT_STATUS.NO_SHOW)}
+                disabled={appointment.status === APPOINTMENT_STATUS.NO_SHOW}
+              >
+                <Ionicons name="alert-circle" size={16} color="#8B5CF6" />
+                <Text style={[styles.statusButtonText, { color: '#8B5CF6' }]}>
+                  {appointment.status === APPOINTMENT_STATUS.NO_SHOW ? 'No Show ✓' : 'No Show'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Action Buttons - ENHANCED with validation */}
+        {(canRescheduleAppointment() || canCancelAppointment()) && (
+          <View style={styles.actionButtons}>
+            {canRescheduleAppointment() && (
+              <TouchableOpacity 
+                style={styles.rescheduleButton}
+                onPress={openRescheduleModal}
+              >
+                <Ionicons name="calendar" size={18} color="white" />
+                <Text style={styles.rescheduleButtonText}>Reschedule</Text>
+              </TouchableOpacity>
+            )}
+            
+            {canCancelAppointment() && (
+              <TouchableOpacity 
+                style={[
+                  styles.cancelButton,
+                  !canRescheduleAppointment() && styles.fullWidthButton
+                ]}
+                onPress={openCancelModal}
+              >
+                <Ionicons name="close-circle" size={18} color="white" />
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {/* NEW: Readonly status indicator for completed/cancelled appointments */}
+        {(!canRescheduleAppointment() && !canCancelAppointment() && !canUpdateStatus()) && (
+          <View style={styles.readonlyStatusContainer}>
+            <View style={styles.readonlyStatusCard}>
+              <Ionicons 
+                name={
+                  appointment.status === APPOINTMENT_STATUS.COMPLETED ? "checkmark-done-circle" :
+                  appointment.status === APPOINTMENT_STATUS.CANCELLED ? "close-circle" :
+                  "alert-circle"
+                } 
+                size={24} 
+                color={
+                  appointment.status === APPOINTMENT_STATUS.COMPLETED ? "#3B82F6" :
+                  appointment.status === APPOINTMENT_STATUS.CANCELLED ? "#EF4444" :
+                  "#8B5CF6"
+                } 
+              />
+              <View style={styles.readonlyStatusContent}>
+                <Text style={styles.readonlyStatusTitle}>
+                  {appointment.status === APPOINTMENT_STATUS.COMPLETED ? "Appointment Completed" :
+                   appointment.status === APPOINTMENT_STATUS.CANCELLED ? "Appointment Cancelled" :
+                   "No Actions Available"}
+                </Text>
+                <Text style={styles.readonlyStatusSubtitle}>
+                  {appointment.status === APPOINTMENT_STATUS.COMPLETED ? "You can manage prescriptions above." :
+                   appointment.status === APPOINTMENT_STATUS.CANCELLED ? "This appointment was cancelled and cannot be modified." :
+                   "This appointment cannot be modified at this time."}
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       {/* Reschedule Modal */}
@@ -891,42 +1062,166 @@ export default function AppointmentDetail() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody}>
-              <Text style={styles.modalSectionTitle}>Select New Date</Text>
-              <Text style={styles.modalNote}>
-                Current: {appointment.date} at {appointment.time_slot}
-              </Text>
-              
-              <Text style={styles.modalSectionTitle}>Available Time Slots</Text>
-              <View style={styles.timeSlotsGrid}>
-                {availableSlots.map((slot) => (
-                  <TouchableOpacity
-                    key={slot}
-                    style={[
-                      styles.timeSlot,
-                      rescheduleTimeSlot === slot && styles.selectedTimeSlot
-                    ]}
-                    onPress={() => setRescheduleTimeSlot(slot)}
-                  >
-                    <Text style={[
-                      styles.timeSlotText,
-                      rescheduleTimeSlot === slot && styles.selectedTimeSlotText
-                    ]}>
-                      {slot}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+              {/* Current Appointment Info */}
+              <View style={styles.currentAppointmentInfo}>
+                <View style={styles.currentAppointmentHeader}>
+                  <Ionicons name="calendar" size={16} color="#F59E0B" />
+                  <Text style={styles.currentAppointmentTitle}>Current Appointment</Text>
+                </View>
+                <Text style={styles.currentAppointmentText}>
+                  {appointment.date} at {appointment.time_slot}
+                </Text>
+                <Text style={styles.currentAppointmentSubtext}>
+                  {patientInfo?.displayName || 'Unknown Patient'} • {appointment.service_name || 'General Consultation'}
+                </Text>
               </View>
 
-              <Text style={styles.modalSectionTitle}>Reason for Rescheduling</Text>
-              <TextInput
-                style={styles.reasonInput}
-                multiline
-                numberOfLines={3}
-                placeholder="Enter reason for rescheduling..."
-                value={rescheduleReason}
-                onChangeText={setRescheduleReason}
-              />
+              {/* Date Selection */}
+              <View style={styles.modalSection}>
+                <Text style={styles.modalSectionTitle}>Select New Date</Text>
+                <Text style={styles.modalSectionSubtitle}>Choose a date for your rescheduled appointment</Text>
+                
+                <ScrollView 
+                  horizontal 
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.dateScrollView}
+                  contentContainerStyle={styles.dateScrollContent}
+                >
+                  {generateDates().map((date, index) => {
+                    const formatted = formatDateForModal(date);
+                    const isSelected = rescheduleDate && 
+                      rescheduleDate.toDateString() === date.toDateString();
+                    
+                    return (
+                      <TouchableOpacity
+                        key={index}
+                        style={[styles.dateCard, isSelected && styles.selectedDateCard]}
+                        onPress={() => handleDateSelectModal(date)}
+                      >
+                        <Text style={[styles.dateCardLabel, isSelected && styles.selectedDateCardText]}>
+                          {getDateLabel(date)}
+                        </Text>
+                        <Text style={[styles.dateCardNumber, isSelected && styles.selectedDateCardText]}>
+                          {formatted.date}
+                        </Text>
+                        <Text style={[styles.dateCardMonth, isSelected && styles.selectedDateCardText]}>
+                          {formatted.month}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              {/* Selected Date Display */}
+              {rescheduleDate && (
+                <View style={styles.selectedDateDisplay}>
+                  <Ionicons name="checkmark-circle" size={16} color="#0AD476" />
+                  <Text style={styles.selectedDateDisplayText}>
+                    Selected: {formatDateForModal(rescheduleDate).fullDate}
+                  </Text>
+                </View>
+              )}
+
+              {/* Time Slots */}
+              {rescheduleDate && (
+                <View style={styles.modalSection}>
+                  <View style={styles.timeSlotsHeader}>
+                    <Text style={styles.modalSectionTitle}>Select New Time</Text>
+                    {loadingSlots && (
+                      <View style={styles.loadingIndicator}>
+                        <ActivityIndicator size="small" color="#0AD476" />
+                        <Text style={styles.loadingSlotsText}>Checking...</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.modalSectionSubtitle}>Available time slots for the selected date</Text>
+                  
+                  <View style={styles.enhancedTimeSlotsGrid}>
+                    {TIME_SLOTS.map((slot) => {
+                      const isBooked = !availableSlots.includes(slot);
+                      const isSelected = rescheduleTimeSlot === slot;
+                      const isCurrent = appointment.time_slot === slot && 
+                        formatDateForModal(rescheduleDate).fullDate === appointment.date;
+                      
+                      return (
+                        <TouchableOpacity
+                          key={slot}
+                          style={[
+                            styles.enhancedTimeSlot,
+                            isSelected && styles.selectedTimeSlot,
+                            isBooked && styles.bookedTimeSlot,
+                            isCurrent && styles.currentTimeSlot
+                          ]}
+                          onPress={() => handleTimeSlotSelectModal(slot)}
+                          disabled={isBooked || loadingSlots}
+                        >
+                          <Text style={[
+                            styles.enhancedTimeSlotText,
+                            isSelected && styles.selectedTimeSlotText,
+                            isBooked && styles.bookedTimeSlotText,
+                            isCurrent && styles.currentTimeSlotText
+                          ]}>
+                            {slot}
+                          </Text>
+                          {isBooked && (
+                            <Text style={styles.bookedLabel}>Booked</Text>
+                          )}
+                          {isCurrent && (
+                            <Text style={styles.currentLabel}>Current</Text>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* Availability Info */}
+                  <View style={styles.availabilityInfo}>
+                    <Ionicons name="information-circle" size={14} color="#666" />
+                    <Text style={styles.availabilityText}>
+                      {availableSlots.length} of {TIME_SLOTS.length} slots available
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Summary */}
+              {rescheduleDate && rescheduleTimeSlot && (
+                <View style={styles.rescheduleApproximateSummary}>
+                  <Text style={styles.summaryTitle}>Reschedule Summary</Text>
+                  <View style={styles.summaryContent}>
+                    <View style={styles.summaryFromTo}>
+                      <View style={styles.summaryColumn}>
+                        <Text style={styles.summaryLabel}>From</Text>
+                        <Text style={styles.summaryValue}>{appointment.date}</Text>
+                        <Text style={styles.summaryValue}>{appointment.time_slot}</Text>
+                      </View>
+                      
+                      <Ionicons name="arrow-forward" size={16} color="#0AD476" style={styles.summaryArrow} />
+                      
+                      <View style={styles.summaryColumn}>
+                        <Text style={styles.summaryLabel}>To</Text>
+                        <Text style={styles.summaryValue}>{formatDateForModal(rescheduleDate).fullDate}</Text>
+                        <Text style={styles.summaryValue}>{rescheduleTimeSlot}</Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {/* Reason Input */}
+              <View style={styles.modalSection}>
+                <Text style={styles.modalSectionTitle}>Reason for Rescheduling</Text>
+                <TextInput
+                  style={styles.reasonInput}
+                  multiline
+                  numberOfLines={3}
+                  placeholder="Enter reason for rescheduling..."
+                  value={rescheduleReason}
+                  onChangeText={setRescheduleReason}
+                />
+              </View>
             </ScrollView>
 
             <View style={styles.modalFooter}>
@@ -938,14 +1233,17 @@ export default function AppointmentDetail() {
               </TouchableOpacity>
               
               <TouchableOpacity
-                style={styles.modalConfirmButton}
+                style={[
+                  styles.modalConfirmButton,
+                  (!rescheduleDate || !rescheduleTimeSlot || rescheduleLoading || loadingSlots) && styles.disabledConfirmButton
+                ]}
                 onPress={handleReschedule}
-                disabled={rescheduleLoading || !rescheduleTimeSlot}
+                disabled={!rescheduleDate || !rescheduleTimeSlot || rescheduleLoading || loadingSlots}
               >
                 {rescheduleLoading ? (
                   <ActivityIndicator size="small" color="white" />
                 ) : (
-                  <Text style={styles.modalConfirmButtonText}>Reschedule</Text>
+                  <Text style={styles.modalConfirmButtonText}>Confirm Reschedule</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -1139,6 +1437,32 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
   },
+
+  // NEW: Restriction Notice
+  restrictionNotice: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#F59E0B',
+  },
+  restrictionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  restrictionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F59E0B',
+    marginLeft: 8,
+  },
+  restrictionMessage: {
+    fontSize: 13,
+    color: '#92400E',
+    lineHeight: 18,
+  },
   
   // Info Cards
   infoCard: {
@@ -1253,49 +1577,46 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  // Prescription disabled states
-prescriptionDisabledContainer: {
-  flex: 1,
-  alignItems: 'flex-end',
-},
-prescriptionDisabledBadge: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  backgroundColor: '#FFFBEB',
-  paddingHorizontal: 10,
-  paddingVertical: 6,
-  borderRadius: 12,
-  gap: 4,
-  marginBottom: 4,
-},
-prescriptionDisabledText: {
-  fontSize: 12,
-  color: '#F59E0B',
-  fontWeight: '600',
-},
-prescriptionDisabledSubtext: {
-  fontSize: 10,
-  color: '#9CA3AF',
-  fontStyle: 'italic',
-  textAlign: 'right',
-},
-
-// Help container
-prescriptionHelpContainer: {
-  flexDirection: 'row',
-  alignItems: 'flex-start',
-  backgroundColor: '#F9FAFB',
-  padding: 12,
-  borderRadius: 8,
-  marginTop: 12,
-  gap: 8,
-},
-prescriptionHelpText: {
-  fontSize: 13,
-  color: '#6B7280',
-  lineHeight: 18,
-  flex: 1,
-},
+  prescriptionDisabledContainer: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  prescriptionDisabledBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    gap: 4,
+    marginBottom: 4,
+  },
+  prescriptionDisabledText: {
+    fontSize: 12,
+    color: '#F59E0B',
+    fontWeight: '600',
+  },
+  prescriptionDisabledSubtext: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+    textAlign: 'right',
+  },
+  prescriptionHelpContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F9FAFB',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+    gap: 8,
+  },
+  prescriptionHelpText: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+    flex: 1,
+  },
   
   // Status Buttons
   statusButtons: {
@@ -1385,7 +1706,7 @@ completeHintText: {
     borderRadius: 16,
     width: '100%',
     maxWidth: 400,
-    maxHeight: '80%',
+    maxHeight: '85%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1425,6 +1746,283 @@ completeHintText: {
     borderRadius: 8,
     marginBottom: 16,
   },
+
+currentAppointmentInfo: {
+  backgroundColor: '#FFF3E0',
+  borderRadius: 12,
+  padding: 16,
+  marginBottom: 20,
+  borderLeftWidth: 4,
+  borderLeftColor: '#FF9500',
+},
+
+currentAppointmentHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  marginBottom: 8,
+},
+
+currentAppointmentTitle: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#FF9500',
+  marginLeft: 6,
+},
+
+currentAppointmentText: {
+  fontSize: 16,
+  fontWeight: 'bold',
+  color: '#333',
+  marginBottom: 4,
+},
+
+currentAppointmentSubtext: {
+  fontSize: 13,
+  color: '#666',
+},
+
+modalSection: {
+  marginBottom: 20,
+},
+
+modalSectionSubtitle: {
+  fontSize: 13,
+  color: '#666',
+  marginBottom: 16,
+  lineHeight: 18,
+},
+
+// Date Selection Styles
+dateScrollView: {
+  marginHorizontal: -20,
+  marginBottom: 16,
+},
+
+dateScrollContent: {
+  paddingHorizontal: 20,
+},
+
+dateCard: {
+  width: 60,
+  height: 75,
+  backgroundColor: '#F5F5F5',
+  borderRadius: 12,
+  justifyContent: 'center',
+  alignItems: 'center',
+  marginRight: 10,
+  borderWidth: 1,
+  borderColor: '#E0E0E0',
+},
+
+selectedDateCard: {
+  backgroundColor: '#0AD476',
+  borderColor: '#0AD476',
+},
+
+dateCardLabel: {
+  fontSize: 11,
+  color: '#666',
+  fontWeight: '500',
+  marginBottom: 2,
+},
+
+dateCardNumber: {
+  fontSize: 18,
+  fontWeight: 'bold',
+  color: '#333',
+  marginBottom: 2,
+},
+
+dateCardMonth: {
+  fontSize: 10,
+  color: '#666',
+},
+
+selectedDateCardText: {
+  color: '#fff',
+},
+
+selectedDateDisplay: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#F0FDF4',
+  padding: 12,
+  borderRadius: 8,
+  marginBottom: 20,
+  borderWidth: 1,
+  borderColor: '#0AD476',
+},
+
+selectedDateDisplayText: {
+  fontSize: 13,
+  color: '#0AD476',
+  fontWeight: '600',
+  marginLeft: 6,
+},
+
+// Enhanced Time Slots
+timeSlotsHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  marginBottom: 4,
+},
+
+loadingIndicator: {
+  flexDirection: 'row',
+  alignItems: 'center',
+},
+
+loadingSlotsText: {
+  fontSize: 11,
+  color: '#666',
+  marginLeft: 4,
+},
+
+enhancedTimeSlotsGrid: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  justifyContent: 'space-between',
+  gap: 8,
+},
+
+enhancedTimeSlot: {
+  width: '48%',
+  backgroundColor: '#F5F5F5',
+  paddingVertical: 12,
+  paddingHorizontal: 8,
+  borderRadius: 8,
+  borderWidth: 1,
+  borderColor: '#E0E0E0',
+  alignItems: 'center',
+  justifyContent: 'center',
+  minHeight: 50,
+},
+
+enhancedTimeSlotText: {
+  fontSize: 13,
+  color: '#333',
+  fontWeight: '500',
+  textAlign: 'center',
+},
+
+bookedTimeSlot: {
+  backgroundColor: '#FFEBEE',
+  borderColor: '#FFCDD2',
+  opacity: 0.6,
+},
+
+bookedTimeSlotText: {
+  color: '#999',
+  textDecorationLine: 'line-through',
+},
+
+currentTimeSlot: {
+  backgroundColor: '#FFF3E0',
+  borderColor: '#FFB74D',
+},
+
+currentTimeSlotText: {
+  color: '#FF9500',
+  fontWeight: '600',
+},
+
+bookedLabel: {
+  fontSize: 9,
+  color: '#FF5722',
+  marginTop: 2,
+  fontWeight: '500',
+},
+
+currentLabel: {
+  fontSize: 9,
+  color: '#FF9500',
+  marginTop: 2,
+  fontWeight: '600',
+},
+
+availabilityInfo: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  marginTop: 12,
+  paddingTop: 12,
+  borderTopWidth: 1,
+  borderTopColor: '#F0F0F0',
+},
+
+availabilityText: {
+  fontSize: 12,
+  color: '#666',
+  marginLeft: 4,
+},
+
+// Summary Styles
+rescheduleApproximateSummary: {
+  backgroundColor: '#F0FDF4',
+  borderRadius: 12,
+  padding: 16,
+  marginBottom: 20,
+  borderWidth: 1,
+  borderColor: '#0AD476',
+},
+
+summaryTitle: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#0AD476',
+  marginBottom: 12,
+  textAlign: 'center',
+},
+
+summaryContent: {
+  alignItems: 'center',
+},
+
+summaryFromTo: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: '100%',
+},
+
+summaryColumn: {
+  flex: 1,
+  alignItems: 'center',
+},
+
+summaryArrow: {
+  marginHorizontal: 12,
+},
+
+summaryLabel: {
+  fontSize: 11,
+  color: '#666',
+  marginBottom: 4,
+  fontWeight: '500',
+},
+
+summaryValue: {
+  fontSize: 12,
+  color: '#333',
+  fontWeight: '600',
+  textAlign: 'center',
+  marginBottom: 2,
+},
+
+// Button States
+disabledConfirmButton: {
+  backgroundColor: '#CCC',
+  opacity: 0.6,
+},
+
+// Update existing modal footer for better spacing
+modalFooter: {
+  flexDirection: 'row',
+  padding: 16, // Reduced padding
+  gap: 12,
+  borderTopWidth: 1,
+  borderTopColor: '#F0F0F0',
+},
   
   // Time Slots
   timeSlotsGrid: {
@@ -1472,7 +2070,7 @@ completeHintText: {
   // Modal Footer
   modalFooter: {
     flexDirection: 'row',
-    padding: 20,
+    padding: 16,
     gap: 12,
     borderTopWidth: 1,
     borderTopColor: '#F0F0F0',
