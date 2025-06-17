@@ -1,4 +1,4 @@
-// app/doctor/index.jsx - Enhanced dashboard with cancellation requests section
+// app/doctor/index.jsx - Enhanced dashboard with improved design and complete tab implementations
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, Image } from 'react-native';
 import { router } from 'expo-router';
@@ -11,7 +11,7 @@ import { COLLECTIONS } from '../../constants';
 import RoleProtected from '../../components/RoleProtected';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
-import { appointmentManager, CANCELLATION_STATUS } from '../../service/appointmentUtils'; // Enhanced import
+import { appointmentManager, CANCELLATION_STATUS } from '../../service/appointmentUtils';
 
 export default function DoctorDashboard() {
   return (
@@ -39,7 +39,7 @@ function DoctorDashboardContent() {
   const [selectedDayAppointments, setSelectedDayAppointments] = useState([]);
   const [selectedDay, setSelectedDay] = useState(null);
 
-  // NEW: Cancellation request stats
+  // Cancellation request stats
   const [cancellationStats, setCancellationStats] = useState({
     pending: 0,
     approved: 0,
@@ -53,11 +53,10 @@ function DoctorDashboardContent() {
     loadUserData();
   }, []);
 
-  // ADDED: Focus effect to refresh data when returning to screen
   useFocusEffect(
     useCallback(() => {
       if (user?.uid) {
-        loadAppointments(user.uid, false); // Don't show loader when refocusing
+        loadAppointments(user.uid, false);
         loadPatients(user.uid);
       }
     }, [user?.uid])
@@ -78,14 +77,12 @@ function DoctorDashboardContent() {
     }
   };
 
-  // ENHANCED: loadAppointments now includes cancellation stats calculation
   const loadAppointments = async (doctorId, showLoader = true) => {
     try {
       if (showLoader) {
         setLoadingAppointments(true);
       }
       
-      // Enhanced query with ordering (same as patient HomeScreen)
       const queries = [
         Query.orderDesc('$createdAt'),
         Query.limit(100)
@@ -98,7 +95,6 @@ function DoctorDashboardContent() {
       
       let allAppointments = appointmentsResponse.documents || [];
       
-      // Sort appointments by date (same logic as patient screen)
       allAppointments.sort((a, b) => {
         try {
           const dateA = parseAppointmentDate(a.date);
@@ -118,21 +114,17 @@ function DoctorDashboardContent() {
       
       setAllAppointments(allAppointments);
       
-      // Fetch patient names and branch names
       await Promise.all([
         fetchPatientNames(allAppointments),
         fetchBranchNames(allAppointments)
       ]);
       
-      // NEW: Calculate cancellation request statistics
       calculateCancellationStats(allAppointments);
       
-      // UPDATED: Filter upcoming appointments (same logic as patient HomeScreen)
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
       const upcoming = allAppointments.filter(apt => {
-        // First check if appointment is cancelled or completed (same as patient screen)
         const status = apt.status?.toLowerCase();
         if (status === 'cancelled' || status === 'completed') {
           return false;
@@ -142,7 +134,6 @@ function DoctorDashboardContent() {
         return aptDate >= today;
       });
       
-      // Sort upcoming appointments by date (earliest first)
       const sortedUpcoming = [...upcoming].sort((a, b) => {
         const partsA = a.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
         const partsB = b.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
@@ -166,7 +157,6 @@ function DoctorDashboardContent() {
           parseInt(partsB[2])
         );
         
-        // If same date, sort by time
         if (dateA.getTime() === dateB.getTime()) {
           return (a.time_slot || '').localeCompare(b.time_slot || '');
         }
@@ -185,7 +175,6 @@ function DoctorDashboardContent() {
     }
   };
 
-  // NEW: Calculate cancellation request statistics
   const calculateCancellationStats = (appointments) => {
     const stats = {
       pending: 0,
@@ -210,7 +199,7 @@ function DoctorDashboardContent() {
     setCancellationStats(stats);
   };
 
-  // ADDED: Set up real-time subscription for appointments (same as patient HomeScreen)
+  // Real-time subscription setup
   useEffect(() => {
     let subscriptionKey = null;
 
@@ -222,12 +211,9 @@ function DoctorDashboardContent() {
             (event) => {
               console.log('Doctor dashboard received appointment update:', event);
               
-              // Refresh appointments when any appointment changes
-              // Enhanced retry logic for real-time updates
               const retryFetch = async (attempt = 1, maxAttempts = 3) => {
                 await loadAppointments(userData.uid, false);
                 
-                // Check if the appointment change is reflected
                 const appointmentId = event.appointment?.$id;
                 if (appointmentId && attempt < maxAttempts) {
                   setTimeout(() => {
@@ -244,7 +230,6 @@ function DoctorDashboardContent() {
                 }
               };
               
-              // Start the retry process with a delay
               setTimeout(() => retryFetch(), 1000);
             }
           );
@@ -256,7 +241,6 @@ function DoctorDashboardContent() {
 
     setupRealtimeSubscription();
 
-    // Cleanup subscription on unmount
     return () => {
       if (subscriptionKey) {
         appointmentManager.unsubscribe(subscriptionKey);
@@ -264,7 +248,6 @@ function DoctorDashboardContent() {
     };
   }, [user?.uid]);
 
-  // Enhanced patient name fetching function (same logic as appointments management)
   const fetchPatientNames = async (appointments) => {
     try {
       const nameMap = {};
@@ -273,11 +256,9 @@ function DoctorDashboardContent() {
         let patientName = 'Unknown Patient';
         
         try {
-          // Check if this is a family booking with patient_name
           if (appointment.is_family_booking && appointment.patient_name) {
             patientName = appointment.patient_name;
           } 
-          // If family booking but no patient_name, try to fetch by patient_id
           else if (appointment.is_family_booking && appointment.patient_id) {
             try {
               const patientResponse = await DatabaseService.listDocuments(
@@ -295,7 +276,6 @@ function DoctorDashboardContent() {
               patientName = appointment.patient_name || 'Family Member';
             }
           }
-          // Regular booking - fetch by user_id
           else if (appointment.user_id) {
             try {
               const usersResponse = await DatabaseService.listDocuments(
@@ -334,7 +314,6 @@ function DoctorDashboardContent() {
     }
   };
 
-  // Enhanced branch names fetching function
   const fetchBranchNames = async (appointments) => {
     try {
       const branchIds = [...new Set(appointments.map(apt => apt.branch_id).filter(Boolean))];
@@ -480,21 +459,17 @@ function DoctorDashboardContent() {
     }
   };
 
-  // Helper function to get patient name (updated for appointment-specific keys)
   const getPatientName = (appointment) => {
     if (!appointment) return "Unknown Patient";
     
-    // Check if this is a family booking with patient_name
     if (appointment.is_family_booking && appointment.patient_name) {
       return appointment.patient_name;
     }
     
-    // Use the patientNames state with appointment-specific key
     const appointmentKey = `${appointment.$id}`;
     return patientNames[appointmentKey] || appointment.patient_name || "Unknown Patient";
   };
 
-  // Helper function to get branch name
   const getBranchName = (branchId) => {
     if (!branchId) return "Unknown Branch";
     
@@ -502,7 +477,6 @@ function DoctorDashboardContent() {
     return branchInfo?.name || "Unknown Branch";
   };
 
-  // Helper function to get status color
   const getStatusColor = (status) => {
     switch (status) {
       case 'Confirmed':
@@ -516,11 +490,10 @@ function DoctorDashboardContent() {
       case 'No Show':
         return '#8B5CF6';
       default:
-        return '#6B7280'; // Booked
+        return '#6B7280';
     }
   };
 
-  // Helper function to format full date
   const getFullDateString = (day) => {
     if (!day) return '';
     
@@ -579,7 +552,7 @@ function DoctorDashboardContent() {
     return name.substring(0, 2).toUpperCase();
   };
 
-  // NEW: Cancellation Requests Section Component
+  // Cancellation Requests Section Component
   const renderCancellationRequestsSection = () => {
     if (cancellationStats.total === 0) return null;
 
@@ -587,7 +560,7 @@ function DoctorDashboardContent() {
       <View style={styles.cancellationSection}>
         <View style={styles.cancellationHeader}>
           <View style={styles.cancellationTitleContainer}>
-            <Ionicons name="hourglass" size={20} color="#F59E0B" />
+            <Ionicons name="hourglass" size={18} color="#F59E0B" />
             <Text style={styles.cancellationTitle}>Cancellation Requests</Text>
             {cancellationStats.pending > 0 && (
               <View style={styles.pendingBadge}>
@@ -600,7 +573,7 @@ function DoctorDashboardContent() {
             onPress={() => router.push('/doctor/appointments/cancellation-requests')}
           >
             <Text style={styles.viewAllRequestsText}>View All</Text>
-            <Ionicons name="arrow-forward" size={16} color="#F59E0B" />
+            <Ionicons name="arrow-forward" size={14} color="#F59E0B" />
           </TouchableOpacity>
         </View>
         
@@ -622,13 +595,12 @@ function DoctorDashboardContent() {
           </View>
         </View>
 
-        {/* Quick Action Button for pending requests */}
         {cancellationStats.pending > 0 && (
           <TouchableOpacity 
             style={styles.quickReviewButton}
             onPress={() => router.push('/doctor/appointments/cancellation-requests')}
           >
-            <Ionicons name="flash" size={16} color="white" />
+            <Ionicons name="flash" size={14} color="white" />
             <Text style={styles.quickReviewText}>
               Review {cancellationStats.pending} Pending Request{cancellationStats.pending > 1 ? 's' : ''}
             </Text>
@@ -696,7 +668,6 @@ function DoctorDashboardContent() {
                             {appointment.service_name || 'General Consultation'}
                           </Text>
                         </View>
-                        {/* NEW: Show cancellation request status in modal */}
                         {appointment.cancellation_status && appointment.cancellation_status !== CANCELLATION_STATUS.NONE && (
                           <View style={styles.modalDetailRow}>
                             <Ionicons 
@@ -796,6 +767,7 @@ function DoctorDashboardContent() {
     </Modal>
   );
 
+  // Profile Modal Component
   const ProfileModal = () => (
     <Modal
       visible={showProfileModal}
@@ -815,7 +787,7 @@ function DoctorDashboardContent() {
             </View>
             <Text style={styles.profileName}>{user?.displayName || 'Doctor'}</Text>
             <Text style={styles.profileEmail}>{user?.email || 'doctor@permaipolyclinic.com'}</Text>
-            <Text style={styles.clinicName}>Permai Polyclinic Management</Text>
+            <Text style={styles.clinicName}>Cliniqueasy Management</Text>
           </View>
           
           <View style={styles.profileOptions}>
@@ -862,57 +834,9 @@ function DoctorDashboardContent() {
     </Modal>
   );
 
-  const renderCalendarDay = (day, index) => {
-    const isToday = day && 
-      day === new Date().getDate() && 
-      currentDate.getMonth() === new Date().getMonth() && 
-      currentDate.getFullYear() === new Date().getFullYear();
-    
-    const dayAppointments = day ? getAppointmentsForDay(day) : [];
-    const hasAppointments = dayAppointments.length > 0;
-
-    return (
-      <TouchableOpacity
-        key={index}
-        style={[
-          styles.calendarDay,
-          isToday && styles.calendarDayToday,
-          hasAppointments && styles.calendarDayWithAppointments
-        ]}
-        onPress={() => {
-          if (hasAppointments) {
-            setSelectedDay(day);
-            setSelectedDayAppointments(dayAppointments);
-            setShowAppointmentModal(true);
-          }
-        }}
-        disabled={!hasAppointments}
-      >
-        {day && (
-          <>
-            <Text style={[
-              styles.calendarDayText,
-              isToday && styles.calendarDayTextToday,
-              hasAppointments && styles.calendarDayTextWithAppointments
-            ]}>
-              {day}
-            </Text>
-            {hasAppointments && (
-              <View style={styles.appointmentIndicator}>
-                <Text style={styles.appointmentCount}>
-                  {dayAppointments.length}
-                </Text>
-              </View>
-            )}
-          </>
-        )}
-      </TouchableOpacity>
-    );
-  };
-
   const renderTodayTab = () => (
     <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
-      {/* Welcome Banner */}
+      {/* Welcome Banner - Updated text */}
       <View style={styles.welcomeBanner}>
         <LinearGradient
           colors={["#4CAF50", "#45A049"]}
@@ -924,7 +848,7 @@ function DoctorDashboardContent() {
             <View style={styles.welcomeText}>
               <Text style={styles.welcomeTitle}>Good Morning, Dr. {user?.displayName || ''}</Text>
               <Text style={styles.welcomeSubtitle}>You have {upcomingAppointments.length} appointments today</Text>
-              <Text style={styles.clinicWelcome}>Permai Polyclinic Management</Text>
+              <Text style={styles.clinicWelcome}>You have {cancellationStats.pending} requests</Text>
             </View>
             <View style={styles.medicalIcon}>
               <Ionicons name="medical" size={40} color="rgba(255,255,255,0.8)" />
@@ -933,16 +857,13 @@ function DoctorDashboardContent() {
         </LinearGradient>
       </View>
 
-      {/* NEW: Cancellation Requests Section */}
-      {renderCancellationRequestsSection()}
-
-      {/* Statistics Dashboard */}
+      {/* Today's Overview Stats - Optimized */}
       <View style={styles.statsSection}>
         <Text style={styles.sectionTitle}>Today's Overview</Text>
         <View style={styles.statsGrid}>
           <View style={styles.statCard}>
             <View style={styles.statIconContainer}>
-              <Ionicons name="calendar-outline" size={24} color="#4CAF50" />
+              <Ionicons name="calendar-outline" size={20} color="#4CAF50" />
             </View>
             <Text style={styles.statNumber}>{upcomingAppointments.length}</Text>
             <Text style={styles.statLabel}>Appointments</Text>
@@ -950,17 +871,17 @@ function DoctorDashboardContent() {
           
           <View style={styles.statCard}>
             <View style={styles.statIconContainer}>
-              <Ionicons name="medical-outline" size={24} color="#FF9800" />
+              <Ionicons name="medical-outline" size={20} color="#FF9800" />
             </View>
             <Text style={styles.statNumber}>
               {upcomingAppointments.filter(apt => !apt.has_prescription).length}
             </Text>
-            <Text style={styles.statLabel}>Pending Prescriptions</Text>
+            <Text style={styles.statLabel}>Pending Scripts</Text>
           </View>
           
           <View style={styles.statCard}>
             <View style={styles.statIconContainer}>
-              <Ionicons name="people-outline" size={24} color="#2196F3" />
+              <Ionicons name="people-outline" size={20} color="#2196F3" />
             </View>
             <Text style={styles.statNumber}>{allPatients.length}</Text>
             <Text style={styles.statLabel}>Total Patients</Text>
@@ -968,7 +889,7 @@ function DoctorDashboardContent() {
           
           <View style={styles.statCard}>
             <View style={styles.statIconContainer}>
-              <Ionicons name="checkmark-circle-outline" size={24} color="#9C27B0" />
+              <Ionicons name="checkmark-circle-outline" size={20} color="#9C27B0" />
             </View>
             <Text style={styles.statNumber}>
               {allAppointments.filter(apt => apt.has_prescription).length}
@@ -977,6 +898,9 @@ function DoctorDashboardContent() {
           </View>
         </View>
       </View>
+
+      {/* Cancellation Requests Section - Moved below stats */}
+      {renderCancellationRequestsSection()}
       
       {/* Next Appointments Section */}
       <View style={styles.section}>
@@ -1022,7 +946,6 @@ function DoctorDashboardContent() {
                       {appointment.service_name || 'General appointment'}
                     </Text>
                   </View>
-                  {/* NEW: Show cancellation request indicator on appointment cards */}
                   {appointment.cancellation_status && appointment.cancellation_status !== CANCELLATION_STATUS.NONE && (
                     <View style={styles.cancellationRequestIndicator}>
                       <Ionicons 
@@ -1102,7 +1025,7 @@ function DoctorDashboardContent() {
     </ScrollView>
   );
 
-  // OPTIMIZED APPOINTMENTS TAB WITH COMPACT LAYOUT
+  // Enhanced Appointments Tab with Complete Content
   const renderAppointmentsTab = () => (
     <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
       {/* Calendar at the top */}
@@ -1277,6 +1200,7 @@ function DoctorDashboardContent() {
     </ScrollView>
   );
 
+  // Enhanced Patients Tab with Complete Content
   const renderPatientsTab = () => {
     const groupedPatients = {};
     allPatients.forEach((patient, index) => {
@@ -1355,6 +1279,7 @@ function DoctorDashboardContent() {
     );
   };
 
+  // Enhanced Prescriptions Tab with Complete Content
   const renderPrescriptionsTab = () => (
     <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
       <View style={styles.sectionHeader}>
@@ -1423,9 +1348,57 @@ function DoctorDashboardContent() {
     </ScrollView>
   );
 
+  const renderCalendarDay = (day, index) => {
+    const isToday = day && 
+      day === new Date().getDate() && 
+      currentDate.getMonth() === new Date().getMonth() && 
+      currentDate.getFullYear() === new Date().getFullYear();
+    
+    const dayAppointments = day ? getAppointmentsForDay(day) : [];
+    const hasAppointments = dayAppointments.length > 0;
+
+    return (
+      <TouchableOpacity
+        key={index}
+        style={[
+          styles.calendarDay,
+          isToday && styles.calendarDayToday,
+          hasAppointments && styles.calendarDayWithAppointments
+        ]}
+        onPress={() => {
+          if (hasAppointments) {
+            setSelectedDay(day);
+            setSelectedDayAppointments(dayAppointments);
+            setShowAppointmentModal(true);
+          }
+        }}
+        disabled={!hasAppointments}
+      >
+        {day && (
+          <>
+            <Text style={[
+              styles.calendarDayText,
+              isToday && styles.calendarDayTextToday,
+              hasAppointments && styles.calendarDayTextWithAppointments
+            ]}>
+              {day}
+            </Text>
+            {hasAppointments && (
+              <View style={styles.appointmentIndicator}>
+                <Text style={styles.appointmentCount}>
+                  {dayAppointments.length}
+                </Text>
+              </View>
+            )}
+          </>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <View style={styles.container}>
-      {/* Enhanced Header with Polyclinic Logo */}
+      {/* Enhanced Header */}
       <LinearGradient 
         colors={["#1a8e2d", "#146922"]}
         start={{ x: 0, y: 0 }}
@@ -1441,7 +1414,7 @@ function DoctorDashboardContent() {
                 resizeMode="contain"
               />
               <View style={styles.polyclinicText}>
-                <Text style={styles.polyclinicName}>Permai Polyclinic</Text>
+                <Text style={styles.polyclinicName}>Cliniqueasy</Text>
                 <Text style={styles.headerSubtitle}>Management System</Text>
               </View>
             </View>
@@ -1471,7 +1444,7 @@ function DoctorDashboardContent() {
         {activeTab === 'prescriptions' && renderPrescriptionsTab()}
       </View>
       
-      {/* Enhanced Tab Bar with Cancellation Request Badge */}
+      {/* Consistent Tab Bar */}
       <View style={styles.tabBar}>
         <TouchableOpacity 
           style={[styles.tabItem, activeTab === 'appointments' && styles.tabItemActive]}
@@ -1482,10 +1455,14 @@ function DoctorDashboardContent() {
             size={20} 
             color={activeTab === 'appointments' ? '#4CAF50' : '#666'} 
           />
-          <Text style={[styles.tabLabel, activeTab === 'appointments' && styles.tabLabelActive]}>
+          <Text 
+            style={[styles.tabLabel, activeTab === 'appointments' && styles.tabLabelActive]}
+            numberOfLines={1}
+            adjustsFontSizeToFit={true}
+            minimumFontScale={0.8}
+          >
             Appointments
           </Text>
-          {/* NEW: Show cancellation requests badge */}
           {cancellationStats.pending > 0 && (
             <View style={styles.cancellationBadge}>
               <Text style={styles.cancellationBadgeText}>{cancellationStats.pending}</Text>
@@ -1502,22 +1479,34 @@ function DoctorDashboardContent() {
             size={20} 
             color={activeTab === 'prescriptions' ? '#4CAF50' : '#666'} 
           />
-          <Text style={[styles.tabLabel, activeTab === 'prescriptions' && styles.tabLabelActive]}>
+          <Text 
+            style={[styles.tabLabel, activeTab === 'prescriptions' && styles.tabLabelActive]}
+            numberOfLines={1}
+            adjustsFontSizeToFit={true}
+            minimumFontScale={0.8}
+          >
             Prescriptions
           </Text>
         </TouchableOpacity>
         
-        {/* Centered Today Tab */}
+        {/* Dashboard Tab - Now consistent with others */}
         <TouchableOpacity 
-          style={[styles.tabItem, styles.todayTab, activeTab === 'today' && styles.todayTabActive]}
+          style={[styles.tabItem, activeTab === 'today' && styles.tabItemActive]}
           onPress={() => setActiveTab('today')}
         >
           <Ionicons 
             name="home" 
-            size={24} 
-            color="white" 
+            size={20} 
+            color={activeTab === 'today' ? '#4CAF50' : '#666'} 
           />
-          <Text style={styles.todayTabLabel}>Dashboard</Text>
+          <Text 
+            style={[styles.tabLabel, activeTab === 'today' && styles.tabLabelActive]}
+            numberOfLines={1}
+            adjustsFontSizeToFit={true}
+            minimumFontScale={0.8}
+          >
+            Dashboard
+          </Text>
           {upcomingAppointments.filter(apt => !apt.has_prescription).length > 0 && (
             <View style={styles.tabBadge}>
               <Text style={styles.tabBadgeText}>
@@ -1536,7 +1525,12 @@ function DoctorDashboardContent() {
             size={20} 
             color={activeTab === 'patients' ? '#4CAF50' : '#666'} 
           />
-          <Text style={[styles.tabLabel, activeTab === 'patients' && styles.tabLabelActive]}>
+          <Text 
+            style={[styles.tabLabel, activeTab === 'patients' && styles.tabLabelActive]}
+            numberOfLines={1}
+            adjustsFontSizeToFit={true}
+            minimumFontScale={0.8}
+          >
             Patients
           </Text>
         </TouchableOpacity>
@@ -1545,7 +1539,7 @@ function DoctorDashboardContent() {
   );
 }
 
-// Enhanced styles with cancellation request components
+// Enhanced styles with improved design and positioning
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1730,25 +1724,69 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
 
-  // Cancellation Requests
-    cancellationSection: {
+  // Optimized Stats Section
+  statsSection: {
+    marginBottom: 20,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  statCard: {
+    flex: 1,
     backgroundColor: 'white',
-    marginHorizontal: 20,
-    marginBottom: 16, // Reduced from 20
-    borderRadius: 12, // Reduced from 16
-    padding: 12, // Reduced from 16
+    padding: 12,
+    borderRadius: 12,
+    alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 }, // Reduced shadow
-    shadowOpacity: 0.05, // Reduced opacity
-    shadowRadius: 2, // Reduced radius
-    elevation: 2, // Reduced elevation
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+    minHeight: 85,
+  },
+  statIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f8f9fa',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  statNumber: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 2,
+  },
+  statLabel: {
+    fontSize: 10,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 12,
+  },
+
+  // Cancellation Requests - Compact Design
+  cancellationSection: {
+    backgroundColor: 'white',
+    marginHorizontal: 0,
+    marginBottom: 16,
+    borderRadius: 12,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   
   cancellationHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10, // Reduced from 16
+    marginBottom: 10,
   },
   
   cancellationTitleContainer: {
@@ -1758,172 +1796,125 @@ const styles = StyleSheet.create({
   },
   
   cancellationTitle: {
-    fontSize: 15, // Reduced from 16
+    fontSize: 14,
     fontWeight: '600',
     color: '#333',
-    marginLeft: 6, // Reduced from 8
+    marginLeft: 6,
   },
   
   pendingBadge: {
     backgroundColor: '#EF4444',
-    borderRadius: 8, // Reduced from 10
-    paddingHorizontal: 5, // Reduced from 6
-    paddingVertical: 1, // Reduced from 2
-    marginLeft: 6, // Reduced from 8
-    minWidth: 16, // Reduced from 20
+    borderRadius: 8,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    marginLeft: 6,
+    minWidth: 16,
     alignItems: 'center',
   },
   
   pendingBadgeText: {
     color: 'white',
-    fontSize: 10, // Reduced from 11
+    fontSize: 10,
     fontWeight: 'bold',
   },
   
   viewAllRequestsButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3, // Reduced from 4
+    gap: 3,
   },
   
   viewAllRequestsText: {
-    fontSize: 13, // Reduced from 14
+    fontSize: 12,
     fontWeight: '600',
     color: '#F59E0B',
   },
   
-  // Compact stats grid
   cancellationStatsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginBottom: 8, // Reduced from 12
-    paddingVertical: 4, // Added small padding
+    marginBottom: 8,
+    paddingVertical: 4,
   },
   
   cancellationStatItem: {
     alignItems: 'center',
     position: 'relative',
-    paddingVertical: 2, // Added small padding
+    paddingVertical: 2,
   },
   
   cancellationStatNumber: {
-    fontSize: 20, // Reduced from 24
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: 2, // Reduced from 4
+    marginBottom: 2,
   },
   
   cancellationStatLabel: {
-    fontSize: 11, // Reduced from 12
+    fontSize: 10,
     color: '#666',
     fontWeight: '500',
   },
   
   cancellationStatIndicator: {
     position: 'absolute',
-    bottom: -6, // Reduced from -8
-    width: 16, // Reduced from 20
-    height: 2, // Reduced from 3
+    bottom: -6,
+    width: 16,
+    height: 2,
     borderRadius: 1,
   },
   
-  // Compact quick review button
   quickReviewButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F59E0B',
-    paddingVertical: 8, // Reduced from 10
-    paddingHorizontal: 12, // Reduced from 16
-    borderRadius: 6, // Reduced from 8
-    gap: 4, // Reduced from 6
-    marginTop: 4, // Reduced from 8
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    gap: 4,
+    marginTop: 4,
   },
   
   quickReviewText: {
     color: 'white',
-    fontSize: 12, // Reduced from 13
+    fontSize: 11,
     fontWeight: '600',
   },
   
-  // Compact cancellation request indicators on appointment cards
   cancellationRequestIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFF4E6',
-    paddingHorizontal: 4, // Reduced from 6
-    paddingVertical: 1, // Reduced from 2
-    borderRadius: 4, // Reduced from 6
-    marginTop: 3, // Reduced from 4
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginTop: 3,
     alignSelf: 'flex-start',
-    gap: 3, // Reduced from 4
+    gap: 3,
   },
   
   cancellationRequestText: {
-    fontSize: 9, // Reduced from 10
+    fontSize: 9,
     fontWeight: '600',
   },
   
-  // Smaller cancellation badge on tab bar
   cancellationBadge: {
     position: 'absolute',
-    top: 3, // Reduced from 4
-    right: 6, // Reduced from 8
+    top: 3,
+    right: 4,
     backgroundColor: '#F59E0B',
-    borderRadius: 8, // Reduced from 10
-    minWidth: 16, // Reduced from 18
-    height: 16, // Reduced from 18
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
   
   cancellationBadgeText: {
     color: 'white',
-    fontSize: 9, // Reduced from 10
+    fontSize: 9,
     fontWeight: 'bold',
-  },
-  
-  // Stats Section
-  statsSection: {
-    marginBottom: 20,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  statCard: {
-    flex: 1,
-    minWidth: '22%',
-    backgroundColor: 'white',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  statIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f8f9fa',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 11,
-    color: '#666',
-    textAlign: 'center',
   },
 
   content: {
@@ -2061,7 +2052,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // COMPACT APPOINTMENT STYLES
+  // Compact appointment styles from second file
   compactStatsGrid: {
     marginTop: 8,
   },
@@ -2329,6 +2320,173 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
   },
+  calendarDayTextWithAppointments: {
+    color: '#2e7d32',
+    fontWeight: '600',
+  },
+  appointmentIndicator: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 16,
+    height: 16,
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appointmentCount: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  viewFullButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e8f5e8',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    gap: 8,
+  },
+  viewFullButtonText: {
+    color: '#4CAF50',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+
+  // Patient Section Styles
+  patientSection: {
+    marginBottom: 24,
+  },
+  sectionLetter: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    marginBottom: 12,
+    paddingLeft: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4CAF50',
+  },
+  patientCard: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  patientInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  patientAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#4CAF50',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  patientAvatarText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  patientDetails: {
+    flex: 1,
+  },
+  patientMeta: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 2,
+  },
+
+  // Enhanced Prescription Styles
+  prescriptionInfoCard: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  prescriptionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  prescriptionPatientInfo: {
+    flex: 1,
+  },
+  prescriptionPatientName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 4,
+  },
+  prescriptionDate: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 2,
+  },
+  prescriptionService: {
+    fontSize: 14,
+    color: '#4CAF50',
+    fontWeight: '600',
+  },
+  qrCodePlaceholder: {
+    width: 60,
+    height: 60,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+  },
+  prescriptionActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  viewPrescriptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#4CAF50',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  viewPrescriptionText: {
+    color: '#4CAF50',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  shareQRButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#4CAF50',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  shareQRText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
 
   // Appointment Modal Styles
   appointmentModalContent: {
@@ -2503,181 +2661,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#4CAF50',
   },
-  calendarDayTextWithAppointments: {
-    color: '#2e7d32',
-    fontWeight: '600',
-  },
-  appointmentIndicator: {
-    position: 'absolute',
-    bottom: 2,
-    right: 2,
-    width: 16,
-    height: 16,
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  appointmentCount: {
-    color: 'white',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  viewFullButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#e8f5e8',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-    gap: 8,
-  },
-  viewFullButtonText: {
-    color: '#4CAF50',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  patientSection: {
-    marginBottom: 24,
-  },
-  sectionLetter: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-    marginBottom: 12,
-    paddingLeft: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4CAF50',
-  },
-  patientCard: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  patientInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  patientAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#4CAF50',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  patientAvatarText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  patientDetails: {
-    flex: 1,
-  },
-  patientMeta: {
-    color: '#666',
-    fontSize: 12,
-    marginTop: 2,
-  },
 
-  // Enhanced Prescription Styles
-  prescriptionInfoCard: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  prescriptionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  prescriptionPatientInfo: {
-    flex: 1,
-  },
-  prescriptionPatientName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 4,
-  },
-  prescriptionDate: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 2,
-  },
-  prescriptionService: {
-    fontSize: 14,
-    color: '#4CAF50',
-    fontWeight: '600',
-  },
-  qrCodePlaceholder: {
-    width: 60,
-    height: 60,
-    backgroundColor: '#e0e0e0',
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 12,
-  },
-  prescriptionActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  viewPrescriptionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#4CAF50',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-  },
-  viewPrescriptionText: {
-    color: '#4CAF50',
-    fontSize: 12,
-    fontWeight: '600',
-    marginLeft: 4,
-  },
-  shareQRButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#4CAF50',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-  },
-  shareQRText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '600',
-    marginLeft: 4,
-  },
-
-  // Enhanced Tab Bar
+  // Consistent Tab Bar
   tabBar: {
     backgroundColor: 'white',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingVertical: 8,
-    paddingHorizontal: 8,
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.1,
@@ -2688,53 +2681,42 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
     position: 'relative',
+    minWidth: 0,
+    borderRadius: 12,
+    marginHorizontal: 2,
   },
   tabItemActive: {
-    // Active state for regular tabs
-  },
-  todayTab: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 20,
-    marginHorizontal: 8,
-    paddingVertical: 12,
-    transform: [{ translateY: -10 }],
-    shadowColor: '#4CAF50',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
-    position: 'relative',
-  },
-  todayTabActive: {
-    // Today tab is always styled as active
+    backgroundColor: '#E8F5E8',
+    borderRadius: 12,
   },
   tabLabel: {
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: '500',
     color: '#666',
     marginTop: 4,
+    textAlign: 'center',
+    lineHeight: 11,
+    numberOfLines: 1,
+    flexWrap: 'nowrap',
   },
   tabLabelActive: {
     color: '#4CAF50',
-  },
-  todayTabLabel: {
-    fontSize: 12,
     fontWeight: '600',
-    color: 'white',
-    marginTop: 4,
   },
   tabBadge: {
     position: 'absolute',
-    top: 4,
-    right: 16,
+    top: 2,
+    right: 8,
     backgroundColor: '#f44336',
     borderRadius: 10,
     minWidth: 18,
     height: 18,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'white',
   },
   tabBadgeText: {
     color: 'white',

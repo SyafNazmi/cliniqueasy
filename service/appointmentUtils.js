@@ -1,4 +1,4 @@
-// service/appointmentUtils.js - FIXED VERSION MATCHING DATABASE SCHEMA
+// service/appointmentUtils.js - FIXED VERSION with proper subscription management
 import { DatabaseService, Query, RealtimeService } from '../configs/AppwriteConfig';
 import { COLLECTIONS } from '../constants';
 
@@ -12,7 +12,7 @@ export const APPOINTMENT_STATUS = {
   NO_SHOW: 'No Show'
 };
 
-// Cancellation status constants - FIXED to match your schema
+// Cancellation status constants
 export const CANCELLATION_STATUS = {
   NONE: null,
   REQUESTED: 'cancellation_requested',
@@ -25,6 +25,252 @@ export class EnhancedAppointmentManager {
     this.subscriptions = new Map();
     this.listeners = new Map();
     this.isDestroyed = false;
+    this.activeCallbacks = new Map(); // Track active callbacks to prevent duplicates
+  }
+
+  // FIXED: Enhanced subscription method with deduplication
+  subscribeToAppointments(callback, options = {}) {
+    if (this.isDestroyed) {
+      console.warn('AppointmentManager is destroyed, cannot create new subscriptions');
+      return null;
+    }
+
+    try {
+      // Create a unique subscription key based on options
+      const subscriptionKey = `appointments_${JSON.stringify(options)}_${Date.now()}`;
+      
+      // Check if we already have an identical subscription
+      if (this.subscriptions.has(subscriptionKey)) {
+        console.log('Subscription already exists, cleaning up first:', subscriptionKey);
+        this.unsubscribe(subscriptionKey);
+      }
+
+      console.log('Creating appointment subscription with key:', subscriptionKey);
+
+      // Create a wrapper callback to prevent duplicate processing
+      let lastProcessedTimestamp = 0;
+      const DEBOUNCE_DELAY = 200; // Increased debounce delay
+
+      const wrappedCallback = (response) => {
+        if (this.isDestroyed) {
+          console.log('Manager destroyed, ignoring realtime event');
+          return;
+        }
+
+        try {
+          const currentTime = Date.now();
+          
+          // Debounce rapid consecutive calls
+          if (currentTime - lastProcessedTimestamp < DEBOUNCE_DELAY) {
+            console.log('Debouncing appointment callback');
+            return;
+          }
+          
+          lastProcessedTimestamp = currentTime;
+
+          console.log('Processing appointment realtime event:', response);
+          
+          const { events, payload, timestamp } = response;
+          
+          if (!events || !Array.isArray(events) || events.length === 0) {
+            console.log('No valid events in appointment response');
+            return;
+          }
+
+          // Create a unique event identifier to prevent duplicate processing
+          const eventId = `${payload?.$id || 'unknown'}_${timestamp || currentTime}_${events.join('_')}`;
+          
+          if (this.activeCallbacks.has(eventId)) {
+            console.log('Duplicate event detected, skipping:', eventId);
+            return;
+          }
+
+          // Mark this event as being processed
+          this.activeCallbacks.set(eventId, currentTime);
+          
+          // Clean up old event IDs (keep only last 10)
+          if (this.activeCallbacks.size > 10) {
+            const entries = Array.from(this.activeCallbacks.entries());
+            entries.slice(0, -10).forEach(([key]) => {
+              this.activeCallbacks.delete(key);
+            });
+          }
+
+          const eventString = events.join(' ').toLowerCase();
+          console.log('Event string:', eventString);
+          
+          let eventType = 'unknown';
+          let message = 'Appointment updated';
+          
+          if (eventString.includes('create')) {
+            eventType = 'created';
+            message = `New appointment created: ${payload?.status || 'Unknown status'}`;
+          } else if (eventString.includes('update')) {
+            eventType = 'updated';
+            const updateType = this.detectUpdateType(payload);
+            message = this.getUpdateMessage(updateType, payload);
+          } else if (eventString.includes('delete')) {
+            eventType = 'deleted';
+            message = 'Appointment deleted';
+          }
+          
+          const processedEvent = {
+            type: eventType,
+            appointment: payload,
+            updateType: eventType === 'updated' ? this.detectUpdateType(payload) : null,
+            message: message,
+            timestamp: currentTime,
+            eventId: eventId
+          };
+          
+          console.log('Calling callback with processed event:', processedEvent);
+          
+          // Use setTimeout to ensure callback runs asynchronously
+          setTimeout(() => {
+            try {
+              callback(processedEvent);
+            } catch (callbackError) {
+              console.error('Error in appointment callback:', callbackError);
+            }
+          }, 0);
+          
+        } catch (eventError) {
+          console.error('Error processing appointment realtime event:', eventError);
+          
+          setTimeout(() => {
+            try {
+              callback({
+                type: 'error',
+                appointment: null,
+                message: 'Error processing realtime update',
+                error: eventError.message,
+                timestamp: Date.now()
+              });
+            } catch (callbackError) {
+              console.error('Error calling error callback:', callbackError);
+            }
+          }, 0);
+        }
+      };
+
+      // Use the fixed RealtimeService from the config
+      const subscriptionResult = RealtimeService.subscribeToCollection(
+        COLLECTIONS.APPOINTMENTS,
+        wrappedCallback,
+        subscriptionKey // Pass subscription ID for tracking
+      );
+
+      if (subscriptionResult && subscriptionResult.unsubscribe) {
+        this.subscriptions.set(subscriptionKey, subscriptionResult.unsubscribe);
+        console.log('Successfully subscribed to appointments with ID:', subscriptionResult.subscriptionId);
+        return subscriptionKey;
+      } else {
+        console.warn('Failed to create appointment subscription - no unsubscribe function returned');
+        return null;
+      }
+      
+    } catch (error) {
+      console.error('Error setting up appointment subscription:', error);
+      return null;
+    }
+  }
+
+  // FIXED: Enhanced specific appointment subscription
+  subscribeToAppointment(appointmentId, callback) {
+    if (this.isDestroyed) {
+      console.warn('AppointmentManager is destroyed, cannot create new subscriptions');
+      return null;
+    }
+
+    try {
+      const subscriptionKey = `appointment_${appointmentId}_${Date.now()}`;
+      
+      if (this.subscriptions.has(subscriptionKey)) {
+        console.log('Specific appointment subscription exists, cleaning up first');
+        this.unsubscribe(subscriptionKey);
+      }
+
+      console.log('Creating specific appointment subscription:', appointmentId);
+
+      let lastProcessedTimestamp = 0;
+      const DEBOUNCE_DELAY = 150;
+
+      const wrappedCallback = (response) => {
+        if (this.isDestroyed) {
+          return;
+        }
+
+        try {
+          const currentTime = Date.now();
+          
+          if (currentTime - lastProcessedTimestamp < DEBOUNCE_DELAY) {
+            console.log('Debouncing specific appointment callback');
+            return;
+          }
+          
+          lastProcessedTimestamp = currentTime;
+
+          console.log('Specific appointment update:', response);
+          
+          const { events, payload } = response;
+          
+          if (events && Array.isArray(events) && events.length > 0) {
+            const eventString = events.join(' ').toLowerCase();
+            const updateType = this.detectUpdateType(payload);
+            
+            const processedEvent = {
+              type: eventString.includes('update') ? 'updated' : 'general',
+              appointment: payload,
+              updateType: updateType,
+              message: this.getUpdateMessage(updateType, payload),
+              timestamp: currentTime
+            };
+
+            setTimeout(() => {
+              try {
+                callback(processedEvent);
+              } catch (callbackError) {
+                console.error('Error in specific appointment callback:', callbackError);
+              }
+            }, 0);
+          }
+        } catch (eventError) {
+          console.error('Error processing specific appointment event:', eventError);
+          
+          setTimeout(() => {
+            try {
+              callback({
+                type: 'error',
+                appointment: null,
+                message: 'Error processing appointment update',
+                error: eventError.message,
+                timestamp: Date.now()
+              });
+            } catch (callbackError) {
+              console.error('Error calling appointment error callback:', callbackError);
+            }
+          }, 0);
+        }
+      };
+
+      const subscriptionResult = RealtimeService.subscribeToDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId,
+        wrappedCallback,
+        subscriptionKey
+      );
+
+      if (subscriptionResult && subscriptionResult.unsubscribe) {
+        this.subscriptions.set(subscriptionKey, subscriptionResult.unsubscribe);
+        console.log('Successfully subscribed to appointment:', appointmentId);
+        return subscriptionKey;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error subscribing to specific appointment:', error);
+      return null;
+    }
   }
 
   // Get pending cancellation requests count for doctor dashboard
@@ -32,7 +278,6 @@ export class EnhancedAppointmentManager {
     try {
       let queries = [Query.equal('cancellation_status', CANCELLATION_STATUS.REQUESTED)];
       
-      // If doctorId provided, filter by doctor
       if (doctorId) {
         queries.push(Query.equal('doctor_id', doctorId));
       }
@@ -56,7 +301,6 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'Appointment ID is required' };
       }
 
-      // Get current appointment
       const currentAppointment = await DatabaseService.getDocument(
         COLLECTIONS.APPOINTMENTS,
         appointmentId
@@ -78,7 +322,6 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'Cancellation request already exists' };
       }
 
-      // Request cancellation - FIXED: Only use existing fields
       const updateData = {
         cancellation_status: CANCELLATION_STATUS.REQUESTED,
         cancellation_reason: reason,
@@ -106,7 +349,6 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'Appointment ID is required' };
       }
 
-      // Get current appointment
       const currentAppointment = await DatabaseService.getDocument(
         COLLECTIONS.APPOINTMENTS,
         appointmentId
@@ -120,7 +362,6 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'No pending cancellation request found' };
       }
 
-      // Remove cancellation request - FIXED: Only use existing fields
       const updateData = {
         cancellation_status: CANCELLATION_STATUS.NONE,
         cancellation_reason: null,
@@ -141,14 +382,13 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // Approve cancellation request (Doctor side) - FIXED
+  // Approve cancellation request (Doctor side)
   async approveCancellationRequest(appointmentId, reviewedBy = 'doctor') {
     try {
       if (!appointmentId) {
         return { success: false, error: 'Appointment ID is required' };
       }
 
-      // Get current appointment
       const currentAppointment = await DatabaseService.getDocument(
         COLLECTIONS.APPOINTMENTS,
         appointmentId
@@ -162,14 +402,12 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'No pending cancellation request found' };
       }
 
-      // Approve cancellation and cancel appointment - FIXED: Only use existing fields
       const updateData = {
         status: APPOINTMENT_STATUS.CANCELLED,
         cancellation_status: CANCELLATION_STATUS.APPROVED,
         cancellation_reviewed_at: new Date().toISOString(),
         cancellation_reviewed_by: reviewedBy,
         cancellation_approved_at: new Date().toISOString()
-        // REMOVED: cancelled_at and cancelled_by (don't exist in schema)
       };
 
       const result = await DatabaseService.updateDocument(
@@ -185,7 +423,7 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // Deny cancellation request (Doctor side) - FIXED
+  // Deny cancellation request (Doctor side)
   async denyCancellationRequest(appointmentId, denialReason = '', reviewedBy = 'doctor') {
     try {
       if (!appointmentId) {
@@ -196,7 +434,6 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'Denial reason is required' };
       }
 
-      // Get current appointment
       const currentAppointment = await DatabaseService.getDocument(
         COLLECTIONS.APPOINTMENTS,
         appointmentId
@@ -210,7 +447,6 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'No pending cancellation request found' };
       }
 
-      // Deny cancellation - FIXED: Only use existing fields
       const updateData = {
         cancellation_status: CANCELLATION_STATUS.DENIED,
         cancellation_reviewed_at: new Date().toISOString(),
@@ -235,16 +471,15 @@ export class EnhancedAppointmentManager {
   async getCancellationRequests(options = {}) {
     try {
       const {
-        status = 'all', // 'pending', 'approved', 'denied', 'all'
+        status = 'all',
         doctorId = null,
         limit = 100,
         offset = 0,
-        sortBy = 'desc' // 'asc' or 'desc'
+        sortBy = 'desc'
       } = options;
 
       let queries = [];
 
-      // Filter by cancellation status
       if (status === 'pending') {
         queries.push(Query.equal('cancellation_status', CANCELLATION_STATUS.REQUESTED));
       } else if (status === 'approved') {
@@ -252,7 +487,6 @@ export class EnhancedAppointmentManager {
       } else if (status === 'denied') {
         queries.push(Query.equal('cancellation_status', CANCELLATION_STATUS.DENIED));
       } else if (status === 'all') {
-        // Use Query.or for multiple conditions - FIXED
         queries.push(
           Query.or([
             Query.equal('cancellation_status', CANCELLATION_STATUS.REQUESTED),
@@ -262,19 +496,16 @@ export class EnhancedAppointmentManager {
         );
       }
 
-      // Filter by doctor
       if (doctorId) {
         queries.push(Query.equal('doctor_id', doctorId));
       }
 
-      // Add ordering
       if (sortBy === 'desc') {
         queries.push(Query.orderDesc('cancellation_requested_at'));
       } else {
         queries.push(Query.orderAsc('cancellation_requested_at'));
       }
 
-      // Add pagination
       queries.push(Query.limit(limit));
       if (offset > 0) {
         queries.push(Query.offset(offset));
@@ -306,7 +537,7 @@ export class EnhancedAppointmentManager {
       const queries = [
         Query.equal('doctor_id', doctorId),
         Query.equal('date', formattedDate),
-        Query.notEqual('status', APPOINTMENT_STATUS.CANCELLED) // Exclude cancelled appointments
+        Query.notEqual('status', APPOINTMENT_STATUS.CANCELLED)
       ];
 
       if (excludeAppointmentId) {
@@ -385,12 +616,7 @@ export class EnhancedAppointmentManager {
     return '';
   }
 
-  // Helper method to format date for display
-  formatDateForDisplay(date) {
-    return this.formatDateForQuery(date);
-  }
-
-  // Enhanced reschedule method - FIXED
+  // Enhanced reschedule method
   async rescheduleAppointment(appointmentId, newDate, newTimeSlot, reason = '') {
     try {
       if (!appointmentId || !newDate || !newTimeSlot) {
@@ -414,7 +640,6 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'Cannot reschedule a completed appointment' };
       }
 
-      // Check if there's a pending cancellation request
       if (currentAppointment.cancellation_status === CANCELLATION_STATUS.REQUESTED) {
         return { success: false, error: 'Cannot reschedule while cancellation request is pending' };
       }
@@ -432,7 +657,6 @@ export class EnhancedAppointmentManager {
 
       const formattedNewDate = this.formatDateForQuery(newDate);
 
-      // FIXED: Only use existing fields
       const updateData = {
         date: formattedNewDate,
         time_slot: newTimeSlot,
@@ -458,179 +682,11 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // Subscribe to real-time appointment updates with cancellation support
-  subscribeToAppointments(callback, options = {}) {
-    if (this.isDestroyed) {
-      console.warn('AppointmentManager is destroyed, cannot create new subscriptions');
-      return null;
-    }
-
-    try {
-      const subscriptionKey = `appointments_${JSON.stringify(options)}_${Date.now()}`;
-      
-      if (this.subscriptions.has(subscriptionKey)) {
-        this.unsubscribe(subscriptionKey);
-      }
-
-      console.log('Creating appointment subscription with key:', subscriptionKey);
-
-      const unsubscribe = RealtimeService.subscribeToCollection(
-        COLLECTIONS.APPOINTMENTS,
-        (response) => {
-          if (this.isDestroyed) {
-            console.log('Manager destroyed, ignoring realtime event');
-            return;
-          }
-
-          try {
-            console.log('Processing appointment realtime event:', response);
-            
-            const { events, payload } = response;
-            
-            if (!events || !Array.isArray(events) || events.length === 0) {
-              console.log('No valid events in appointment response');
-              return;
-            }
-
-            const eventString = events.join(' ').toLowerCase();
-            console.log('Event string:', eventString);
-            
-            let eventType = 'unknown';
-            let message = 'Appointment updated';
-            
-            if (eventString.includes('create') || eventString.includes('.create')) {
-              eventType = 'created';
-              message = `New appointment created: ${payload?.status || 'Unknown status'}`;
-            } else if (eventString.includes('update') || eventString.includes('.update')) {
-              eventType = 'updated';
-              const updateType = this.detectUpdateType(payload);
-              message = this.getUpdateMessage(updateType, payload);
-            } else if (eventString.includes('delete') || eventString.includes('.delete')) {
-              eventType = 'deleted';
-              message = 'Appointment deleted';
-            }
-            
-            const processedEvent = {
-              type: eventType,
-              appointment: payload,
-              updateType: eventType === 'updated' ? this.detectUpdateType(payload) : null,
-              message: message,
-              timestamp: response.timestamp || Date.now()
-            };
-            
-            console.log('Calling callback with processed event:', processedEvent);
-            callback(processedEvent);
-            
-          } catch (eventError) {
-            console.error('Error processing appointment realtime event:', eventError);
-            console.error('Event data that caused error:', { events, payload });
-            
-            try {
-              callback({
-                type: 'error',
-                appointment: null,
-                message: 'Error processing realtime update',
-                error: eventError.message
-              });
-            } catch (callbackError) {
-              console.error('Error calling error callback:', callbackError);
-            }
-          }
-        }
-      );
-
-      if (unsubscribe) {
-        this.subscriptions.set(subscriptionKey, unsubscribe);
-        console.log('Successfully subscribed to appointments');
-        return subscriptionKey;
-      } else {
-        console.warn('Failed to create appointment subscription');
-        return null;
-      }
-      
-    } catch (error) {
-      console.error('Error setting up appointment subscription:', error);
-      return null;
-    }
-  }
-
-  // Subscribe to specific appointment changes
-  subscribeToAppointment(appointmentId, callback) {
-    if (this.isDestroyed) {
-      console.warn('AppointmentManager is destroyed, cannot create new subscriptions');
-      return null;
-    }
-
-    try {
-      const subscriptionKey = `appointment_${appointmentId}_${Date.now()}`;
-      
-      if (this.subscriptions.has(subscriptionKey)) {
-        this.unsubscribe(subscriptionKey);
-      }
-
-      console.log('Creating specific appointment subscription:', appointmentId);
-
-      const unsubscribe = RealtimeService.subscribeToDocument(
-        COLLECTIONS.APPOINTMENTS,
-        appointmentId,
-        (response) => {
-          if (this.isDestroyed) {
-            return;
-          }
-
-          try {
-            console.log('Specific appointment update:', response);
-            
-            const { events, payload } = response;
-            
-            if (events && Array.isArray(events) && events.length > 0) {
-              const eventString = events.join(' ').toLowerCase();
-              const updateType = this.detectUpdateType(payload);
-              
-              callback({
-                type: eventString.includes('update') ? 'updated' : 'general',
-                appointment: payload,
-                updateType: updateType,
-                message: this.getUpdateMessage(updateType, payload),
-                timestamp: response.timestamp || Date.now()
-              });
-            }
-          } catch (eventError) {
-            console.error('Error processing specific appointment event:', eventError);
-            
-            try {
-              callback({
-                type: 'error',
-                appointment: null,
-                message: 'Error processing appointment update',
-                error: eventError.message
-              });
-            } catch (callbackError) {
-              console.error('Error calling appointment error callback:', callbackError);
-            }
-          }
-        }
-      );
-
-      if (unsubscribe) {
-        this.subscriptions.set(subscriptionKey, unsubscribe);
-        console.log('Successfully subscribed to appointment:', appointmentId);
-        return subscriptionKey;
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('Error subscribing to specific appointment:', error);
-      return null;
-    }
-  }
-
   // Detect update type including cancellation requests
   detectUpdateType(appointment) {
     if (!appointment) return 'general_update';
     
     try {
-      // Check for cancellation-related updates first
       if (appointment.cancellation_status === CANCELLATION_STATUS.REQUESTED) {
         return 'cancellation_requested';
       } else if (appointment.cancellation_status === CANCELLATION_STATUS.APPROVED) {
@@ -639,7 +695,6 @@ export class EnhancedAppointmentManager {
         return 'cancellation_denied';
       }
       
-      // Check for status updates
       if (appointment.status === APPOINTMENT_STATUS.CANCELLED) {
         return 'cancelled';
       } else if (appointment.rescheduled_at) {
@@ -712,7 +767,7 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // Enhanced cancellation - FIXED: Only use existing fields
+  // Enhanced cancellation
   async cancelAppointment(appointmentId, reason = '', cancelledBy = 'patient') {
     try {
       if (!appointmentId) {
@@ -736,11 +791,9 @@ export class EnhancedAppointmentManager {
         return { success: false, error: 'Cannot cancel a completed appointment' };
       }
 
-      // FIXED: Only use existing fields
       const updateData = {
         status: APPOINTMENT_STATUS.CANCELLED,
         cancellation_reason: reason
-        // REMOVED: cancelled_at and cancelled_by (don't exist in schema)
       };
 
       const result = await DatabaseService.updateDocument(
@@ -756,7 +809,7 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // Cleanup method
+  // FIXED: Enhanced cleanup method
   cleanup() {
     console.log('Cleaning up appointment manager...');
     this.isDestroyed = true;
@@ -776,11 +829,12 @@ export class EnhancedAppointmentManager {
     
     this.subscriptions.clear();
     this.listeners.clear();
+    this.activeCallbacks.clear(); // Clear callback tracking
     
     console.log(`Successfully cleaned up ${cleanupCount} subscriptions`);
   }
 
-  // Unsubscribe method
+  // FIXED: Enhanced unsubscribe method
   unsubscribe(subscriptionKey) {
     const unsubscribe = this.subscriptions.get(subscriptionKey);
     if (unsubscribe) {
@@ -797,6 +851,16 @@ export class EnhancedAppointmentManager {
       }
     }
     return false;
+  }
+
+  // ADDED: Method to get active subscription count for debugging
+  getActiveSubscriptionCount() {
+    return this.subscriptions.size;
+  }
+
+  // ADDED: Method to list all active subscriptions for debugging
+  listActiveSubscriptions() {
+    return Array.from(this.subscriptions.keys());
   }
 }
 

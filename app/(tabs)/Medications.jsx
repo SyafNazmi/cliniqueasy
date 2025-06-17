@@ -253,6 +253,62 @@ export default function Medications() {
       }, [loadMedicationData])
     );
 
+    const saveTimeChanges = async () => {
+      try {
+        setSaving(true);
+
+        if (editingTimes.length === 0) {
+          Alert.alert('Error', 'Please add at least one reminder time');
+          return;
+        }
+
+        // Create updated medication object
+        const updatedMedication = {
+          ...selectedMedication,
+          times: editingTimes
+        };
+
+        console.log('Saving updated medication:', updatedMedication);
+
+        // FIX: Call updateMedication with just the medication object
+        await updateMedication(updatedMedication);
+
+        // Handle reminders properly
+        if (selectedMedication.reminderEnabled) {
+          // Cancel existing reminders first
+          await cancelMedicationReminder(selectedMedication.id);
+          // Schedule new reminders with updated times
+          await scheduleMedicationReminder(updatedMedication);
+        }
+
+        // Update local state immediately
+        setMedications(prevMeds => 
+          prevMeds.map(med => 
+            med.id === selectedMedication.id ? updatedMedication : med
+          )
+        );
+
+        // Close modal
+        setShowTimeEditor(false);
+        
+        const isPrescription = selectedMedication.isPrescription;
+        Alert.alert(
+          'Success! ⏰',
+          `Medication times updated successfully!\n\n${isPrescription ? '🔒 Note: This is a prescription medication. Only times can be customized.' : ''}`,
+          [{ text: 'OK' }]
+        );
+
+        // Optional: Reload medications from storage to ensure consistency
+        await loadMedications();
+
+      } catch (error) {
+        console.error('Error saving time changes:', error);
+        Alert.alert('Error', 'Failed to save time changes. Please try again.');
+      } finally {
+        setSaving(false);
+      }
+    };
+
     const handleTakeDose = async (medication, timeIndex = 0) => {
       try {
         // Create a dose ID that includes the time index

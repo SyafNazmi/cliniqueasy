@@ -171,17 +171,41 @@ export async function addMedication(medication) {
 }
 
 // Similar updates for updateMedication and deleteMedication
-export async function updateMedication(updatedMedication) {
+export async function updateMedication(medicationIdOrObject, updatedMedicationData = null) {
   try {
     const userDetail = await getLocalStorage('userDetail');
     const userId = userDetail?.uid || 'anonymous';
     
     const userMedicationsKey = `${USER_PREFIX}${userId}_${MEDICATIONS_KEY}`;
     const medications = await getMedications();
-    const index = medications.findIndex((med) => med.id === updatedMedication.id);
+    
+    let updatedMedication;
+    let medicationId;
+    
+    // Handle both calling patterns:
+    // updateMedication(medicationObject) - new pattern
+    // updateMedication(id, medicationObject) - old pattern
+    if (typeof medicationIdOrObject === 'object' && medicationIdOrObject.id) {
+      // New pattern: first parameter is the medication object
+      updatedMedication = medicationIdOrObject;
+      medicationId = medicationIdOrObject.id;
+    } else if (typeof medicationIdOrObject === 'string' && updatedMedicationData) {
+      // Old pattern: first parameter is ID, second is medication object
+      medicationId = medicationIdOrObject;
+      updatedMedication = updatedMedicationData;
+    } else {
+      throw new Error('Invalid parameters for updateMedication');
+    }
+    
+    console.log('Updating medication:', medicationId, updatedMedication);
+    
+    const index = medications.findIndex((med) => med.id === medicationId);
     if (index !== -1) {
       medications[index] = updatedMedication;
       await setLocalStorage(userMedicationsKey, medications);
+      console.log('Medication updated successfully in storage');
+    } else {
+      throw new Error(`Medication with ID ${medicationId} not found`);
     }
   } catch (error) {
     console.error("Error updating medication:", error);
