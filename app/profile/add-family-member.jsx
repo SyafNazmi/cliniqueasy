@@ -1,3 +1,4 @@
+// app/profile/add-family-member.jsx - Enhanced with Malaysian phone validation and proper emergency contact mapping
 import { 
   View, 
   Text, 
@@ -15,8 +16,141 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { DatabaseService, account } from '@/configs/AppwriteConfig';
-import { COLLECTIONS } from '@/constants';
+import { DatabaseService, account, Query } from '@/configs/AppwriteConfig';
+import { COLLECTIONS, PROFILE_TYPES } from '@/constants';
+
+// Malaysian Phone Number Input Component
+const MalaysianPhoneInput = ({ 
+  label, 
+  value, 
+  onChangeText, 
+  isRequired = false 
+}) => {
+  const [displayValue, setDisplayValue] = useState(value || '');
+  const [isValid, setIsValid] = useState(true);
+
+  // Malaysian mobile prefixes
+  const validPrefixes = ['010', '011', '012', '013', '014', '015', '016', '017', '018', '019'];
+  
+  const formatMalaysianPhone = (input) => {
+    // Remove all non-digits
+    let numbers = input.replace(/\D/g, '');
+    
+    // Handle different input scenarios
+    if (numbers.startsWith('60')) {
+      // Remove country code if user typed it
+      numbers = numbers.substring(2);
+    }
+    
+    if (numbers.startsWith('0')) {
+      // Remove leading 0 for formatting
+      numbers = numbers.substring(1);
+    }
+    
+    // Limit to 9 digits after removing 0 (Malaysian mobile without 0 prefix)
+    if (numbers.length > 9) {
+      numbers = numbers.substring(0, 9);
+    }
+    
+    let formatted = '';
+    
+    if (numbers.length > 0) {
+      // Add first part (2 digits)
+      formatted = numbers.substring(0, 2);
+      
+      if (numbers.length > 2) {
+        // Add hyphen and next 3 digits
+        formatted += '-' + numbers.substring(2, 5);
+        
+        if (numbers.length > 5) {
+          // Add space and last 4 digits
+          formatted += ' ' + numbers.substring(5);
+        }
+      }
+      
+      // Add back the 0 prefix for display
+      formatted = '0' + formatted;
+    }
+    
+    return formatted;
+  };
+  
+  const validateMalaysianPhone = (phone) => {
+    // Remove formatting for validation
+    const numbers = phone.replace(/\D/g, '');
+    
+    if (numbers.length === 0) return true; // Allow empty
+    
+    // Check if it's 10 or 11 digits (01X-XXXX XXXX format)
+    if (numbers.length < 10 || numbers.length > 11) return false;
+    
+    // Check if starts with valid Malaysian mobile prefix
+    const prefix = numbers.substring(0, 3);
+    return validPrefixes.includes(prefix);
+  };
+  
+  const handleChange = (input) => {
+    const formatted = formatMalaysianPhone(input);
+    const valid = validateMalaysianPhone(formatted);
+    
+    setDisplayValue(formatted);
+    setIsValid(valid);
+    
+    // Return cleaned number for storage (with +60 prefix)
+    if (formatted) {
+      const cleanNumbers = formatted.replace(/\D/g, '');
+      const withCountryCode = '+60' + cleanNumbers.substring(1); // Remove 0 and add +60
+      onChangeText(withCountryCode);
+    } else {
+      onChangeText('');
+    }
+  };
+
+  // Format existing value on component mount
+  useEffect(() => {
+    if (value) {
+      let phoneToFormat = value;
+      // Remove +60 prefix for display formatting
+      if (phoneToFormat.startsWith('+60')) {
+        phoneToFormat = '0' + phoneToFormat.substring(3);
+      }
+      const formatted = formatMalaysianPhone(phoneToFormat);
+      setDisplayValue(formatted);
+      setIsValid(validateMalaysianPhone(formatted));
+    }
+  }, [value]);
+
+  return (
+    <View style={styles.inputContainer}>
+      <Text style={styles.inputLabel}>
+        {label} {isRequired && <Text style={styles.required}>*</Text>}
+      </Text>
+      <View style={styles.phoneInputContainer}>
+        <Text style={styles.countryCode}>🇲🇾 +60</Text>
+        <TextInput
+          style={[
+            styles.phoneInput,
+            !isValid && displayValue.length > 0 && styles.invalidInput
+          ]}
+          value={displayValue}
+          onChangeText={handleChange}
+          placeholder="12-345 6789"
+          placeholderTextColor="#999"
+          keyboardType="phone-pad"
+          maxLength={12} // 01X-XXX XXXX format
+        />
+      </View>
+      {!isValid && displayValue.length > 0 && (
+        <Text style={styles.errorText}>
+          Please enter a valid Malaysian mobile number (e.g., 012-345 6789)
+        </Text>
+      )}
+      <Text style={styles.helperText}>
+        Supported: Celcom, Digi, Maxis, U Mobile, etc.
+      </Text>
+    </View>
+  );
+};
 
 // Dropdown Component
 const DropdownPicker = ({ 
@@ -192,12 +326,13 @@ export default function AddFamilyMember() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+  const [ownerProfile, setOwnerProfile] = useState(null);
 
-  // Dropdown options
+  // FIXED: Dropdown options with correct values that match database enum
   const genderOptions = [
-  { label: 'Male', value: 'male' },     // Display "Male" but save "male"
-  { label: 'Female', value: 'female' }, // Display "Female" but save "female"
-];;
+    { label: 'Male', value: 'Male' },       // Fixed: now matches database enum
+    { label: 'Female', value: 'Female' }   // Fixed: now matches database enum
+  ];
 
   const bloodTypeOptions = [
     { label: 'A+', value: 'A+' },
@@ -247,6 +382,9 @@ export default function AddFamilyMember() {
       const user = await account.get();
       setCurrentUser(user);
 
+      // Load owner profile for emergency contact mapping
+      await loadOwnerProfile(user.$id);
+
       if (isEditing) {
         await loadMemberData();
       }
@@ -257,6 +395,37 @@ export default function AddFamilyMember() {
         text1: 'Error',
         text2: 'Failed to load data.',
       });
+    }
+  };
+
+  // Load owner profile to use as emergency contact
+  const loadOwnerProfile = async (userId) => {
+    try {
+      const response = await DatabaseService.listDocuments(
+        COLLECTIONS.PATIENT_PROFILES,
+        [
+          Query.equal('userId', userId),
+          Query.equal('profileType', PROFILE_TYPES.OWNER)
+        ],
+        1
+      );
+      
+      if (response.documents.length > 0) {
+        const owner = response.documents[0];
+        setOwnerProfile(owner);
+        
+        // Auto-fill emergency contact with owner's information if not editing
+        if (!isEditing) {
+          setFormData(prev => ({
+            ...prev,
+            emergencyContactName: owner.fullName || '',
+            emergencyContactNumber: owner.phoneNumber || '',
+            emergencyContactRelationship: 'Parent' // Default relationship, read-only
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Error loading owner profile:', error);
     }
   };
 
@@ -353,81 +522,95 @@ export default function AddFamilyMember() {
       return false;
     }
 
+    // Malaysian phone number validation (only for main phone, emergency contact is auto-filled)
+    if (formData.phoneNumber) {
+      const phoneRegex = /^\+60(10|11|12|13|14|15|16|17|18|19)\d{7,8}$/;
+      if (!phoneRegex.test(formData.phoneNumber)) {
+        Toast.show({
+          type: 'error',
+          text1: 'Validation Error',
+          text2: 'Please enter a valid Malaysian mobile number.',
+        });
+        return false;
+      }
+    }
+
     return true;
   };
 
   const handleSubmit = async () => {
-  if (!validateForm()) return;
+    if (!validateForm()) return;
 
-  try {
-    setIsLoading(true);
+    try {
+      setIsLoading(true);
 
-    // Remove createdAt and updatedAt fields since they don't exist in your database schema
-    const memberData = {
-      fullName: formData.fullName,
-      email: formData.email,
-      phoneNumber: formData.phoneNumber,
-      gender: formData.gender,
-      birthDate: formData.birthDate,
-      age: formData.age,
-      address: formData.address,
-      bloodType: formData.bloodType ? [formData.bloodType] : [],
-      allergies: formData.allergies,
-      currentMedication: formData.currentMedication,
-      familyMedicalHistory: formData.familyMedicalHistory,
-      pastMedicalHistory: formData.pastMedicalHistory,
-      emergencyContactName: formData.emergencyContactName,
-      emergencyContactNumber: formData.emergencyContactNumber,
-      emergencyContactRelationship: formData.emergencyContactRelationship 
-        ? [formData.emergencyContactRelationship] 
-        : [],
-      insuranceProvider: formData.insuranceProvider,
-      insurancePolicyNumber: formData.insurancePolicyNumber,
-      identificationType: formData.identificationType,
-      identificationNumber: formData.identificationNumber,
-      // Add userId to link this profile to the current user
-      userId: currentUser.$id,
-      // Remove createdAt and updatedAt - these don't exist in your schema
-      // If you need timestamps, you'll need to add them as attributes in Appwrite console first
-    };
+      // Prepare member data with correct structure and profile type
+      const memberData = {
+        fullName: formData.fullName,
+        email: formData.email,
+        phoneNumber: formData.phoneNumber,
+        gender: formData.gender,
+        birthDate: formData.birthDate,
+        age: formData.age,
+        address: formData.address,
+        bloodType: formData.bloodType ? [formData.bloodType] : [],
+        allergies: formData.allergies,
+        currentMedication: formData.currentMedication,
+        familyMedicalHistory: formData.familyMedicalHistory,
+        pastMedicalHistory: formData.pastMedicalHistory,
+        emergencyContactName: formData.emergencyContactName,
+        emergencyContactNumber: formData.emergencyContactNumber,
+        emergencyContactRelationship: formData.emergencyContactRelationship 
+          ? [formData.emergencyContactRelationship] 
+          : [],
+        insuranceProvider: formData.insuranceProvider,
+        insurancePolicyNumber: formData.insurancePolicyNumber,
+        identificationType: formData.identificationType,
+        identificationNumber: formData.identificationNumber,
+        identificationDocumentId: '', // Add this field
+        userId: currentUser.$id, // Link to the owner user
+        profileType: PROFILE_TYPES.FAMILY_MEMBER // Set as family member
+      };
 
-    if (isEditing) {
-      await DatabaseService.updateDocument(
-        COLLECTIONS.PATIENT_PROFILES,
-        editMemberId,
-        memberData
-      );
-      
-      Toast.show({
-        type: 'success',
-        text1: 'Success',
-        text2: 'Family member updated successfully!',
-      });
-    } else {
-      await DatabaseService.createDocument(
-        COLLECTIONS.PATIENT_PROFILES,
-        memberData
-      );
-      
-      Toast.show({
-        type: 'success',
-        text1: 'Success',
-        text2: 'Family member added successfully!',
-      });
-    }
+      console.log('Saving family member data:', memberData);
 
-    router.back();
-    } catch (error) {
-        console.error('Error saving family member:', error);
+      if (isEditing) {
+        await DatabaseService.updateDocument(
+          COLLECTIONS.PATIENT_PROFILES,
+          editMemberId,
+          memberData
+        );
+        
         Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Family member updated successfully!',
+        });
+      } else {
+        await DatabaseService.createDocument(
+          COLLECTIONS.PATIENT_PROFILES,
+          memberData
+        );
+        
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Family member added successfully!',
+        });
+      }
+
+      router.back();
+    } catch (error) {
+      console.error('Error saving family member:', error);
+      Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'Failed to save family member.',
-        });
+        text2: 'Failed to save family member: ' + error.message,
+      });
     } finally {
-        setIsLoading(false);
+      setIsLoading(false);
     }
-    };
+  };
 
   return (
     <View style={styles.container}>
@@ -476,19 +659,12 @@ export default function AddFamilyMember() {
               />
             </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>
-                Phone Number <Text style={styles.required}>*</Text>
-              </Text>
-              <TextInput
-                style={styles.textInput}
-                value={formData.phoneNumber}
-                onChangeText={(text) => updateFormData('phoneNumber', text)}
-                placeholder="Enter phone number"
-                placeholderTextColor="#999"
-                keyboardType="phone-pad"
-              />
-            </View>
+            <MalaysianPhoneInput
+              label="Phone Number"
+              value={formData.phoneNumber}
+              onChangeText={(text) => updateFormData('phoneNumber', text)}
+              isRequired={true}
+            />
 
             <DropdownPicker
               label="Gender"
@@ -598,40 +774,55 @@ export default function AddFamilyMember() {
             </View>
           </View>
 
-          {/* Emergency Contact Section */}
+          {/* Emergency Contact Section - Read Only */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Emergency Contact</Text>
+            <Text style={styles.sectionSubtitle}>
+              {ownerProfile ? `Contact: ${ownerProfile.fullName} (Account Owner)` : 'Contact information set to account owner'}
+            </Text>
             
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Contact Name</Text>
               <TextInput
-                style={styles.textInput}
+                style={[styles.textInput, styles.disabledInput]}
                 value={formData.emergencyContactName}
-                onChangeText={(text) => updateFormData('emergencyContactName', text)}
-                placeholder="Enter emergency contact name"
+                placeholder="Account owner's name"
                 placeholderTextColor="#999"
+                editable={false}
               />
+              <Text style={styles.helperText}>Automatically set to account owner</Text>
             </View>
 
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Contact Number</Text>
-              <TextInput
-                style={styles.textInput}
-                value={formData.emergencyContactNumber}
-                onChangeText={(text) => updateFormData('emergencyContactNumber', text)}
-                placeholder="Enter emergency contact number"
-                placeholderTextColor="#999"
-                keyboardType="phone-pad"
-              />
+              <View style={styles.phoneInputContainer}>
+                <Text style={[styles.countryCode, styles.disabledCountryCode]}>🇲🇾 +60</Text>
+                <TextInput
+                  style={[styles.phoneInput, styles.disabledInput]}
+                  value={formData.emergencyContactNumber ? 
+                    formData.emergencyContactNumber.startsWith('+60') ? 
+                      formData.emergencyContactNumber.substring(3).replace(/(\d{2})(\d{3})(\d{4})/, '$1-$2 $3') :
+                      formData.emergencyContactNumber
+                    : ''
+                  }
+                  placeholder="Account owner's phone"
+                  placeholderTextColor="#999"
+                  editable={false}
+                />
+              </View>
+              <Text style={styles.helperText}>Automatically set to account owner's phone</Text>
             </View>
 
-            <DropdownPicker
-              label="Relationship"
-              value={formData.emergencyContactRelationship}
-              onValueChange={(value) => updateFormData('emergencyContactRelationship', value)}
-              options={relationshipOptions}
-              placeholder="Select relationship"
-            />
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Relationship</Text>
+              <View style={[styles.dropdownButton, styles.disabledInput]}>
+                <Text style={[styles.dropdownText, { color: '#999' }]}>
+                  {formData.emergencyContactRelationship || 'Parent'}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color="#ccc" />
+              </View>
+              <Text style={styles.helperText}>Default relationship to account owner</Text>
+            </View>
           </View>
 
           {/* Insurance Information Section */}
@@ -754,10 +945,16 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 16,
+    marginBottom: 8,
     paddingBottom: 8,
     borderBottomWidth: 2,
     borderBottomColor: '#0AD476',
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 16,
+    fontStyle: 'italic',
   },
   inputContainer: {
     marginBottom: 20,
@@ -788,6 +985,50 @@ const styles = StyleSheet.create({
   disabledInput: {
     backgroundColor: '#F5F5F5',
     color: '#999',
+  },
+  phoneInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    backgroundColor: '#FFF',
+    overflow: 'hidden',
+  },
+  countryCode: {
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#374151',
+    borderRightWidth: 1,
+    borderRightColor: '#E0E0E0',
+  },
+  disabledCountryCode: {
+    backgroundColor: '#F5F5F5',
+    color: '#999',
+  },
+  phoneInput: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#333',
+  },
+  invalidInput: {
+    borderColor: '#ef4444',
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#ef4444',
+    marginTop: 4,
+  },
+  helperText: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   dropdownButton: {
     flexDirection: 'row',
