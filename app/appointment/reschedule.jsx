@@ -1,5 +1,5 @@
-// app/appointment/reschedule.jsx
-import React, { useState, useEffect } from 'react';
+// app/appointment/reschedule.jsx - FIXED VERSION
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -11,6 +11,7 @@ import {
   Alert
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native'; // ADD: Import for screen refresh
 import { Ionicons } from '@expo/vector-icons';
 import { DatabaseService } from '../../configs/AppwriteConfig';
 import { COLLECTIONS } from '../../constants';
@@ -33,6 +34,9 @@ const RescheduleScreen = () => {
   const doctorId = params.doctorId;
   const timeSlots = ['8:30 AM', '9:00 AM', '9:30 AM', '10:00 AM', '2:00 PM', '3:00 PM', '4:00 PM'];
 
+  // NEW: Add ref to track component mount state
+  const isComponentMountedRef = useRef(true);
+
   // Generate next 14 days (excluding today)
   const dates = Array.from({ length: 14 }).map((_, i) => {
     const date = new Date();
@@ -40,11 +44,74 @@ const RescheduleScreen = () => {
     return date;
   });
 
+  // FIXED: Local helper function to format date for display - this is what was missing!
+  const formatDateForDisplay = (date) => {
+    if (!date) return '';
+    
+    if (typeof date === 'string') {
+      return date;
+    }
+
+    if (date instanceof Date) {
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      
+      return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+    }
+
+    return '';
+  };
+
+  // ENHANCED: Load appointment details with better error handling
+  const loadAppointmentDetails = useCallback(async () => {
+    if (!isComponentMountedRef.current) return;
+    
+    try {
+      console.log('Loading appointment details for ID:', appointmentId);
+      
+      const appointmentDoc = await DatabaseService.getDocument(
+        COLLECTIONS.APPOINTMENTS,
+        appointmentId
+      );
+      
+      if (!isComponentMountedRef.current) return;
+      
+      console.log('Loaded appointment:', appointmentDoc);
+      setAppointment(appointmentDoc);
+    } catch (error) {
+      console.error('Error loading appointment:', error);
+      if (isComponentMountedRef.current) {
+        Alert.alert('Error', 'Failed to load appointment details');
+        router.back();
+      }
+    }
+  }, [appointmentId, router]);
+
+  // ENHANCED: Refresh data when screen comes into focus
+  const refreshDataOnFocus = useCallback(async () => {
+    if (!isComponentMountedRef.current) return;
+    
+    console.log('Reschedule screen focused, refreshing data...');
+    await loadAppointmentDetails();
+  }, [loadAppointmentDetails]);
+
+  // ADD: Use useFocusEffect to refresh data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      refreshDataOnFocus();
+    }, [refreshDataOnFocus])
+  );
+
   useEffect(() => {
+    isComponentMountedRef.current = true;
+    
+    // Initial load
     loadAppointmentDetails();
     
-    // Subscribe to real-time updates using enhanced manager
+    // Subscribe to real-time updates
     const subscription = appointmentManager.subscribeToAppointments((update) => {
+      if (!isComponentMountedRef.current) return;
+      
       console.log('Reschedule screen received update:', update);
       
       if (update.type === 'updated' || update.type === 'created' || update.type === 'deleted') {
@@ -59,11 +126,13 @@ const RescheduleScreen = () => {
     setRealtimeSubscription(subscription);
   
     return () => {
+      isComponentMountedRef.current = false;
+      
       if (subscription) {
         appointmentManager.unsubscribe(subscription);
       }
     };
-  }, []);
+  }, [loadAppointmentDetails]);
 
   useEffect(() => {
     if (appointment && selectedDate) {
@@ -71,22 +140,8 @@ const RescheduleScreen = () => {
     }
   }, [appointment, selectedDate]);
 
-  const loadAppointmentDetails = async () => {
-    try {
-      const appointmentDoc = await DatabaseService.getDocument(
-        COLLECTIONS.APPOINTMENTS,
-        appointmentId
-      );
-      setAppointment(appointmentDoc);
-    } catch (error) {
-      console.error('Error loading appointment:', error);
-      Alert.alert('Error', 'Failed to load appointment details');
-      router.back();
-    }
-  };
-
   const refreshBookedSlots = async () => {
-    if (!appointment || !selectedDate) return;
+    if (!appointment || !selectedDate || !isComponentMountedRef.current) return;
     
     try {
       setLoadingSlots(true);
@@ -98,6 +153,8 @@ const RescheduleScreen = () => {
         appointmentId // Exclude current appointment from availability check
       );
       
+      if (!isComponentMountedRef.current) return;
+      
       const slotsMap = {};
       slots.forEach(slot => {
         slotsMap[slot] = true;
@@ -107,7 +164,9 @@ const RescheduleScreen = () => {
     } catch (error) {
       console.error('Error refreshing booked slots:', error);
     } finally {
-      setLoadingSlots(false);
+      if (isComponentMountedRef.current) {
+        setLoadingSlots(false);
+      }
     }
   };
 
@@ -146,8 +205,8 @@ const RescheduleScreen = () => {
       return;
     }
   
-    // Check if user selected the same date and time
-    const newFormattedDate = appointmentManager.formatDateForDisplay(selectedDate);
+    // FIXED: Use local formatDateForDisplay instead of appointmentManager method
+    const newFormattedDate = formatDateForDisplay(selectedDate);
     if (newFormattedDate === appointment.date && selectedTimeSlot === appointment.time_slot) {
       Alert.alert('No Changes', 'Please select a different date or time to reschedule.');
       return;
@@ -185,7 +244,9 @@ const RescheduleScreen = () => {
       console.error('Error rescheduling appointment:', error);
       Alert.alert('Error', 'Failed to reschedule appointment. Please try again.');
     } finally {
-      setLoading(false);
+      if (isComponentMountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -315,41 +376,42 @@ const RescheduleScreen = () => {
             <Text style={styles.sectionSubtitle}>Available time slots for the selected date</Text>
             
             <View style={styles.timeSlotGrid}>
-            {timeSlots.map((timeSlot, index) => {
-            const isBooked = bookedSlots[timeSlot];
-            const isSelected = selectedTimeSlot === timeSlot;
-            const isCurrent = appointment.time_slot === timeSlot;
-            
-            return (
-                <TouchableOpacity
-                key={index}
-                style={[
-                    styles.timeSlot,
-                    isSelected && styles.selectedTimeSlot,
-                    isBooked && styles.bookedTimeSlot,
-                    isCurrent && styles.currentTimeSlot
-                ]}
-                onPress={() => handleTimeSlotSelect(timeSlot)}
-                disabled={isBooked || loadingSlots}
-                >
-                <Text style={[
-                    styles.timeSlotText,
-                    isSelected && styles.selectedTimeSlotText,
-                    isBooked && styles.bookedTimeSlotText,
-                    isCurrent && styles.currentTimeSlotText
-                ]}>
-                    {timeSlot}
-                </Text>
-                {isBooked && (
-                    <Text style={styles.bookedLabel}>Booked</Text>
-                )}
-                {isCurrent && selectedDate && 
-                appointmentManager.formatDateForDisplay(selectedDate) === appointment.date && (
-                    <Text style={styles.currentLabel}>Current</Text>
-                )}
-                </TouchableOpacity>
-            );
-            })}
+              {timeSlots.map((timeSlot, index) => {
+                const isBooked = bookedSlots[timeSlot];
+                const isSelected = selectedTimeSlot === timeSlot;
+                const isCurrent = appointment.time_slot === timeSlot;
+                
+                return (
+                  <TouchableOpacity
+                    key={index}
+                    style={[
+                      styles.timeSlot,
+                      isSelected && styles.selectedTimeSlot,
+                      isBooked && styles.bookedTimeSlot,
+                      isCurrent && styles.currentTimeSlot
+                    ]}
+                    onPress={() => handleTimeSlotSelect(timeSlot)}
+                    disabled={isBooked || loadingSlots}
+                  >
+                    <Text style={[
+                      styles.timeSlotText,
+                      isSelected && styles.selectedTimeSlotText,
+                      isBooked && styles.bookedTimeSlotText,
+                      isCurrent && styles.currentTimeSlotText
+                    ]}>
+                      {timeSlot}
+                    </Text>
+                    {isBooked && (
+                      <Text style={styles.bookedLabel}>Booked</Text>
+                    )}
+                    {/* FIXED: Use local formatDateForDisplay function */}
+                    {isCurrent && selectedDate && 
+                    formatDateForDisplay(selectedDate) === appointment.date && (
+                      <Text style={styles.currentLabel}>Current</Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
             
             {/* Available slots count */}

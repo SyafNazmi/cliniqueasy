@@ -1,7 +1,8 @@
-// app/(tabs)/Profile.jsx - Enhanced with Cancellation History
+// app/(tabs)/Profile.jsx - Enhanced with proper focus refresh
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native'
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'expo-router'
+import { useFocusEffect } from '@react-navigation/native' // Add this import
 import { account, DatabaseService, Query } from '@/configs/AppwriteConfig'
 import { getLocalStorage, clearUserData } from '@/service/Storage'
 import { useAuth } from '@/app/_layout';
@@ -15,9 +16,10 @@ export default function Profile() {
   const [profile, setProfile] = useState(null);
   const [appointments, setAppointments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [familyMemberCount, setFamilyMemberCount] = useState(0);
   
-  // NEW: Cancellation history state
+  // Cancellation history state
   const [cancellationRequestsCount, setCancellationRequestsCount] = useState(0);
   const [pendingCancellationsCount, setPendingCancellationsCount] = useState(0);
   
@@ -28,11 +30,10 @@ export default function Profile() {
     if (!dateString) return new Date(0);
     
     try {
-      // Handle the format: "Monday, 16 Jun 2025"
       const parts = dateString.match(/(\w+), (\d+) (\w+) (\d+)/);
       if (!parts) {
         console.log('Date parsing failed for:', dateString);
-        return new Date(dateString); // Fallback to default parsing
+        return new Date(dateString);
       }
       
       const [_, dayName, dayNum, monthName, year] = parts;
@@ -58,14 +59,13 @@ export default function Profile() {
     }
   };
 
-  // Enhanced function to check if appointment date is in the past (matching HomeScreen logic)
   const isDatePast = (dateString) => {
     if (!dateString) return false;
     
     try {
       const appointmentDate = parseAppointmentDate(dateString);
       const today = new Date();
-      today.setHours(0, 0, 0, 0); // Set to start of today
+      today.setHours(0, 0, 0, 0);
       
       return appointmentDate < today;
     } catch (error) {
@@ -74,24 +74,19 @@ export default function Profile() {
     }
   };
 
-  // Enhanced function to filter upcoming appointments (matching HomeScreen logic)
   const getUpcomingAppointments = (appointmentsList) => {
     return appointmentsList.filter(appointment => {
-      // First check if appointment is cancelled or completed
       const status = appointment.status?.toLowerCase();
       if (status === 'cancelled' || status === 'completed') {
         return false;
       }
       
-      // Then check if date is in the future
       return !isDatePast(appointment.date);
     });
   };
 
-  // Enhanced function to filter past appointments
   const getPastAppointments = (appointmentsList) => {
     return appointmentsList.filter(appointment => {
-      // Include completed appointments or appointments in the past
       const status = appointment.status?.toLowerCase();
       const isPast = isDatePast(appointment.date);
       
@@ -99,12 +94,135 @@ export default function Profile() {
     });
   };
 
-  // NEW: Load cancellation history count
+  // ENHANCED: Extract all data loading into a reusable function
+  const loadAllData = useCallback(async (showLoader = true) => {
+    try {
+      if (showLoader) {
+        setIsLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
+
+      const currentUser = await account.get();
+      
+      if (currentUser) {
+        // Load all data in parallel
+        const [profileResponse, appointmentsResponse] = await Promise.all([
+          DatabaseService.listDocuments(
+            COLLECTIONS.PATIENT_PROFILES,
+            [Query.equal('userId', currentUser.$id)],
+            1
+          ),
+          DatabaseService.listDocuments(
+            COLLECTIONS.APPOINTMENTS,
+            [
+              Query.equal('user_id', currentUser.$id),
+              Query.orderDesc('$createdAt'),
+              Query.limit(100)
+            ]
+          )
+        ]);
+        
+        if (profileResponse.documents.length > 0) {
+          setProfile(profileResponse.documents[0]);
+        }
+        
+        // Sort appointments by date
+        const sortedAppointments = appointmentsResponse.documents.sort((a, b) => {
+          if (!a.date || !b.date) return 0;
+          
+          try {
+            const dateA = parseAppointmentDate(a.date);
+            const dateB = parseAppointmentDate(b.date);
+            return dateB.getTime() - dateA.getTime();
+          } catch (error) {
+            console.error('Error sorting appointments:', error);
+            return 0;
+          }
+        });
+        
+        setAppointments(sortedAppointments);
+        
+        // Load additional data
+        await Promise.all([
+          loadFamilyMemberCount(currentUser.$id),
+          loadCancellationHistory(currentUser.$id)
+        ]);
+      }
+    } catch (error) {
+      console.error('Error loading profile data:', error);
+      // Show user-friendly error
+      if (!showLoader) {
+        Toast.show({
+          type: 'error',
+          text1: 'Refresh Failed',
+          text2: 'Unable to refresh data. Please try again.',
+        });
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  // ENHANCED: Make family member count loading more robust
+  const loadFamilyMemberCount = async (userId) => {
+    try {
+      console.log('Loading family member count for user:', userId);
+      
+      // First try new data structure with profileType
+      let queries = [
+        DatabaseService.createQuery('equal', 'userId', userId),
+        DatabaseService.createQuery('equal', 'profileType', PROFILE_TYPES.FAMILY_MEMBER)
+      ];
+
+      let response = await DatabaseService.listDocuments(
+        COLLECTIONS.PATIENT_PROFILES,
+        queries,
+        100
+      );
+
+      let familyMemberCount = response.documents?.length || 0;
+      console.log('Family members found with profileType:', familyMemberCount);
+
+      // If no results with profileType, fall back to legacy method
+      if (familyMemberCount === 0) {
+        console.log('No profiles found with profileType, checking legacy data...');
+        
+        const legacyQueries = [
+          DatabaseService.createQuery('equal', 'userId', userId)
+        ];
+
+        const legacyResponse = await DatabaseService.listDocuments(
+          COLLECTIONS.PATIENT_PROFILES,
+          legacyQueries,
+          100
+        );
+
+        // Get current user email for filtering
+        const currentUser = await account.get();
+        
+        // Filter out user's own profile by email (legacy method)
+        const familyMembers = (legacyResponse.documents || []).filter(profile => {
+          return profile.email !== currentUser.email;
+        });
+
+        familyMemberCount = familyMembers.length;
+        console.log('Family members found with legacy method:', familyMemberCount);
+      }
+      
+      setFamilyMemberCount(familyMemberCount);
+      console.log('Final family member count set to:', familyMemberCount);
+    } catch (error) {
+      console.error('Error loading family member count:', error);
+      setFamilyMemberCount(0);
+    }
+  };
+
   const loadCancellationHistory = async (userId) => {
     try {
       console.log('Loading cancellation history for user:', userId);
       
-      // Get all appointments for this user that have had cancellation requests
       const queries = [
         Query.equal('user_id', userId),
         Query.or([
@@ -124,7 +242,6 @@ export default function Profile() {
       const requests = response.documents || [];
       setCancellationRequestsCount(requests.length);
       
-      // Count pending requests
       const pendingRequests = requests.filter(req => 
         req.cancellation_status === CANCELLATION_STATUS.REQUESTED
       );
@@ -137,113 +254,18 @@ export default function Profile() {
     }
   };
 
+  // FIX: Use useFocusEffect to refresh data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      console.log('Profile screen focused, refreshing data...');
+      loadAllData(false); // Don't show full loader when refocusing
+    }, [loadAllData])
+  );
+
+  // Initial load
   useEffect(() => {
-    loadProfileAndAppointments();
-    loadFamilyMemberCount();
-  }, []);
-
-  const loadFamilyMemberCount = async () => {
-    try {
-      const user = await account.get();
-      
-      // First try to get profiles with profileType (new data structure)
-      let queries = [
-        DatabaseService.createQuery('equal', 'userId', user.$id),
-        DatabaseService.createQuery('equal', 'profileType', PROFILE_TYPES.FAMILY_MEMBER)
-      ];
-
-      let response = await DatabaseService.listDocuments(
-        COLLECTIONS.PATIENT_PROFILES,
-        queries,
-        100
-      );
-
-      let familyMemberCount = response.documents?.length || 0;
-
-      // If no results with profileType, fall back to legacy method
-      if (familyMemberCount === 0) {
-        console.log('No profiles found with profileType, checking legacy data for count...');
-        
-        // Get all profiles for this user (legacy method)
-        const legacyQueries = [
-          DatabaseService.createQuery('equal', 'userId', user.$id)
-        ];
-
-        const legacyResponse = await DatabaseService.listDocuments(
-          COLLECTIONS.PATIENT_PROFILES,
-          legacyQueries,
-          100
-        );
-
-        // Filter out user's own profile by email (legacy method)
-        const familyMembers = (legacyResponse.documents || []).filter(profile => {
-          return profile.email !== user.email;
-        });
-
-        familyMemberCount = familyMembers.length;
-      }
-      
-      setFamilyMemberCount(familyMemberCount);
-    } catch (error) {
-      console.error('Error loading family member count:', error);
-      setFamilyMemberCount(0);
-    }
-  };
-
-  const loadProfileAndAppointments = async () => {
-    try {
-      setIsLoading(true);
-      const currentUser = await account.get();
-      
-      if (currentUser) {
-        // Enhanced queries to get more appointments and order them properly
-        const appointmentQueries = [
-          Query.equal('user_id', currentUser.$id),
-          Query.orderDesc('$createdAt'),
-          Query.limit(100)
-        ];
-        
-        const [profileResponse, appointmentsResponse] = await Promise.all([
-          DatabaseService.listDocuments(
-            COLLECTIONS.PATIENT_PROFILES,
-            [Query.equal('userId', currentUser.$id)],
-            1
-          ),
-          DatabaseService.listDocuments(
-            COLLECTIONS.APPOINTMENTS,
-            appointmentQueries
-          )
-        ]);
-        
-        if (profileResponse.documents.length > 0) {
-          setProfile(profileResponse.documents[0]);
-        }
-        
-        // Sort appointments by date (newest first for display purposes)
-        const sortedAppointments = appointmentsResponse.documents.sort((a, b) => {
-          if (!a.date || !b.date) return 0;
-          
-          try {
-            const dateA = parseAppointmentDate(a.date);
-            const dateB = parseAppointmentDate(b.date);
-            return dateB.getTime() - dateA.getTime();
-          } catch (error) {
-            console.error('Error sorting appointments:', error);
-            return 0;
-          }
-        });
-        
-        setAppointments(sortedAppointments);
-        
-        // NEW: Load cancellation history after getting user
-        await loadCancellationHistory(currentUser.$id);
-      }
-    } catch (error) {
-      console.error('Error loading data:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    loadAllData(true);
+  }, [loadAllData]);
 
   const handleLogout = async () => {
     try {
@@ -303,6 +325,12 @@ export default function Profile() {
     
     return Math.round((requiredCompletion + optionalCompletion) * 100);
   };
+
+  // ADD: Pull-to-refresh functionality
+  const onRefresh = useCallback(() => {
+    console.log('Pull to refresh triggered');
+    loadAllData(false);
+  }, [loadAllData]);
 
   // Calculate appointment statistics using enhanced logic
   const upcomingAppointments = getUpcomingAppointments(appointments);
@@ -391,7 +419,7 @@ export default function Profile() {
         </TouchableOpacity>
 
         {/* Add Family Member Link */}
-        <TouchableOpacity 
+          <TouchableOpacity 
           style={[styles.menuItem, styles.familyButtonWithCount]}
           onPress={() => router.push('/profile/family-members')}
         >

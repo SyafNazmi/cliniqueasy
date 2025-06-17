@@ -1,5 +1,5 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'expo-router'
 import { useFocusEffect } from '@react-navigation/native'
 import { AuthService, DatabaseService, Query } from '@/configs/AppwriteConfig'
@@ -13,9 +13,15 @@ export default function UpcomingAppointments() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [user, setUser] = useState(null);
+  const [realtimeSubscription, setRealtimeSubscription] = useState(null);
+  
+  // ADD: Component mount tracking
+  const isComponentMountedRef = useRef(true);
 
-  // Function to fetch appointments (extracted for reuse) - BASED ON HOMESCREEN SUCCESS
+  // Function to fetch appointments with better error handling
   const fetchUserAndAppointments = useCallback(async (showLoader = true) => {
+    if (!isComponentMountedRef.current) return;
+    
     try {
       if (showLoader) {
         setIsLoading(true);
@@ -25,6 +31,8 @@ export default function UpcomingAppointments() {
       
       // Get current user
       const currentUser = await AuthService.getCurrentUser();
+      if (!isComponentMountedRef.current) return;
+      
       setUser(currentUser);
       
       // Fetch user's appointments from Appwrite
@@ -40,6 +48,8 @@ export default function UpcomingAppointments() {
           COLLECTIONS.APPOINTMENTS,
           queries
         );
+        
+        if (!isComponentMountedRef.current) return;
         
         const appointmentDocuments = response.documents || [];
         
@@ -110,80 +120,86 @@ export default function UpcomingAppointments() {
     } catch (error) {
       console.error('Error fetching upcoming appointments:', error);
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (isComponentMountedRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, []);
 
-  // SOLUTION 1: Use useFocusEffect to refetch data when screen comes into focus
+  // Use useFocusEffect to refetch data when screen comes into focus
   useFocusEffect(
     useCallback(() => {
-      fetchUserAndAppointments(false); // Don't show full loader when refocusing
+      console.log('Upcoming appointments screen focused, refreshing...');
+      fetchUserAndAppointments(false);
     }, [fetchUserAndAppointments])
   );
 
-  // SOLUTION 2: Set up real-time subscription for appointments
-  useEffect(() => {
-    let subscriptionKey = null;
-
-    const setupRealtimeSubscription = async () => {
-      try {
-        const currentUser = await AuthService.getCurrentUser();
-        if (currentUser) {
-          subscriptionKey = appointmentManager.subscribeToAppointments(
-            (event) => {
-              // Check if this appointment belongs to the current user
-              if (event.appointment?.user_id === currentUser.$id) {
-                // ENHANCED RETRY LOGIC: Try multiple times to ensure we get the new appointment
-                const retryFetch = async (attempt = 1, maxAttempts = 3) => {
-                  await fetchUserAndAppointments(false);
-                  
-                  // Check if the new appointment is now in state
-                  const newAppointmentId = event.appointment?.$id;
-                  if (newAppointmentId && attempt < maxAttempts) {
-                    // Add a small delay to let state update
-                    setTimeout(() => {
-                      setUpcomingAppointments(currentAppointments => {
-                        const hasNewAppointment = currentAppointments.some(apt => apt.$id === newAppointmentId);
-                        
-                        if (!hasNewAppointment) {
-                          setTimeout(() => retryFetch(attempt + 1, maxAttempts), 1500);
-                        }
-                        
-                        return currentAppointments;
-                      });
-                    }, 500);
-                  }
-                };
-                
-                // Start the retry process with a delay
-                setTimeout(() => retryFetch(), 1000);
+  // ENHANCED: Real-time subscription with better handling
+  const setupRealtimeSubscription = useCallback(async () => {
+    if (!isComponentMountedRef.current) return;
+    
+    try {
+      const currentUser = await AuthService.getCurrentUser();
+      if (!currentUser || !isComponentMountedRef.current) return;
+      
+      console.log('Setting up real-time subscription for upcoming appointments...');
+      
+      const subscriptionKey = appointmentManager.subscribeToAppointments(
+        (event) => {
+          if (!isComponentMountedRef.current) return;
+          
+          console.log('Upcoming appointments received real-time event:', event);
+          
+          // Check if this appointment belongs to the current user
+          if (event.appointment?.user_id === currentUser.$id) {
+            // Simple refresh approach - more reliable than complex state updates
+            setTimeout(() => {
+              if (isComponentMountedRef.current) {
+                console.log('Refreshing upcoming appointments due to real-time event');
+                fetchUserAndAppointments(false);
               }
-            }
-          );
+            }, 500);
+          }
         }
-      } catch (error) {
-        console.error('Error setting up real-time subscription:', error);
-      }
-    };
-
-    setupRealtimeSubscription();
-
-    // Cleanup subscription on unmount
-    return () => {
-      if (subscriptionKey) {
-        appointmentManager.unsubscribe(subscriptionKey);
-      }
-    };
+      );
+      
+      setRealtimeSubscription(subscriptionKey);
+      console.log('Real-time subscription established for upcoming appointments');
+      
+    } catch (error) {
+      console.error('Error setting up real-time subscription:', error);
+    }
   }, [fetchUserAndAppointments]);
 
-  // Initial load
   useEffect(() => {
-    fetchUserAndAppointments();
-  }, [fetchUserAndAppointments]);
+    isComponentMountedRef.current = true;
+    
+    // Initial load
+    fetchUserAndAppointments(true);
+    
+    // Set up real-time subscription after initial load
+    const subscriptionTimeout = setTimeout(() => {
+      if (isComponentMountedRef.current) {
+        setupRealtimeSubscription();
+      }
+    }, 1000);
 
-  // SOLUTION 3: Add pull-to-refresh functionality
+    // Cleanup function
+    return () => {
+      isComponentMountedRef.current = false;
+      clearTimeout(subscriptionTimeout);
+      
+      if (realtimeSubscription) {
+        appointmentManager.unsubscribe(realtimeSubscription);
+        console.log('Cleaned up upcoming appointments real-time subscription');
+      }
+    };
+  }, [fetchUserAndAppointments, setupRealtimeSubscription]);
+
+  // Add pull-to-refresh functionality
   const onRefresh = useCallback(() => {
+    console.log('Pull to refresh upcoming appointments');
     fetchUserAndAppointments(false);
   }, [fetchUserAndAppointments]);
 
@@ -196,18 +212,49 @@ export default function UpcomingAppointments() {
     });
   };
 
+  // ENHANCED: Get status info with reschedule highlighting
+  const getAppointmentStatusInfo = (appointment) => {
+    const isRescheduled = appointment.status === 'Rescheduled' || appointment.rescheduled_at;
+    const hasOriginalDateTime = appointment.original_date && appointment.original_time_slot;
+    
+    if (isRescheduled) {
+      return {
+        color: '#FF9500',
+        bgColor: '#FFF3E0',
+        text: 'Rescheduled',
+        icon: 'refresh-circle',
+        showNewBadge: hasOriginalDateTime
+      };
+    }
+    
+    return {
+      color: '#0AD476',
+      bgColor: '#F0FDF4',
+      text: 'Upcoming',
+      icon: 'time',
+      showNewBadge: false
+    };
+  };
+
   const renderAppointmentItem = (appointment) => {
-    // Check if this is a family booking
     const isFamilyBooking = appointment.is_family_booking || false;
     const patientName = appointment.patient_name || 'Unknown Patient';
+    const statusInfo = getAppointmentStatusInfo(appointment);
+    const isRescheduled = statusInfo.showNewBadge;
 
     return (
       <TouchableOpacity
         key={appointment.$id}
-        style={styles.appointmentItem}
+        style={[
+          styles.appointmentItem,
+          isRescheduled && styles.rescheduledAppointmentItem
+        ]}
         onPress={() => handleAppointmentClick(appointment)}
         activeOpacity={0.7}
       >
+        {/* NEW: Rescheduled indicator stripe */}
+        {isRescheduled && <View style={styles.rescheduledStripe} />}
+        
         <View style={styles.appointmentHeader}>
           <View style={styles.appointmentInfo}>
             <Text style={styles.appointmentDoctor}>
@@ -216,7 +263,8 @@ export default function UpcomingAppointments() {
             <Text style={styles.appointmentSpecialization}>
               {appointment.doctor_specialization || appointment.service_name || 'General Practice'}
             </Text>
-            {/* NEW: Show family member info if applicable */}
+            
+            {/* Family member info */}
             {(isFamilyBooking || (patientName && patientName !== 'Unknown Patient')) && (
               <View style={styles.familyInfo}>
                 <Ionicons 
@@ -230,37 +278,86 @@ export default function UpcomingAppointments() {
               </View>
             )}
           </View>
-          <View style={styles.statusBadge}>
-            <Text style={styles.statusBadgeText}>Upcoming</Text>
+          
+          <View style={styles.statusContainer}>
+            <View style={[styles.statusBadge, { backgroundColor: statusInfo.color }]}>
+              <Ionicons name={statusInfo.icon} size={12} color="#FFFFFF" />
+              <Text style={styles.statusBadgeText}>{statusInfo.text}</Text>
+            </View>
+            
+            {/* NEW: "NEW" badge for rescheduled appointments */}
+            {isRescheduled && (
+              <View style={styles.newBadge}>
+                <Text style={styles.newBadgeText}>NEW</Text>
+              </View>
+            )}
           </View>
         </View>
         
         <View style={styles.appointmentDetails}>
+          {/* ENHANCED: Date with highlighting for rescheduled */}
           <View style={styles.appointmentDetailRow}>
-            <Ionicons name="calendar-outline" size={14} color="#8E8E93" />
-            <Text style={styles.appointmentDetailText}>
+            <Ionicons name="calendar-outline" size={14} color={isRescheduled ? "#FF9500" : "#8E8E93"} />
+            <Text style={[
+              styles.appointmentDetailText,
+              isRescheduled && styles.rescheduledDetailText
+            ]}>
               {appointment.date || 'Date not set'}
+              {isRescheduled && (
+                <Text style={styles.newIndicator}> (NEW)</Text>
+              )}
             </Text>
           </View>
+          
+          {/* ENHANCED: Time with highlighting for rescheduled */}
           <View style={styles.appointmentDetailRow}>
-            <Ionicons name="time-outline" size={14} color="#8E8E93" />
-            <Text style={styles.appointmentDetailText}>
+            <Ionicons name="time-outline" size={14} color={isRescheduled ? "#FF9500" : "#8E8E93"} />
+            <Text style={[
+              styles.appointmentDetailText,
+              isRescheduled && styles.rescheduledDetailText
+            ]}>
               {appointment.time_slot || appointment.time || 'Time not set'}
+              {isRescheduled && (
+                <Text style={styles.newIndicator}> (NEW)</Text>
+              )}
             </Text>
           </View>
+          
           <View style={styles.appointmentDetailRow}>
             <Ionicons name="location-outline" size={14} color="#8E8E93" />
             <Text style={styles.appointmentDetailText} numberOfLines={1}>
               {appointment.branch_name || appointment.hospital_name || 'Location not specified'}
             </Text>
           </View>
+          
+          {/* NEW: Show original date/time for rescheduled appointments */}
+          {isRescheduled && appointment.original_date && (
+            <View style={styles.originalDateTimeContainer}>
+              <View style={styles.originalDateTimeHeader}>
+                <Ionicons name="swap-horizontal" size={12} color="#999" />
+                <Text style={styles.originalDateTimeLabel}>Originally:</Text>
+              </View>
+              <Text style={styles.originalDateTime}>
+                {appointment.original_date} at {appointment.original_time_slot}
+              </Text>
+            </View>
+          )}
         </View>
         
         <View style={styles.appointmentFooter}>
           <Text style={styles.appointmentId}>
             ID: {appointment.$id?.substring(0, 8) || 'N/A'}
           </Text>
-          <Ionicons name="chevron-forward-outline" size={16} color="#8E8E93" />
+          <View style={styles.footerRight}>
+            {/* NEW: Reschedule count indicator */}
+            {isRescheduled && appointment.reschedule_count && (
+              <View style={styles.rescheduleCountBadge}>
+                <Ionicons name="refresh" size={10} color="#FF9500" />
+                <Text style={styles.rescheduleCountText}>×{appointment.reschedule_count}</Text>
+              </View>
+            )}
+            <Ionicons name="chevron-forward-outline" size={16} color="#8E8E93" />
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -289,7 +386,7 @@ export default function UpcomingAppointments() {
         <View style={styles.placeholder} />
       </View>
 
-      {/* Summary Card */}
+      {/* Summary Card with reschedule info */}
       <View style={styles.summaryCard}>
         <View style={styles.summaryContent}>
           <Ionicons name="time" size={24} color="#0AD476" />
@@ -299,7 +396,19 @@ export default function UpcomingAppointments() {
             </Text>
             <Text style={styles.summarySubtitle}>
               Your scheduled appointments
+              {upcomingAppointments.some(apt => apt.rescheduled_at) && (
+                <Text style={styles.rescheduledNote}> • Some rescheduled</Text>
+              )}
             </Text>
+          </View>
+          
+          {/* NEW: Real-time status indicator */}
+          <View style={styles.realtimeIndicator}>
+            <Ionicons 
+              name={realtimeSubscription ? "wifi-sharp" : "wifi"} 
+              size={16} 
+              color={realtimeSubscription ? "#0AD476" : "#999"} 
+            />
           </View>
         </View>
       </View>
@@ -414,12 +523,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#8E8E93',
   },
+  rescheduledNote: {
+    color: '#FF9500',
+    fontWeight: '500',
+  },
+  realtimeIndicator: {
+    padding: 8,
+  },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     paddingTop: 20,
   },
+  
+  // ENHANCED: Appointment item styles with reschedule highlighting
   appointmentItem: {
     backgroundColor: '#FFFFFF',
     marginHorizontal: 20,
@@ -433,6 +551,21 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 1,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  rescheduledAppointmentItem: {
+    borderColor: '#FF9500',
+    borderWidth: 1.5,
+    backgroundColor: '#FFFDF7',
+  },
+  rescheduledStripe: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 4,
+    height: '100%',
+    backgroundColor: '#FF9500',
   },
   appointmentHeader: {
     flexDirection: 'row',
@@ -455,7 +588,6 @@ const styles = StyleSheet.create({
     color: '#666666',
     marginBottom: 4,
   },
-  // NEW: Family info styles
   familyInfo: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -467,17 +599,37 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: 4,
   },
+  statusContainer: {
+    alignItems: 'flex-end',
+  },
   statusBadge: {
-    backgroundColor: '#0AD476',
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
+    gap: 4,
   },
   statusBadgeText: {
     fontSize: 12,
     fontWeight: '500',
     color: '#FFFFFF',
   },
+  
+  // NEW: New badge for rescheduled appointments
+  newBadge: {
+    backgroundColor: '#FF3B30',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  newBadgeText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  
   appointmentDetails: {
     marginBottom: 12,
   },
@@ -492,6 +644,44 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flex: 1,
   },
+  
+  // NEW: Highlighted styles for rescheduled date/time
+  rescheduledDetailText: {
+    color: '#FF9500',
+    fontWeight: '600',
+  },
+  newIndicator: {
+    fontSize: 11,
+    color: '#FF3B30',
+    fontWeight: 'bold',
+  },
+  
+  // NEW: Original date/time display
+  originalDateTimeContainer: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    padding: 8,
+    marginTop: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#E5E7EB',
+  },
+  originalDateTimeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  originalDateTimeLabel: {
+    fontSize: 11,
+    color: '#999',
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  originalDateTime: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  
   appointmentFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -505,6 +695,28 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     fontWeight: '500',
   },
+  footerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  
+  // NEW: Reschedule count badge
+  rescheduleCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3E0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginRight: 8,
+  },
+  rescheduleCountText: {
+    fontSize: 10,
+    color: '#FF9500',
+    fontWeight: '600',
+    marginLeft: 2,
+  },
+  
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',

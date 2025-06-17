@@ -1,4 +1,4 @@
-// service/appointmentUtils.js - FIXED VERSION with proper subscription management
+// service/appointmentUtils.js - FIXED VERSION with formatDateForDisplay method
 import { DatabaseService, Query, RealtimeService } from '../configs/AppwriteConfig';
 import { COLLECTIONS } from '../constants';
 
@@ -28,7 +28,7 @@ export class EnhancedAppointmentManager {
     this.activeCallbacks = new Map(); // Track active callbacks to prevent duplicates
   }
 
-  // FIXED: Enhanced subscription method with deduplication
+  // Enhanced subscription method with deduplication
   subscribeToAppointments(callback, options = {}) {
     if (this.isDestroyed) {
       console.warn('AppointmentManager is destroyed, cannot create new subscriptions');
@@ -175,7 +175,7 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // FIXED: Enhanced specific appointment subscription
+  // Enhanced specific appointment subscription
   subscribeToAppointment(appointmentId, callback) {
     if (this.isDestroyed) {
       console.warn('AppointmentManager is destroyed, cannot create new subscriptions');
@@ -616,6 +616,11 @@ export class EnhancedAppointmentManager {
     return '';
   }
 
+  // FIXED: Added the missing formatDateForDisplay method
+  formatDateForDisplay(date) {
+    return this.formatDateForQuery(date);
+  }
+
   // Enhanced reschedule method
   async rescheduleAppointment(appointmentId, newDate, newTimeSlot, reason = '') {
     try {
@@ -809,7 +814,7 @@ export class EnhancedAppointmentManager {
     }
   }
 
-  // FIXED: Enhanced cleanup method
+  // Enhanced cleanup method
   cleanup() {
     console.log('Cleaning up appointment manager...');
     this.isDestroyed = true;
@@ -834,7 +839,7 @@ export class EnhancedAppointmentManager {
     console.log(`Successfully cleaned up ${cleanupCount} subscriptions`);
   }
 
-  // FIXED: Enhanced unsubscribe method
+  // Enhanced unsubscribe method
   unsubscribe(subscriptionKey) {
     const unsubscribe = this.subscriptions.get(subscriptionKey);
     if (unsubscribe) {
@@ -853,12 +858,12 @@ export class EnhancedAppointmentManager {
     return false;
   }
 
-  // ADDED: Method to get active subscription count for debugging
+  // Method to get active subscription count for debugging
   getActiveSubscriptionCount() {
     return this.subscriptions.size;
   }
 
-  // ADDED: Method to list all active subscriptions for debugging
+  // Method to list all active subscriptions for debugging
   listActiveSubscriptions() {
     return Array.from(this.subscriptions.keys());
   }

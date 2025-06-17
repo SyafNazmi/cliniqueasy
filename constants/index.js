@@ -376,12 +376,12 @@ export const getClinicsByRegion = (regionId, searchQuery = '') => {
  * Doctors Data - Enhanced with more doctors for new clinics
  */
 export const DoctorsData = [
-  // Branch 1 doctors (Permai Polyclinics Fajar)
+  // Branch 1 doctors (Permai Polyclinics Fajar - Tawau)
   {
     name: "Leila Cameron",
     specialty: "Pediatrics",
     branchId: "1",
-    contact: "+60 987-654-3210",
+    contact: "+60 89-123-456",
     qualifications: ["MD", "MBBS", "Pediatrics Specialist"],
     availability: ["Tuesday", "Thursday", "Saturday"],
     image: "doctor2.png"
@@ -390,7 +390,7 @@ export const DoctorsData = [
     name: "Sarah Johnson",
     specialty: "General Medicine",
     branchId: "1",
-    contact: "+60 112-233-4455",
+    contact: "+60 89-123-457",
     qualifications: ["MD", "MBBS", "Family Medicine"],
     availability: ["Monday", "Wednesday", "Friday"],
     image: "doctor-sarah.png"
@@ -399,7 +399,7 @@ export const DoctorsData = [
     name: "Michael Wong",
     specialty: "Dermatology",
     branchId: "1",
-    contact: "+60 334-455-6677",
+    contact: "+60 89-123-458",
     qualifications: ["MD", "MBBS", "Dermatology Specialist"],
     availability: ["Monday", "Tuesday", "Thursday"],
     image: "doctor-wong.png"
@@ -410,7 +410,7 @@ export const DoctorsData = [
     name: "David Livingston",
     specialty: "Orthopedics",
     branchId: "2",
-    contact: "+60 555-123-4567",
+    contact: "+60 89-654-321",
     qualifications: ["MD", "MBBS", "Orthopedic Surgeon"],
     availability: ["Monday", "Wednesday", "Friday"],
     image: "doctor3.png"
@@ -419,7 +419,7 @@ export const DoctorsData = [
     name: "Jessica Tan",
     specialty: "Neurology",
     branchId: "2",
-    contact: "+60 666-777-8899",
+    contact: "+60 89-654-322",
     qualifications: ["MD", "PhD", "Neurology Specialist"],
     availability: ["Tuesday", "Thursday", "Saturday"],
     image: "doctor-jessica.png"
@@ -428,18 +428,18 @@ export const DoctorsData = [
     name: "Robert Chen",
     specialty: "ENT",
     branchId: "2",
-    contact: "+60 111-222-3344",
+    contact: "+60 89-654-323",
     qualifications: ["MD", "MBBS", "Otolaryngologist"],
     availability: ["Monday", "Wednesday", "Friday"],
     image: "doctor-chen.png"
   },
   
-  // Branch 3 doctors (Cyber City)
+  // Branch 3 doctors (Permai Cyber City - Kota Kinabalu)
   {
     name: "John Green",
     specialty: "Cardiology",
     branchId: "3", 
-    contact: "+60 123-456-7890",
+    contact: "+60 88-998-877",
     qualifications: ["MD", "MBBS", "Cardiology Specialist"],
     availability: ["Monday", "Wednesday", "Friday"],
     image: "doctor1.png"
@@ -448,7 +448,7 @@ export const DoctorsData = [
     name: "Emma Lee",
     specialty: "Gynecology",
     branchId: "3",
-    contact: "+60 222-333-4455",
+    contact: "+60 88-998-878",
     qualifications: ["MD", "MBBS", "Obstetrics & Gynecology"],
     availability: ["Tuesday", "Thursday", "Saturday"],
     image: "doctor-emma.png"
@@ -457,50 +457,165 @@ export const DoctorsData = [
     name: "Ahmad Razak",
     specialty: "Psychiatry",
     branchId: "3",
-    contact: "+60 999-888-7766",
+    contact: "+60 88-998-879",
     qualifications: ["MD", "PhD", "Psychiatry Specialist"],
     availability: ["Wednesday", "Thursday", "Friday"],
     image: "doctor-ahmad.png"
   },
 
-  // New doctors for additional clinics
   // Branch 4 doctors (Tawau Medical Centre)
   {
-    name: "Dr. Siti Aminah",
+    name: "Siti Aminah",
     specialty: "Internal Medicine",
     branchId: "4",
-    contact: "+60 89-777999",
+    contact: "+60 89-777-999",
     qualifications: ["MD", "MBBS", "Internal Medicine"],
     availability: ["Monday", "Tuesday", "Wednesday", "Friday"],
     image: "doctor-sarah.png"
   },
   {
-    name: "Dr. James Lim",
+    name: "James Lim",
     specialty: "Emergency Medicine",
     branchId: "4",
-    contact: "+60 89-777888",
+    contact: "+60 89-777-888",
     qualifications: ["MD", "Emergency Medicine Specialist"],
     availability: ["Daily"],
     image: "doctor1.png"
   },
+  {
+    name: "Hassan Ibrahim",
+    specialty: "Surgery",
+    branchId: "4",
+    contact: "+60 89-777-887",
+    qualifications: ["MD", "MBBS", "General Surgery"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor3.png"
+  },
 
   // Branch 5 doctors (Klinik Kesihatan Tawau)
   {
-    name: "Dr. Fatimah Ali",
+    name: "Fatimah Ali",
     specialty: "Family Medicine",
     branchId: "5",
-    contact: "+60 89-555777",
+    contact: "+60 89-555-777",
     qualifications: ["MD", "MBBS", "Family Medicine"],
     availability: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
     image: "doctor2.png"
   },
+  {
+    name: "Rajesh Kumar",
+    specialty: "General Medicine",
+    branchId: "5",
+    contact: "+60 89-555-778",
+    qualifications: ["MD", "MBBS", "General Practice"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor-wong.png"
+  },
 
-  // Branch 10 doctors (Queen Elizabeth Hospital)
+  // Branch 6 doctors (Permai Polyclinics Megah Jaya - Tawau)
+  {
+    name: "Catherine Liew",
+    specialty: "Pediatrics",
+    branchId: "6",
+    contact: "+60 89-333-444",
+    qualifications: ["MD", "MBBS", "Pediatrics Specialist"],
+    availability: ["Tuesday", "Thursday", "Saturday"],
+    image: "doctor-emma.png"
+  },
+  {
+    name: "Muhammad Azlan",
+    specialty: "Ophthalmology",
+    branchId: "6",
+    contact: "+60 89-333-445",
+    qualifications: ["MD", "MBBS", "Eye Specialist"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor1.png"
+  },
+  {
+    name: "Linda Chong",
+    specialty: "Dermatology",
+    branchId: "6",
+    contact: "+60 89-333-446",
+    qualifications: ["MD", "MBBS", "Dermatology Specialist"],
+    availability: ["Tuesday", "Thursday", "Saturday"],
+    image: "doctor-sarah.png"
+  },
+
+  // Branch 7 doctors (Klinik Kesihatan Semporna)
+  {
+    name: "Norliza Hassan",
+    specialty: "Family Medicine",
+    branchId: "7",
+    contact: "+60 89-781-234",
+    qualifications: ["MD", "MBBS", "Family Medicine"],
+    availability: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+    image: "doctor2.png"
+  },
+  {
+    name: "Peter Goh",
+    specialty: "General Medicine",
+    branchId: "7",
+    contact: "+60 89-781-235",
+    qualifications: ["MD", "MBBS", "General Practice"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor3.png"
+  },
+
+  // Branch 8 doctors (Permai Polyclinics Semporna II)
+  {
+    name: "Rashid Omar",
+    specialty: "Orthopedics",
+    branchId: "8",
+    contact: "+60 89-567-890",
+    qualifications: ["MD", "MBBS", "Orthopedic Specialist"],
+    availability: ["Tuesday", "Thursday", "Saturday"],
+    image: "doctor1.png"
+  },
+  {
+    name: "Mei Ling Tan",
+    specialty: "Gynecology",
+    branchId: "8",
+    contact: "+60 89-567-891",
+    qualifications: ["MD", "MBBS", "Obstetrics & Gynecology"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor-jessica.png"
+  },
+  {
+    name: "Kevin Lau",
+    specialty: "ENT",
+    branchId: "8",
+    contact: "+60 89-567-892",
+    qualifications: ["MD", "MBBS", "Otolaryngologist"],
+    availability: ["Monday", "Tuesday", "Thursday"],
+    image: "doctor-chen.png"
+  },
+
+  // Branch 9 doctors (Klinik Warisan Semporna)
+  {
+    name: "Dr. Zainab Mohd",
+    specialty: "Internal Medicine",
+    branchId: "9",
+    contact: "+60 89-445-566",
+    qualifications: ["MD", "MBBS", "Internal Medicine"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor-sarah.png"
+  },
+  {
+    name: "Dr. William Chin",
+    specialty: "Cardiology",
+    branchId: "9",
+    contact: "+60 89-445-567",
+    qualifications: ["MD", "MBBS", "Cardiology Specialist"],
+    availability: ["Tuesday", "Thursday", "Saturday"],
+    image: "doctor-wong.png"
+  },
+
+  // Branch 10 doctors (Permai Asia City - Kota Kinabalu)
   {
     name: "Dr. Richard Teo",
     specialty: "Surgery",
     branchId: "10",
-    contact: "+60 88-324650",
+    contact: "+60 88-324-650",
     qualifications: ["MD", "MBBS", "General Surgery"],
     availability: ["Monday", "Wednesday", "Friday"],
     image: "doctor3.png"
@@ -509,10 +624,142 @@ export const DoctorsData = [
     name: "Dr. Priya Sharma",
     specialty: "Emergency Medicine",
     branchId: "10",
-    contact: "+60 88-324600",
+    contact: "+60 88-324-600",
     qualifications: ["MD", "Emergency Medicine"],
     availability: ["Daily"],
     image: "doctor-emma.png"
+  },
+  {
+    name: "Dr. Anthony Wong",
+    specialty: "Neurology",
+    branchId: "10",
+    contact: "+60 88-324-651",
+    qualifications: ["MD", "PhD", "Neurology Specialist"],
+    availability: ["Tuesday", "Thursday", "Saturday"],
+    image: "doctor1.png"
+  },
+  {
+    name: "Dr. Shalini Krishnan",
+    specialty: "Pediatrics",
+    branchId: "10",
+    contact: "+60 88-324-652",
+    qualifications: ["MD", "MBBS", "Pediatrics Specialist"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor-jessica.png"
+  },
+
+  // Branch 11 doctors (Permai Jalan Pantai - Kota Kinabalu)
+  {
+    name: "Dr. Marina Abdullah",
+    specialty: "General Medicine",
+    branchId: "11",
+    contact: "+60 88-428-600",
+    qualifications: ["MD", "MBBS", "General Practice"],
+    availability: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+    image: "doctor2.png"
+  },
+  {
+    name: "Dr. Daniel Kho",
+    specialty: "Dermatology",
+    branchId: "11",
+    contact: "+60 88-428-601",
+    qualifications: ["MD", "MBBS", "Dermatology Specialist"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor-wong.png"
+  },
+  {
+    name: "Dr. Sufiah Ismail",
+    specialty: "Family Medicine",
+    branchId: "11",
+    contact: "+60 88-428-602",
+    qualifications: ["MD", "MBBS", "Family Medicine"],
+    availability: ["Tuesday", "Thursday", "Saturday"],
+    image: "doctor-sarah.png"
+  },
+
+  // Branch 12 doctors (Permai Api Api - Kota Kinabalu)
+  {
+    name: "Dr. Benjamin Lee",
+    specialty: "Emergency Medicine",
+    branchId: "12",
+    contact: "+60 88-211-333",
+    qualifications: ["MD", "Emergency Medicine Specialist"],
+    availability: ["Daily"],
+    image: "doctor1.png"
+  },
+  {
+    name: "Dr. Alicia Fernandez",
+    specialty: "Internal Medicine",
+    branchId: "12",
+    contact: "+60 88-211-334",
+    qualifications: ["MD", "MBBS", "Internal Medicine"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor-emma.png"
+  },
+  {
+    name: "Dr. Hafiz Rahman",
+    specialty: "Orthopedics",
+    branchId: "12",
+    contact: "+60 88-211-335",
+    qualifications: ["MD", "MBBS", "Orthopedic Specialist"],
+    availability: ["Tuesday", "Thursday", "Saturday"],
+    image: "doctor3.png"
+  },
+  {
+    name: "Dr. Grace Lim",
+    specialty: "Gynecology",
+    branchId: "12",
+    contact: "+60 88-211-336",
+    qualifications: ["MD", "MBBS", "Obstetrics & Gynecology"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor-jessica.png"
+  },
+
+  // Branch 13 doctors (Permai Putatan - Kota Kinabalu)
+  {
+    name: "Dr. Steven Chew",
+    specialty: "Cardiology",
+    branchId: "13",
+    contact: "+60 88-518-911",
+    qualifications: ["MD", "MBBS", "Cardiology Specialist"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor1.png"
+  },
+  {
+    name: "Dr. Nadia Ahmad",
+    specialty: "Psychiatry",
+    branchId: "13",
+    contact: "+60 88-518-912",
+    qualifications: ["MD", "PhD", "Psychiatry Specialist"],
+    availability: ["Tuesday", "Thursday", "Saturday"],
+    image: "doctor-sarah.png"
+  },
+  {
+    name: "Dr. Marcus Tan",
+    specialty: "Surgery",
+    branchId: "13",
+    contact: "+60 88-518-913",
+    qualifications: ["MD", "MBBS", "General Surgery"],
+    availability: ["Monday", "Tuesday", "Thursday"],
+    image: "doctor3.png"
+  },
+  {
+    name: "Dr. Farah Zainal",
+    specialty: "ENT",
+    branchId: "13",
+    contact: "+60 88-518-914",
+    qualifications: ["MD", "MBBS", "Otolaryngologist"],
+    availability: ["Wednesday", "Friday", "Saturday"],
+    image: "doctor-chen.png"
+  },
+  {
+    name: "Dr. Jonathan Yap",
+    specialty: "Ophthalmology",
+    branchId: "13",
+    contact: "+60 88-518-915",
+    qualifications: ["MD", "MBBS", "Eye Specialist"],
+    availability: ["Monday", "Wednesday", "Friday"],
+    image: "doctor-wong.png"
   }
 ];
 

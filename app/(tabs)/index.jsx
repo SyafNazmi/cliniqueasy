@@ -1,5 +1,6 @@
+// app/(tabs)/index.jsx - Improved with better realtime handling
 import { View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, StyleSheet, RefreshControl, SafeAreaView, StatusBar } from 'react-native'
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useFocusEffect } from '@react-navigation/native'
 import Header from "../../components/Header";
 import AppointmentCard from '../../components/AppointmentCard';
@@ -23,8 +24,15 @@ export default function HomeScreen() {
     own: 0
   });
 
+  // IMPROVED: Add refs for cleanup and retry logic
+  const subscriptionRef = useRef(null);
+  const retryTimeoutRef = useRef(null);
+  const isComponentMountedRef = useRef(true);
+
   // Function to fetch appointments (extracted for reuse)
   const fetchUserAndAppointments = useCallback(async (showLoader = true) => {
+    if (!isComponentMountedRef.current) return;
+    
     try {
       if (showLoader) {
         setIsLoading(true);
@@ -34,175 +42,226 @@ export default function HomeScreen() {
       
       // Get current user
       const currentUser = await AuthService.getCurrentUser();
+      if (!currentUser || !isComponentMountedRef.current) return;
+      
       setUser(currentUser);
       
-      // Fetch user's appointments from Appwrite
-      if (currentUser) {
-        // Enhanced query with ordering to get newest first
-        const queries = [
-          Query.equal('user_id', currentUser.$id),
-          Query.orderDesc('$createdAt'),
-          Query.limit(100)
-        ];
-        
-        const response = await DatabaseService.listDocuments(
-          COLLECTIONS.APPOINTMENTS,
-          queries
-        );
-        
-        const appointmentDocuments = response.documents || [];
-        setAppointments(appointmentDocuments);
-        
-        // Calculate family booking stats
-        const familyBookings = appointmentDocuments.filter(apt => apt.is_family_booking === true);
-        const ownBookings = appointmentDocuments.filter(apt => apt.is_family_booking !== true);
-        
-        setFamilyBookingStats({
-          total: appointmentDocuments.length,
-          family: familyBookings.length,
-          own: ownBookings.length
-        });
-      }
+      // Fetch user's appointments
+      const queries = [
+        Query.equal('user_id', currentUser.$id),
+        Query.orderDesc('$createdAt'),
+        Query.limit(100)
+      ];
+      
+      const response = await DatabaseService.listDocuments(
+        COLLECTIONS.APPOINTMENTS,
+        queries
+      );
+      
+      if (!isComponentMountedRef.current) return;
+      
+      const appointmentDocuments = response.documents || [];
+      setAppointments(appointmentDocuments);
+      
+      // Calculate family booking stats
+      const familyBookings = appointmentDocuments.filter(apt => apt.is_family_booking === true);
+      const ownBookings = appointmentDocuments.filter(apt => apt.is_family_booking !== true);
+      
+      setFamilyBookingStats({
+        total: appointmentDocuments.length,
+        family: familyBookings.length,
+        own: ownBookings.length
+      });
+      
     } catch (error) {
-      console.error('Error fetching data:', error);
+      console.error('Error fetching appointments:', error);
+      if (!showLoader && isComponentMountedRef.current) {
+        // Show error toast for refresh failures
+      }
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (isComponentMountedRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, []);
+
+  // IMPROVED: Simplified realtime subscription with better error handling
+  const setupRealtimeSubscription = useCallback(async () => {
+    try {
+      // Clear existing subscription
+      if (subscriptionRef.current) {
+        appointmentManager.unsubscribe(subscriptionRef.current);
+        subscriptionRef.current = null;
+      }
+
+      const currentUser = await AuthService.getCurrentUser();
+      if (!currentUser || !isComponentMountedRef.current) return;
+
+      console.log('Setting up realtime subscription for appointments...');
+      
+      // Simplified subscription with debounced refresh
+      const subscriptionKey = appointmentManager.subscribeToAppointments(
+        (event) => {
+          if (!isComponentMountedRef.current) return;
+          
+          console.log('Realtime appointment event received:', event);
+          
+          // Check if this appointment belongs to the current user
+          if (event.appointment?.user_id === currentUser.$id) {
+            // Simple debounced refresh - just refresh data after a short delay
+            if (retryTimeoutRef.current) {
+              clearTimeout(retryTimeoutRef.current);
+            }
+            
+            retryTimeoutRef.current = setTimeout(() => {
+              if (isComponentMountedRef.current) {
+                console.log('Refreshing appointments due to realtime event');
+                fetchUserAndAppointments(false);
+              }
+            }, 1000); // 1 second delay to debounce multiple events
+          }
+        }
+      );
+
+      subscriptionRef.current = subscriptionKey;
+      console.log('Realtime subscription established:', subscriptionKey);
+      
+    } catch (error) {
+      console.error('Error setting up realtime subscription:', error);
+      // Don't show error to user - realtime is nice-to-have, not critical
+    }
+  }, [fetchUserAndAppointments]);
 
   // Use useFocusEffect to refetch data when screen comes into focus
   useFocusEffect(
     useCallback(() => {
-      fetchUserAndAppointments(false); // Don't show full loader when refocusing
+      console.log('HomeScreen focused, refreshing data...');
+      fetchUserAndAppointments(false);
     }, [fetchUserAndAppointments])
   );
 
-  // Set up real-time subscription for appointments
+  // IMPROVED: Better effect management
   useEffect(() => {
-    let subscriptionKey = null;
-
-    const setupRealtimeSubscription = async () => {
-      try {
-        const currentUser = await AuthService.getCurrentUser();
-        if (currentUser) {
-          subscriptionKey = appointmentManager.subscribeToAppointments(
-            (event) => {
-              // Check if this appointment belongs to the current user
-              if (event.appointment?.user_id === currentUser.$id) {
-                // Enhanced retry logic: Try multiple times to ensure we get the new appointment
-                const retryFetch = async (attempt = 1, maxAttempts = 3) => {
-                  await fetchUserAndAppointments(false);
-                  
-                  // Check if the new appointment is now in state
-                  const newAppointmentId = event.appointment?.$id;
-                  if (newAppointmentId && attempt < maxAttempts) {
-                    // Add a small delay to let state update
-                    setTimeout(() => {
-                      setAppointments(currentAppointments => {
-                        const hasNewAppointment = currentAppointments.some(apt => apt.$id === newAppointmentId);
-                        
-                        if (!hasNewAppointment) {
-                          setTimeout(() => retryFetch(attempt + 1, maxAttempts), 1500);
-                        }
-                        
-                        return currentAppointments;
-                      });
-                    }, 500);
-                  }
-                };
-                
-                // Start the retry process with a delay
-                setTimeout(() => retryFetch(), 1000);
-              }
-            }
-          );
-        }
-      } catch (error) {
-        console.error('Error setting up real-time subscription:', error);
+    isComponentMountedRef.current = true;
+    
+    // Initial load
+    fetchUserAndAppointments(true);
+    
+    // Set up realtime subscription after initial load
+    const setupSubscriptionDelayed = setTimeout(() => {
+      if (isComponentMountedRef.current) {
+        setupRealtimeSubscription();
       }
-    };
+    }, 2000); // Delay to avoid conflicts with initial load
 
-    setupRealtimeSubscription();
-
-    // Cleanup subscription on unmount
+    // Cleanup function
     return () => {
-      if (subscriptionKey) {
-        appointmentManager.unsubscribe(subscriptionKey);
+      isComponentMountedRef.current = false;
+      
+      // Clear timeouts
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+      clearTimeout(setupSubscriptionDelayed);
+      
+      // Cleanup subscription
+      if (subscriptionRef.current) {
+        try {
+          appointmentManager.unsubscribe(subscriptionRef.current);
+        } catch (error) {
+          console.error('Error cleaning up subscription:', error);
+        }
+        subscriptionRef.current = null;
       }
     };
-  }, [fetchUserAndAppointments]);
-
-  // Initial load
-  useEffect(() => {
-    fetchUserAndAppointments();
-  }, [fetchUserAndAppointments]);
+  }, [fetchUserAndAppointments, setupRealtimeSubscription]);
 
   // Add pull-to-refresh functionality
   const onRefresh = useCallback(() => {
+    console.log('Pull to refresh triggered');
     fetchUserAndAppointments(false);
   }, [fetchUserAndAppointments]);
 
-  // Find upcoming appointments (today or in the future)
+  // IMPROVED: More robust appointment filtering
   const upcomingAppointments = appointments.filter(appointment => {
-    // First check if appointment is cancelled or completed
-    const status = appointment.status?.toLowerCase();
-    if (status === 'cancelled' || status === 'completed') {
+    try {
+      // First check if appointment is cancelled or completed
+      const status = appointment.status?.toLowerCase();
+      if (status === 'cancelled' || status === 'completed') {
+        return false;
+      }
+      
+      // Parse the appointment date
+      const parts = appointment.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
+      if (!parts) {
+        console.warn('Invalid date format:', appointment.date);
+        return false;
+      }
+      
+      const [_, dayName, dayNum, monthName, year] = parts;
+      const months = {
+        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+      };
+      
+      const monthIndex = months[monthName];
+      if (monthIndex === undefined) {
+        console.warn('Unknown month:', monthName);
+        return false;
+      }
+      
+      const appointmentDate = new Date(
+        parseInt(year),
+        monthIndex,
+        parseInt(dayNum)
+      );
+      
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      return appointmentDate >= today;
+    } catch (error) {
+      console.error('Error filtering appointment:', appointment, error);
       return false;
     }
-    
-    // Parse the appointment date
-    const parts = appointment.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
-    if (!parts) return false;
-    
-    const [_, dayName, dayNum, monthName, year] = parts;
-    const months = {
-      'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-      'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-    };
-    
-    const appointmentDate = new Date(
-      parseInt(year),
-      months[monthName],
-      parseInt(dayNum)
-    );
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    return appointmentDate >= today;
   });
 
   // Sort upcoming appointments by date (earliest first)
   const sortedUpcomingAppointments = [...upcomingAppointments].sort((a, b) => {
-    const partsA = a.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
-    const partsB = b.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
-    
-    if (!partsA || !partsB) return 0;
-    
-    const months = {
-      'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-      'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-    };
-    
-    const dateA = new Date(
-      parseInt(partsA[4]),
-      months[partsA[3]],
-      parseInt(partsA[2])
-    );
-    
-    const dateB = new Date(
-      parseInt(partsB[4]),
-      months[partsB[3]],
-      parseInt(partsB[2])
-    );
-    
-    // If same date, sort by time
-    if (dateA.getTime() === dateB.getTime()) {
-      return a.time_slot?.localeCompare(b.time_slot || '');
+    try {
+      const partsA = a.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
+      const partsB = b.date?.match(/(\w+), (\d+) (\w+) (\d+)/);
+      
+      if (!partsA || !partsB) return 0;
+      
+      const months = {
+        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+      };
+      
+      const dateA = new Date(
+        parseInt(partsA[4]),
+        months[partsA[3]],
+        parseInt(partsA[2])
+      );
+      
+      const dateB = new Date(
+        parseInt(partsB[4]),
+        months[partsB[3]],
+        parseInt(partsB[2])
+      );
+      
+      // If same date, sort by time
+      if (dateA.getTime() === dateB.getTime()) {
+        return a.time_slot?.localeCompare(b.time_slot || '');
+      }
+      
+      return dateA - dateB;
+    } catch (error) {
+      console.error('Error sorting appointments:', error);
+      return 0;
     }
-    
-    return dateA - dateB;
   });
 
   // Calculate family booking info for upcoming appointments
@@ -219,7 +278,6 @@ export default function HomeScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={onRefresh}
-            colors={['#0AD476']} // Android
             tintColor="#0AD476" // iOS
           />
         }

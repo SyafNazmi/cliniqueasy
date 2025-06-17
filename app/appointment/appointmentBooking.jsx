@@ -1,5 +1,5 @@
-// app/appointment/appointmentBooking.jsx - Modified with Family Booking Support
-import React, { useState, useEffect } from 'react';
+// app/appointment/appointmentBooking.jsx - Fixed with Focus Refresh
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -10,11 +10,12 @@ import {
   Image, 
   StyleSheet,
   ScrollView,
-  Modal // NEW: Added Modal import
+  Modal
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { DatabaseService, AuthService, Query, RealtimeService, account } from '../../configs/AppwriteConfig'; // NEW: Added account import
-import { doctorImages, COLLECTIONS, getDoctorsForBranch, PROFILE_TYPES } from '../../constants'; // NEW: Added PROFILE_TYPES import
+import { useFocusEffect } from '@react-navigation/native'; // ADD: Import useFocusEffect
+import { DatabaseService, AuthService, Query, RealtimeService, account } from '../../configs/AppwriteConfig';
+import { doctorImages, COLLECTIONS, getDoctorsForBranch, PROFILE_TYPES } from '../../constants';
 import PageHeader from '../../components/PageHeader';
 import { appointmentManager, APPOINTMENT_STATUS } from '../../service/appointmentUtils';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,7 +30,7 @@ const AppointmentBooking = () => {
   // FIXED: Handle both serviceId and service_id parameter names
   const branchId = String(params.branchId);
   const branchName = params.branchName;
-  const service_id = String(params.serviceId || params.service_id || ''); // Accept either name
+  const service_id = String(params.serviceId || params.service_id || '');
   const serviceName = params.serviceName;
   
   console.log('Processed params:', { branchId, service_id, serviceName, branchName });
@@ -44,13 +45,21 @@ const AppointmentBooking = () => {
   const [bookedSlots, setBookedSlots] = useState({});
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [realtimeSubscription, setRealtimeSubscription] = useState(null);
+  
   // FAMILY BOOKING STATES
   const [availableProfiles, setAvailableProfiles] = useState([]);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [showPatientModal, setShowPatientModal] = useState(false);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
   
-  // Service details based on service ID - matching the format in your constants
+  // NEW: Add state for profile validation
+  const [profileComplete, setProfileComplete] = useState(false);
+  const [profileCheckLoading, setProfileCheckLoading] = useState(true);
+  
+  // NEW: Ref to track component mount state
+  const isComponentMountedRef = useRef(true);
+  
+  // Service details based on service ID
   const serviceDetails = {
     '1': { 
       duration: 'Approximately 45 minutes',
@@ -84,11 +93,84 @@ const AppointmentBooking = () => {
     return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
   };
 
-  // NEW: Load available profiles for family booking - MOVED OUTSIDE useEffect
-  const loadAvailableProfiles = async () => {
+  // ENHANCED: Profile validation function - extracted for reuse
+  const checkProfileBeforeBooking = useCallback(async () => {
+    if (!isComponentMountedRef.current) return false;
+    
+    try {
+      setProfileCheckLoading(true);
+      const currentUser = await AuthService.getCurrentUser();
+      
+      if (!currentUser) {
+        router.replace('/login/signIn');
+        return false;
+      }
+      
+      const response = await DatabaseService.listDocuments(
+        COLLECTIONS.PATIENT_PROFILES,
+        [Query.equal('userId', currentUser.$id)],
+        1
+      );
+      
+      if (!isComponentMountedRef.current) return false;
+      
+      if (response.documents.length === 0) {
+        // No profile found - redirect to profile creation
+        Alert.alert(
+          "Profile Required",
+          "Please complete your patient profile before booking an appointment.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Create Profile", onPress: () => router.push('/profile') }
+          ]
+        );
+        setProfileComplete(false);
+        return false;
+      }
+      
+      // Check for required fields
+      const profile = response.documents[0];
+      const requiredFields = ['email', 'phoneNumber', 'fullName', 'gender', 'birthDate', 'address'];
+      const missingFields = requiredFields.filter(field => !profile[field]);
+      
+      if (missingFields.length > 0) {
+        Alert.alert(
+          "Incomplete Profile",
+          `Please complete these required fields: ${missingFields.join(', ')}`,
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Update Profile", onPress: () => router.push('/profile') }
+          ]
+        );
+        setProfileComplete(false);
+        return false;
+      }
+      
+      // Profile is complete
+      console.log("Profile validation passed");
+      setProfileComplete(true);
+      return true;
+      
+    } catch (error) {
+      console.error('Error checking profile:', error);
+      setProfileComplete(false);
+      return false;
+    } finally {
+      if (isComponentMountedRef.current) {
+        setProfileCheckLoading(false);
+      }
+    }
+  }, [router]);
+
+  // ENHANCED: Load available profiles function - extracted for reuse
+  const loadAvailableProfiles = useCallback(async () => {
+    if (!isComponentMountedRef.current) return;
+    
     try {
       setLoadingProfiles(true);
       const user = await account.get();
+      
+      if (!user || !isComponentMountedRef.current) return;
       
       // Get all profiles for this user
       const response = await DatabaseService.listDocuments(
@@ -96,6 +178,8 @@ const AppointmentBooking = () => {
         [DatabaseService.createQuery('equal', 'userId', user.$id)],
         100
       );
+
+      if (!isComponentMountedRef.current) return;
 
       const allProfiles = response.documents || [];
       
@@ -119,11 +203,148 @@ const AppointmentBooking = () => {
 
     } catch (error) {
       console.error('Error loading profiles:', error);
-      Alert.alert('Error', 'Failed to load family profiles. Please try again.');
+      if (isComponentMountedRef.current) {
+        Alert.alert('Error', 'Failed to load family profiles. Please try again.');
+      }
     } finally {
-      setLoadingProfiles(false);
+      if (isComponentMountedRef.current) {
+        setLoadingProfiles(false);
+      }
     }
-  };
+  }, []);
+
+  // ENHANCED: Load all initial data function
+  const loadInitialData = useCallback(async () => {
+    if (!isComponentMountedRef.current) return;
+    
+    try {
+      setIsLoading(true);
+      
+      // Check profile first
+      const profileValid = await checkProfileBeforeBooking();
+      
+      if (!profileValid || !isComponentMountedRef.current) {
+        setIsLoading(false);
+        return;
+      }
+      
+      // Load profiles and other data in parallel
+      await Promise.all([
+        loadAvailableProfiles(),
+        loadServiceData(),
+        loadDoctors()
+      ]);
+      
+    } catch (error) {
+      console.error('Error loading initial data:', error);
+      if (isComponentMountedRef.current) {
+        setError(error.message);
+      }
+    } finally {
+      if (isComponentMountedRef.current) {
+        setIsLoading(false);
+      }
+    }
+  }, [checkProfileBeforeBooking, loadAvailableProfiles]);
+
+  // ENHANCED: Refresh data when screen comes into focus
+  const refreshDataOnFocus = useCallback(async () => {
+    if (!isComponentMountedRef.current) return;
+    
+    console.log('AppointmentBooking screen focused, refreshing data...');
+    
+    try {
+      // Check profile validation first
+      const profileValid = await checkProfileBeforeBooking();
+      
+      if (profileValid && isComponentMountedRef.current) {
+        // Refresh profiles if profile is valid
+        await loadAvailableProfiles();
+      }
+    } catch (error) {
+      console.error('Error refreshing data on focus:', error);
+    }
+  }, [checkProfileBeforeBooking, loadAvailableProfiles]);
+
+  // ADD: Use useFocusEffect to refresh data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      refreshDataOnFocus();
+    }, [refreshDataOnFocus])
+  );
+
+  // EXTRACTED: Service data loading
+  const loadServiceData = useCallback(async () => {
+    try {
+      if (service_id) {
+        console.log('Looking for service with ID:', service_id);
+        
+        // Try to fetch from database first
+        const response = await DatabaseService.listDocuments(
+          COLLECTIONS.SERVICES,
+          [Query.equal('service_id', service_id)],
+          1
+        );
+        
+        console.log('Service lookup response:', response);
+        
+        if (response.documents && response.documents.length > 0) {
+          console.log('Found service in database:', response.documents[0]);
+          setServiceData({
+            duration: response.documents[0].duration,
+            fee: response.documents[0].fee
+          });
+        } else {
+          // Use local fallback if not found in DB
+          console.log(`Service not found in DB. Using local fallback for service_id: ${service_id}`);
+          setServiceData(serviceDetails[service_id]);
+          
+          if (!serviceDetails[service_id]) {
+            console.log(`WARNING: Service ${service_id} not found in local data either.`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching service details:', err);
+      setServiceData(serviceDetails[service_id]);
+    }
+  }, [service_id, serviceDetails]);
+
+  // EXTRACTED: Doctor loading
+  const loadDoctors = useCallback(async () => {
+    try {
+      console.log('Fetching doctors for branchId:', branchId);
+      
+      const doctorsForBranch = await getDoctorsForBranch(branchId);
+      
+      if (doctorsForBranch && doctorsForBranch.length > 0) {
+        console.log(`Found ${doctorsForBranch.length} doctors for branch ${branchId}`);
+        setDoctors(doctorsForBranch);
+      } else {
+        console.log('No doctors found for this branch in the database. Using local fallback.');
+        
+        const { DoctorsData } = require('../../constants');
+        const filteredDoctors = DoctorsData.filter(doc => doc.branchId === branchId);
+        
+        if (filteredDoctors.length > 0) {
+          const formattedDoctors = filteredDoctors.map((doc, index) => ({
+            ...doc,
+            $id: `temp_${index}`
+          }));
+          
+          console.log(`Using ${formattedDoctors.length} doctors from local data.`);
+          setDoctors(formattedDoctors);
+        } else {
+          console.log('No doctors found in local data either.');
+          setDoctors([]);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching doctors:', err);
+      setError(err.message);
+      Alert.alert('Error', `Failed to fetch doctors: ${err.message}`);
+    }
+  }, [branchId]);
 
   // Fetch booked appointments for a specific doctor and date
   const fetchBookedSlots = async (doctorId, date) => {
@@ -131,7 +352,6 @@ const AppointmentBooking = () => {
     
     setLoadingSlots(true);
     try {
-      // Use the enhanced method from appointmentManager
       const bookedSlotsArray = await appointmentManager.getBookedSlots(doctorId, date);
       
       console.log('Found booked slots:', bookedSlotsArray);
@@ -159,7 +379,6 @@ const AppointmentBooking = () => {
       const subscription = appointmentManager.subscribeToAppointments((update) => {
         console.log('Booking screen received update:', update);
         
-        // If the update is for the currently selected doctor and date, refresh availability
         if (selectedDoctor && selectedDate && update.appointment) {
           const appointment = update.appointment;
           const formattedDate = formatDate(selectedDate);
@@ -179,157 +398,26 @@ const AppointmentBooking = () => {
     }
   };
 
-  // Cleanup subscription on unmount
+  // UPDATED: Initial effect - simplified to just load data once
   useEffect(() => {
+    isComponentMountedRef.current = true;
+    
+    // Load initial data
+    loadInitialData();
+    
+    // Subscribe to real-time updates
+    subscribeToAppointments();
+    
+    // Cleanup function
     return () => {
+      isComponentMountedRef.current = false;
+      
       if (realtimeSubscription) {
-        // Use the appointmentManager's unsubscribe method instead of calling realtimeSubscription directly
         appointmentManager.unsubscribe(realtimeSubscription);
         console.log('Unsubscribed from real-time updates');
       }
     };
-  }, [realtimeSubscription]);
-
-  useEffect(() => {
-    // Subscribe to real-time updates when component mounts
-    subscribeToAppointments();
-    
-    // NEW: Load available profiles for family booking
-    loadAvailableProfiles();
-    
-    // Load service data from the database or use fallback
-    const getServiceData = async () => {
-      try {
-        if (service_id) {
-          console.log('Looking for service with ID:', service_id);
-          
-          // Try to fetch from database first
-          const response = await DatabaseService.listDocuments(
-            COLLECTIONS.SERVICES,
-            [Query.equal('service_id', service_id)],
-            1
-          );
-          
-          console.log('Service lookup response:', response);
-          
-          if (response.documents && response.documents.length > 0) {
-            console.log('Found service in database:', response.documents[0]);
-            setServiceData({
-              duration: response.documents[0].duration,
-              fee: response.documents[0].fee
-            });
-          } else {
-            // Use local fallback if not found in DB
-            console.log(`Service not found in DB. Using local fallback for service_id: ${service_id}`);
-            setServiceData(serviceDetails[service_id]);
-            
-            // Additional debug if not found in local data either
-            if (!serviceDetails[service_id]) {
-              console.log(`WARNING: Service ${service_id} not found in local data either.`);
-              console.log('Available service_ids in local data:', Object.keys(serviceDetails));
-            }
-          }
-        }
-      } catch (err) {
-        console.error('Error fetching service details:', err);
-        // Still use local fallback on error
-        setServiceData(serviceDetails[service_id]);
-      }
-    };
-
-    const checkProfileBeforeBooking = async () => {
-      try {
-        const currentUser = await AuthService.getCurrentUser();
-        
-        if (currentUser) {
-          const response = await DatabaseService.listDocuments(
-            COLLECTIONS.PATIENT_PROFILES,
-            [Query.equal('userId', currentUser.$id)],
-            1
-          );
-          
-          if (response.documents.length === 0) {
-            // No profile found - redirect to profile creation
-            Alert.alert(
-              "Profile Required",
-              "Please complete your patient profile before booking an appointment.",
-              [
-                { text: "Create Profile", onPress: () => router.push('/profile') }
-              ]
-            );
-            return;
-          }
-          
-          // Check for required fields (using same fields as in your form validation)
-          const profile = response.documents[0];
-          const requiredFields = ['email', 'phoneNumber', 'fullName', 'gender', 'birthDate', 'address'];
-          const missingFields = requiredFields.filter(field => !profile[field]);
-          
-          if (missingFields.length > 0) {
-            Alert.alert(
-              "Incomplete Profile",
-              "Please complete the required fields in your profile before booking.",
-              [
-                { text: "Update Profile", onPress: () => router.push('/profile') }
-              ]
-            );
-            return;
-          }
-          
-          // Profile is complete, can proceed with booking
-          console.log("Profile complete, proceeding with booking");
-        }
-      } catch (error) {
-        console.error('Error checking profile:', error);
-      }
-    };
-    
-    checkProfileBeforeBooking();
-    getServiceData(); // Fetch the service data
-
-    const fetchDoctors = async () => {
-      try {
-        console.log('Fetching doctors for branchId:', branchId);
-        
-        // Use the helper function from constants
-        const doctorsForBranch = await getDoctorsForBranch(branchId);
-        
-        if (doctorsForBranch && doctorsForBranch.length > 0) {
-          console.log(`Found ${doctorsForBranch.length} doctors for branch ${branchId}`);
-          setDoctors(doctorsForBranch);
-        } else {
-          console.log('No doctors found for this branch in the database. Using local fallback.');
-          
-          // Import DoctorsData from constants
-          const { DoctorsData } = require('../../constants');
-          
-          // Filter doctors by branchId
-          const filteredDoctors = DoctorsData.filter(doc => doc.branchId === branchId);
-          
-          if (filteredDoctors.length > 0) {
-            // Add $id field to match database format
-            const formattedDoctors = filteredDoctors.map((doc, index) => ({
-              ...doc,
-              $id: `temp_${index}`
-            }));
-            
-            console.log(`Using ${formattedDoctors.length} doctors from local data.`);
-            setDoctors(formattedDoctors);
-          } else {
-            console.log('No doctors found in local data either.');
-            setDoctors([]);
-          }
-        }
-      } catch (err) {
-        console.error('Error fetching doctors:', err);
-        setError(err.message);
-        Alert.alert('Error', `Failed to fetch doctors: ${err.message}`);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchDoctors();
-  }, [branchId, service_id]);
+  }, [loadInitialData]);
 
   // Fetch booked slots when doctor or date changes
   useEffect(() => {
@@ -349,11 +437,10 @@ const AppointmentBooking = () => {
 
   const handleDateSelect = (date) => {
     setSelectedDate(date);
-    setSelectedTimeSlot(null); // Clear time slot when date changes
+    setSelectedTimeSlot(null);
   };
 
   const handleTimeSlotSelect = (timeSlot) => {
-    // Check if slot is booked
     if (bookedSlots[timeSlot]) {
       Alert.alert('Unavailable', 'This time slot is already booked. Please select another time.');
       return;
@@ -368,7 +455,7 @@ const AppointmentBooking = () => {
       return;
     }
   
-    // Double-check availability before booking using the enhanced method
+    // Double-check availability before booking
     const isStillAvailable = await appointmentManager.checkSlotAvailability(
       selectedDoctor.$id,
       selectedDate,
@@ -378,7 +465,6 @@ const AppointmentBooking = () => {
     if (!isStillAvailable) {
       Alert.alert('Slot Unavailable', 'This time slot was just booked. Please select another time.');
       setSelectedTimeSlot(null);
-      // Refresh availability using your existing function
       fetchBookedSlots(selectedDoctor.$id, selectedDate);
       return;
     }
@@ -387,7 +473,6 @@ const AppointmentBooking = () => {
       const currentUser = await AuthService.getCurrentUser();
       const formattedDate = formatDate(selectedDate);
       
-      // UPDATED: Enhanced appointment object with family booking support
       const appointment = {
         user_id: currentUser.$id,
         doctor_id: selectedDoctor.$id,
@@ -403,7 +488,6 @@ const AppointmentBooking = () => {
         updated_at: new Date().toISOString(),
         has_prescription: false,
         reschedule_count: 0,
-        // NEW: Family booking fields
         patient_id: selectedPatient.$id,
         patient_name: selectedPatient.fullName || selectedPatient.displayName,
         is_family_booking: !selectedPatient.isOwner
@@ -413,7 +497,6 @@ const AppointmentBooking = () => {
       
       const result = await DatabaseService.createDocument(COLLECTIONS.APPOINTMENTS, appointment);
       
-      // Navigate to success page with enhanced parameters
       router.push({
         pathname: '/appointment/success',
         params: {
@@ -433,7 +516,7 @@ const AppointmentBooking = () => {
     }
   };
 
-  // NEW: Patient Selection Modal Component
+  // Patient Selection Modal Component
   const PatientSelectorModal = () => (
     <Modal
       visible={showPatientModal}
@@ -501,11 +584,35 @@ const AppointmentBooking = () => {
     </Modal>
   );
 
-  if (isLoading || loadingProfiles) {
+  // UPDATED: Loading state - show loading until profile check is complete
+  if (isLoading || profileCheckLoading || (loadingProfiles && !profileComplete)) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#0AD476" />
-        <Text>Loading...</Text>
+        <Text>
+          {profileCheckLoading ? 'Checking profile...' : 
+           loadingProfiles ? 'Loading profiles...' : 
+           'Loading...'}
+        </Text>
+      </SafeAreaView>
+    );
+  }
+
+  // UPDATED: Don't render the main UI if profile is not complete
+  if (!profileComplete) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <PageHeader onPress={() => router.back()} />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorTitle}>Profile Required</Text>
+          <Text style={styles.errorText}>Please complete your profile before booking appointments.</Text>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.push('/profile')}
+          >
+            <Text style={styles.backButtonText}>Complete Profile</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
@@ -548,7 +655,6 @@ const AppointmentBooking = () => {
         <View style={styles.serviceInfo}>
           <Text style={styles.serviceName}>{serviceName}</Text>
           
-          {/* Enhanced service details rendering with proper debug information */}
           {serviceData ? (
             <>
               <Text style={styles.sectionTitle}>DURATION</Text>
@@ -565,7 +671,7 @@ const AppointmentBooking = () => {
           )}
         </View>
 
-        {/* NEW: Patient Selection Section */}
+        {/* Patient Selection Section */}
         {availableProfiles.length > 0 && (
           <View style={styles.patientSection}>
             <Text style={styles.sectionTitle}>APPOINTMENT FOR</Text>
@@ -595,6 +701,7 @@ const AppointmentBooking = () => {
           </View>
         )}
 
+        {/* Rest of your existing JSX remains the same */}
         {doctors.length === 0 ? (
           <View style={styles.noDoctorsContainer}>
             <Text style={styles.noDoctorsText}>No doctors available at this branch for this service.</Text>
@@ -720,7 +827,7 @@ const AppointmentBooking = () => {
       {/* Patient Selector Modal */}
       <PatientSelectorModal />
 
-      {/* UPDATED: Continue Button with patient validation */}
+      {/* Continue Button with patient validation */}
       {doctors.length > 0 && (
         <TouchableOpacity 
           style={[
@@ -739,6 +846,7 @@ const AppointmentBooking = () => {
   );
 };
 
+// Styles remain exactly the same...
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -809,7 +917,7 @@ const styles = StyleSheet.create({
     borderColor: '#ffdddd',
     marginTop: 10,
   },
-  // NEW: Patient selection styles
+  // Patient selection styles
   patientSection: {
     padding: 15,
     borderBottomWidth: 1,

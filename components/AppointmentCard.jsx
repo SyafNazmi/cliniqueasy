@@ -1,4 +1,4 @@
-// components/AppointmentCard.jsx - FIXED VERSION with proper status badges
+// components/AppointmentCard.jsx - FIXED VERSION with complete doctor image mapping
 import React from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -51,53 +51,126 @@ export default function AppointmentCard({ appointment, showCancelled = false, cu
   const { dayName, day, month } = extractDayMonth(appointment.date);
   
   const getImageSource = () => {
-  const doctorName = appointment.doctor_name;
-  
-  if (!doctorName) {
-    return require('../assets/images/doctor1.png');
-  }
-  
-  // Clean the doctor name by removing "Dr. " prefixes
-  const cleanName = doctorName.replace(/^Dr\.\s*/gi, '').trim();
-  
-  const doctorImageMap = {
-    "John Green": "doctor1.png",
-    "Leila Cameron": "doctor2.png", 
-    "David Livingston": "doctor3.png",
-    "Jessica Tan": "doctor-jessica.png",
-    "Michael Wong": "doctor-wong.png",
-    "Sarah Johnson": "doctor-sarah.png",
-    "Robert Chen": "doctor-chen.png", 
-    "Emma Lee": "doctor-emma.png",
-    "Ahmad Razak": "doctor-ahmad.png",
-    // Add mapping for doctors that appear with "Dr. Dr." prefix
-    "Richard Teo": "doctor3.png", 
-    "Priya Sharma": "doctor-emma.png"
-  };
-  
-  // First try exact match with cleaned name
-  const imageKey = doctorImageMap[cleanName];
-  
-  if (imageKey && doctorImages[imageKey]) {
-    // console.log(`Found exact match for ${cleanName}: ${imageKey}`);
-    return doctorImages[imageKey];
-  }
-  
-  // Fallback: try matching by name parts
-  const nameParts = cleanName.toLowerCase().split(' ');
-  for (const [key, image] of Object.entries(doctorImages)) {
-    const keyLower = key.toLowerCase();
+    const doctorName = appointment.doctor_name;
     
-    // Check if any part of the doctor's name matches the image key
-    if (nameParts.some(part => keyLower.includes(part) || part.includes(keyLower.replace(/[^a-z]/g, '')))) {
-      console.log(`Found fallback match for ${cleanName}: ${key}`);
-      return image;
+    if (!doctorName) {
+      return require('../assets/images/doctor1.png');
     }
-  }
-  
-  console.log(`No image found for ${cleanName}, using default`);
-  return require('../assets/images/doctor1.png');
-};
+    
+    // Clean the doctor name by removing "Dr. " prefixes
+    const cleanName = doctorName.replace(/^Dr\.\s*/gi, '').trim();
+    
+    // COMPLETE doctor image mapping for ALL 36 doctors
+    const doctorImageMap = {
+      // Branch 1 doctors
+      "Leila Cameron": "doctor2.png",
+      "Sarah Johnson": "doctor-sarah.png", 
+      "Michael Wong": "doctor-wong.png",
+      
+      // Branch 2 doctors
+      "David Livingston": "doctor3.png",
+      "Jessica Tan": "doctor-jessica.png",
+      "Robert Chen": "doctor-chen.png",
+      
+      // Branch 3 doctors
+      "John Green": "doctor1.png",
+      "Emma Lee": "doctor-emma.png",
+      "Ahmad Razak": "doctor-ahmad.png",
+      
+      // Branch 4 doctors
+      "Siti Aminah": "doctor-sarah.png",
+      "James Lim": "doctor1.png",
+      "Hassan Ibrahim": "doctor3.png",
+      
+      // Branch 5 doctors
+      "Fatimah Ali": "doctor2.png",
+      "Rajesh Kumar": "doctor-wong.png",
+      
+      // Branch 6 doctors
+      "Catherine Liew": "doctor-emma.png",
+      "Muhammad Azlan": "doctor1.png",
+      "Linda Chong": "doctor-sarah.png",
+      
+      // Branch 7 doctors
+      "Norliza Hassan": "doctor2.png",
+      "Peter Goh": "doctor3.png",
+      
+      // Branch 8 doctors
+      "Rashid Omar": "doctor1.png",
+      "Mei Ling Tan": "doctor-jessica.png",
+      "Kevin Lau": "doctor-chen.png",
+      
+      // Branch 9 doctors
+      "Zainab Mohd": "doctor-sarah.png",
+      "William Chin": "doctor-wong.png",
+      
+      // Branch 10 doctors
+      "Richard Teo": "doctor3.png",
+      "Priya Sharma": "doctor-emma.png",
+      "Anthony Wong": "doctor1.png",
+      "Shalini Krishnan": "doctor-jessica.png",
+      
+      // Branch 11 doctors
+      "Marina Abdullah": "doctor2.png",
+      "Daniel Kho": "doctor-wong.png",
+      "Sufiah Ismail": "doctor-sarah.png",
+      
+      // Branch 12 doctors
+      "Benjamin Lee": "doctor1.png",
+      "Alicia Fernandez": "doctor-emma.png",
+      "Hafiz Rahman": "doctor3.png",
+      "Grace Lim": "doctor-jessica.png",
+      
+      // Branch 13 doctors
+      "Steven Chew": "doctor1.png",
+      "Nadia Ahmad": "doctor-sarah.png",
+      "Marcus Tan": "doctor3.png",
+      "Farah Zainal": "doctor-chen.png",
+      "Jonathan Yap": "doctor-wong.png"
+    };
+    
+    // First try exact match with cleaned name
+    const imageKey = doctorImageMap[cleanName];
+    
+    // if (imageKey && doctorImages[imageKey]) {
+    //   console.log(`✅ Found exact match for "${cleanName}": ${imageKey}`);
+    //   return doctorImages[imageKey];
+    // }
+    
+    // Try with "Dr." prefix removed from mapping keys
+    // for (const [mappedName, image] of Object.entries(doctorImageMap)) {
+    //   if (mappedName.toLowerCase() === cleanName.toLowerCase()) {
+    //     console.log(`✅ Found case-insensitive match for "${cleanName}": ${image}`);
+    //     return doctorImages[image];
+    //   }
+    // }
+    
+    // Fallback: try matching by name parts (first or last name)
+    const nameParts = cleanName.toLowerCase().split(' ');
+    for (const [mappedName, image] of Object.entries(doctorImageMap)) {
+      const mappedParts = mappedName.toLowerCase().split(' ');
+      
+      // Check if first name or last name matches
+      if (nameParts.some(part => mappedParts.includes(part))) {
+        console.log(`✅ Found partial match for "${cleanName}" -> "${mappedName}": ${image}`);
+        return doctorImages[image];
+      }
+    }
+    
+    // Final fallback based on gender/name patterns for better assignment
+    const firstNameLower = nameParts[0]?.toLowerCase() || '';
+    const femaleNames = ['sarah', 'emma', 'jessica', 'leila', 'catherine', 'linda', 
+                         'fatimah', 'norliza', 'mei', 'zainab', 'priya', 'shalini', 
+                         'marina', 'sufiah', 'alicia', 'grace', 'nadia', 'farah', 'siti'];
+    
+    if (femaleNames.includes(firstNameLower)) {
+      console.log(`🔄 Using female fallback for "${cleanName}"`);
+      return doctorImages["doctor-sarah.png"];
+    }
+    
+    console.log(`⚠️ No image found for "${cleanName}", using default`);
+    return require('../assets/images/doctor1.png');
+  };
   
   const getCardColor = () => {
     if (appointment.status === 'cancelled') {
@@ -118,7 +191,6 @@ export default function AppointmentCard({ appointment, showCancelled = false, cu
     return styles.cardDefault;
   };
 
-  // FIXED: Added missing bgColor property to match doctor's screen
   const getStatusInfo = () => {
     const status = appointment.status?.toLowerCase();
     
@@ -244,7 +316,6 @@ export default function AppointmentCard({ appointment, showCancelled = false, cu
             </Text>
           </View>
           
-          {/* FIXED: Now includes proper bgColor for status badge */}
           <View style={styles.statusContainer}>
             <View style={[styles.statusBadge, { backgroundColor: statusInfo.bgColor }]}>
               <Ionicons name={statusInfo.icon} size={12} color={statusInfo.color} />
