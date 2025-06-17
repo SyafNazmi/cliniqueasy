@@ -5,11 +5,11 @@ import { account } from '../../configs/AppwriteConfig';
 import { setLocalStorage, removeLocalStorage } from '../../service/Storage';
 import Toast from 'react-native-toast-message';
 import RoleManager from '../../configs/RoleManager';
-import { useAuth } from '../_layout'; // Import auth context
+import { useAuth } from '../_layout';
 
 export default function SignIn() {
     const router = useRouter();
-    const { setUser, setIsDoctor } = useAuth(); // Get auth context functions
+    const { setUser, setIsDoctor } = useAuth();
     
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -29,124 +29,76 @@ export default function SignIn() {
             setLoading(true);
             console.log('Starting sign-in process...');
             
-            // Clear all local storage first
+            // Clear previous session data
             await removeLocalStorage();
-            console.log('Local storage cleared');
-
-            // Attempt to delete existing sessions with error handling
+            
             try {
                 await account.deleteSessions();
-                console.log('Existing sessions deleted');
             } catch (deleteError) {
                 console.log('Session deletion error (can be ignored):', deleteError);
-                // Continue even if session deletion fails
             }
 
-            // Create new email session
+            // Create new session
             const session = await account.createEmailPasswordSession(email, password);
             console.log('New session created');
             
-            // Get current user account details
-            let user;
-            try {
-                user = await account.get();
-                console.log('User details fetched:', user.$id);
-                console.log('User labels:', user.labels);
-                console.log('User preferences:', user.prefs); // This will contain our doctor license
-            } catch (getUserError) {
-                console.error('Error getting user:', getUserError);
-                // If we can't get the user, we'll try to continue with the session information
-                if (!session) {
-                    throw new Error('Failed to authenticate user');
+            // Get user details with preferences
+            const user = await account.get();
+            console.log('User details fetched:', user.$id);
+            console.log('User preferences:', user.prefs);
+
+            // SIMPLIFIED ROLE CHECKING - Primary method: user preferences
+            let isUserDoctor = false;
+            let doctorLicense = null;
+
+            // Check user preferences first (most reliable since we set it during signup)
+            if (user.prefs && typeof user.prefs === 'object') {
+                // Direct boolean check
+                if (user.prefs.isDoctor === true) {
+                    isUserDoctor = true;
+                    console.log('Doctor status found in preferences: isDoctor = true');
                 }
-                // Create a minimal user object from session
-                user = { 
-                    $id: session.userId,
-                    email: email,
-                    name: email.split('@')[0], // Fallback name from email
-                    prefs: {} // Empty prefs object
-                };
-                console.log('Created fallback user object from session');
-            }
-
-            // Extract doctor information from user preferences
-            const userPrefs = user.prefs || {};
-            const isKnownDoctor = userPrefs.isDoctor === true || userPrefs.role === 'doctor';
-            const doctorLicense = userPrefs.doctorLicense || null;
-
-            console.log('User preferences - isDoctor:', isKnownDoctor, 'license:', doctorLicense);
-
-            // MANUAL ROLE CHECK FOR DEBUGGING
-            // This checks if the user has the specific "doctor" label in Appwrite
-            let isKnownDoctorFromLabels = false;
-
-            if (user.labels) {
-                console.log("User labels found:", user.labels);
+                // Role string check
+                else if (user.prefs.role === 'doctor') {
+                    isUserDoctor = true;
+                    console.log('Doctor status found in preferences: role = doctor');
+                }
                 
-                // Direct check for doctor label
-                if (user.labels === "doctor") {
-                    isKnownDoctorFromLabels = true;
-                    console.log("Doctor label found directly");
-                }
-                // Check in array
-                else if (Array.isArray(user.labels) && 
-                    (user.labels.includes("doctor") || user.labels.includes("role:doctor"))) {
-                    isKnownDoctorFromLabels = true;
-                    console.log("Doctor label found in array");
-                }
-                // Try to handle object with values
-                else if (typeof user.labels === 'object') {
-                    const hasDoctor = Object.values(user.labels).some(
-                        label => label === 'doctor' || label === 'role:doctor'
-                    );
-                    
-                    if (hasDoctor) {
-                        isKnownDoctorFromLabels = true;
-                        console.log("Doctor label found in object");
-                    }
+                // Get doctor license if available
+                if (user.prefs.doctorLicense) {
+                    doctorLicense = user.prefs.doctorLicense;
                 }
             }
 
-            // Get role information using our utility
-            const roleInfo = await RoleManager.getUserRole(user.$id, user.labels || []);
-            console.log('Role information retrieved:', roleInfo);
-
-            // OVERRIDE: Combine all sources of doctor information
-            const finalIsDoctor = isKnownDoctor || isKnownDoctorFromLabels || (roleInfo === 'doctor');
-
-            // Create a proper role object instead of trying to modify the returned string
-            let finalRoleInfo = {
-                role: roleInfo,
-                isDoctor: roleInfo === 'doctor'
-            };
-
-            // Override if we found doctor info but roleInfo didn't catch it
-            if (finalIsDoctor && roleInfo !== 'doctor') {
-                console.log("OVERRIDING ROLE: Found doctor info but roleInfo didn't catch it");
-                finalRoleInfo = {
-                    role: 'doctor',
-                    isDoctor: true
-                };
+            // Fallback: Use RoleManager if preferences don't have clear role info
+            if (!isUserDoctor && (!user.prefs || !user.prefs.role)) {
+                console.log('No role in preferences, checking with RoleManager...');
+                isUserDoctor = await RoleManager.isDoctor(user.$id);
+                console.log('RoleManager check result:', isUserDoctor);
             }
 
-            // Save user details to local storage
+            // Create user data object
             const userData = {
                 uid: user.$id,
                 email: user.email || email,
                 displayName: user.name || email.split('@')[0],
-                isDoctor: finalIsDoctor,
-                role: finalRoleInfo.role || (finalIsDoctor ? 'doctor' : 'patient'),
-                ...(finalIsDoctor && doctorLicense && { doctorLicense: doctorLicense })
+                isDoctor: isUserDoctor,
+                role: isUserDoctor ? 'doctor' : 'patient',
+                ...(isUserDoctor && doctorLicense && { doctorLicense: doctorLicense })
             };
 
             console.log("Final user data being saved:", userData);
+            
+            // Save to local storage
             await setLocalStorage('userDetail', userData);
-            console.log('User data saved to localStorage');
-
-            // IMPORTANT: Update auth context state to reflect signed-in user
-            // This is critical to ensure the auth provider knows about the new user
+            
+            // Update auth context
             setUser(userData);
             setIsDoctor(userData.isDoctor);
+
+            // Set role caches for quick access
+            await RoleManager.setGlobalRoleFlag(isUserDoctor);
+            await RoleManager.cacheRole(user.$id, isUserDoctor);
 
             Toast.show({
                 type: 'success',
@@ -155,7 +107,6 @@ export default function SignIn() {
             });
 
             // Redirect based on role
-            // We use a small delay to ensure the state updates have time to process
             setTimeout(() => {
                 if (userData.isDoctor) {
                     console.log('Redirecting to doctor dashboard');
@@ -164,7 +115,6 @@ export default function SignIn() {
                     console.log('Redirecting to patient dashboard');
                     router.replace('/(tabs)');
                 }
-                setLoading(false);
             }, 100);
             
         } catch (error) {
@@ -174,6 +124,7 @@ export default function SignIn() {
                 text1: 'Error',
                 text2: error.message || 'Failed to sign in',
             });
+        } finally {
             setLoading(false);
         }
     }

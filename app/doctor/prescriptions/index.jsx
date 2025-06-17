@@ -1,4 +1,4 @@
-// app/doctor/prescriptions/index.jsx - FIXED with real-time updates and focus refresh
+// app/doctor/prescriptions/index.jsx - FIXED to exclude cancelled appointments
 import React, { useEffect, useState, useCallback } from 'react';
 import { 
   View, 
@@ -20,9 +20,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DatabaseService, Query } from '../../../configs/AppwriteConfig';
 import { getLocalStorage } from '../../../service/Storage';
-import { COLLECTIONS } from '../../../constants'; // Use constants instead of hardcoded IDs
-import { useFocusEffect } from '@react-navigation/native'; // Added for focus refresh
-import { appointmentManager } from '../../../service/appointmentUtils'; // Added for real-time updates
+import { COLLECTIONS } from '../../../constants';
+import { useFocusEffect } from '@react-navigation/native';
+import { appointmentManager, APPOINTMENT_STATUS } from '../../../service/appointmentUtils';
 
 const { width } = Dimensions.get('window');
 
@@ -57,14 +57,14 @@ export default function EnhancedDoctorPrescriptions() {
     loadData();
   }, []);
 
-  // ADDED: Focus effect to refresh data when returning to screen
+  // Focus effect to refresh data when returning to screen
   useFocusEffect(
     useCallback(() => {
-      loadData(false); // Don't show loader when refocusing
+      loadData(false);
     }, [])
   );
 
-  // ADDED: Set up real-time subscription for appointments/prescriptions
+  // Set up real-time subscription for appointments/prescriptions
   useEffect(() => {
     let subscriptionKey = null;
 
@@ -76,11 +76,9 @@ export default function EnhancedDoctorPrescriptions() {
             (event) => {
               console.log('Doctor prescriptions received update:', event);
               
-              // Refresh prescriptions when any appointment changes
               const retryFetch = async (attempt = 1, maxAttempts = 3) => {
                 await loadData(false);
                 
-                // Check if the appointment change is reflected
                 const appointmentId = event.appointment?.$id;
                 if (appointmentId && attempt < maxAttempts) {
                   setTimeout(() => {
@@ -97,7 +95,6 @@ export default function EnhancedDoctorPrescriptions() {
                 }
               };
               
-              // Start the retry process with a delay
               setTimeout(() => retryFetch(), 1000);
             }
           );
@@ -109,7 +106,6 @@ export default function EnhancedDoctorPrescriptions() {
 
     setupRealtimeSubscription();
 
-    // Cleanup subscription on unmount
     return () => {
       if (subscriptionKey) {
         appointmentManager.unsubscribe(subscriptionKey);
@@ -121,7 +117,7 @@ export default function EnhancedDoctorPrescriptions() {
     filterAppointments();
   }, [allAppointments, searchQuery, activeFilter, selectedServices, selectedDateRange, customDateFrom, customDateTo]);
 
-  // UPDATED: Enhanced loadData with same logic as other doctor screens
+  // FIXED: Enhanced loadData to exclude cancelled appointments
   const loadData = async (showLoader = true) => {
     try {
       if (showLoader) {
@@ -133,20 +129,28 @@ export default function EnhancedDoctorPrescriptions() {
       const userData = await getLocalStorage('userDetail');
       setUser(userData);
 
-      // Enhanced query with ordering (same as other doctor screens)
+      // FIXED: Enhanced query to exclude cancelled appointments from the start
       const queries = [
         Query.orderDesc('$createdAt'),
+        Query.notEqual('status', APPOINTMENT_STATUS.CANCELLED), // Exclude cancelled appointments
         Query.limit(100)
       ];
 
       const appointmentsResponse = await DatabaseService.listDocuments(
-        COLLECTIONS.APPOINTMENTS, // Use constant instead of hardcoded ID
+        COLLECTIONS.APPOINTMENTS,
         queries
       );
       
       let appointments = appointmentsResponse.documents || [];
       
-      // Sort appointments by date (same logic as other screens)
+      // ADDITIONAL FILTER: Remove any appointments that might have slipped through
+      appointments = appointments.filter(apt => {
+        const status = apt.status?.toLowerCase();
+        return status !== 'cancelled' && 
+               status !== APPOINTMENT_STATUS.CANCELLED.toLowerCase();
+      });
+      
+      // Sort appointments by date
       appointments.sort((a, b) => {
         try {
           const dateA = parseAppointmentDate(a.date);
@@ -163,6 +167,8 @@ export default function EnhancedDoctorPrescriptions() {
           return 0;
         }
       });
+      
+      console.log(`Loaded ${appointments.length} non-cancelled appointments for prescriptions`);
       
       setAllAppointments(appointments);
       await fetchPatientNames(appointments);
@@ -231,7 +237,7 @@ export default function EnhancedDoctorPrescriptions() {
     }
   };
 
-  // UPDATED: Enhanced patient name fetching with same logic as other doctor screens
+  // Enhanced patient name fetching with same logic as other doctor screens
   const fetchPatientNames = async (appointments) => {
     try {
       const nameMap = {};
@@ -240,11 +246,9 @@ export default function EnhancedDoctorPrescriptions() {
         let patientName = 'Unknown Patient';
         
         try {
-          // Check if this is a family booking with patient_name
           if (appointment.is_family_booking && appointment.patient_name) {
             patientName = appointment.patient_name;
           } 
-          // If family booking but no patient_name, try to fetch by patient_id
           else if (appointment.is_family_booking && appointment.patient_id) {
             try {
               const patientResponse = await DatabaseService.listDocuments(
@@ -262,7 +266,6 @@ export default function EnhancedDoctorPrescriptions() {
               patientName = appointment.patient_name || 'Family Member';
             }
           }
-          // Regular booking - fetch by user_id
           else if (appointment.user_id) {
             try {
               const usersResponse = await DatabaseService.listDocuments(
@@ -285,7 +288,6 @@ export default function EnhancedDoctorPrescriptions() {
             }
           }
           
-          // Create a unique key for the appointment
           const appointmentKey = `${appointment.$id}`;
           nameMap[appointmentKey] = patientName;
           
@@ -307,9 +309,6 @@ export default function EnhancedDoctorPrescriptions() {
       const branchIds = [...new Set(appointments.map(apt => apt.branch_id).filter(Boolean))];
       const branchMap = {};
       
-      console.log('Branch IDs found in appointments:', branchIds);
-      
-      // First, get all unique region IDs from branches
       const regionIds = new Set();
       
       for (const branchId of branchIds) {
@@ -321,25 +320,17 @@ export default function EnhancedDoctorPrescriptions() {
           
           if (branchResponse.documents && branchResponse.documents.length > 0) {
             const branch = branchResponse.documents[0];
-            console.log(`Branch ${branchId} found with region_id:`, branch.region_id);
             if (branch.region_id) {
               regionIds.add(branch.region_id);
             }
-          } else {
-            console.log(`No branch found with branch_id: ${branchId}`);
           }
         } catch (error) {
           console.error(`Error fetching branch ${branchId}:`, error);
         }
       }
       
-      console.log('Region IDs to fetch:', [...regionIds]);
-      
-      // Fetch region names
       const regionMap = await fetchRegionNames([...regionIds]);
-      console.log('Region map:', regionMap);
       
-      // Now fetch branch details with region names
       for (const branchId of branchIds) {
         try {
           const branchResponse = await DatabaseService.listDocuments(
@@ -362,7 +353,6 @@ export default function EnhancedDoctorPrescriptions() {
         }
       }
       
-      console.log('Final branch map:', branchMap);
       setBranchNames(branchMap);
     } catch (error) {
       console.error('Error fetching branch names:', error);
@@ -375,7 +365,6 @@ export default function EnhancedDoctorPrescriptions() {
     if (regionIds.length === 0) return regionMap;
     
     try {
-      // Fetch regions from your regions collection
       for (const regionId of regionIds) {
         try {
           const regionResponse = await DatabaseService.listDocuments(
@@ -387,7 +376,6 @@ export default function EnhancedDoctorPrescriptions() {
             const region = regionResponse.documents[0];
             regionMap[regionId] = region.name || regionId;
           } else {
-            // Fallback to hardcoded regions from your constants
             const hardcodedRegions = {
               'tawau': 'Tawau',
               'semporna': 'Semporna', 
@@ -396,8 +384,6 @@ export default function EnhancedDoctorPrescriptions() {
             regionMap[regionId] = hardcodedRegions[regionId] || regionId;
           }
         } catch (error) {
-          console.error(`Error fetching region ${regionId}:`, error);
-          // Fallback to hardcoded regions
           const hardcodedRegions = {
             'tawau': 'Tawau',
             'semporna': 'Semporna', 
@@ -408,8 +394,6 @@ export default function EnhancedDoctorPrescriptions() {
       }
     } catch (error) {
       console.error('Error in fetchRegionNames:', error);
-      
-      // Fallback to hardcoded mapping based on your RegionsData
       const hardcodedRegions = {
         'tawau': 'Tawau',
         'semporna': 'Semporna', 
@@ -424,18 +408,27 @@ export default function EnhancedDoctorPrescriptions() {
     return regionMap;
   };
 
+  // FIXED: Calculate stats excluding cancelled appointments
   const calculateStats = (appointments) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const stats = {
-      total: appointments.length,
+      total: 0, // Will be calculated based on valid appointments
       completed: 0,
       pending: 0,
       today: 0
     };
 
-    appointments.forEach(apt => {
+    // Filter out cancelled appointments for stats calculation
+    const validAppointments = appointments.filter(apt => {
+      const status = apt.status?.toLowerCase();
+      return status !== 'cancelled' && status !== APPOINTMENT_STATUS.CANCELLED.toLowerCase();
+    });
+
+    stats.total = validAppointments.length;
+
+    validAppointments.forEach(apt => {
       const aptDate = parseAppointmentDate(apt.date);
       aptDate.setHours(0, 0, 0, 0);
 
@@ -450,6 +443,7 @@ export default function EnhancedDoctorPrescriptions() {
       }
     });
 
+    console.log('Prescription stats calculated:', stats);
     setStatsData(stats);
   };
 
@@ -488,8 +482,15 @@ export default function EnhancedDoctorPrescriptions() {
     }
   };
 
+  // FIXED: Enhanced filtering to exclude cancelled appointments
   const filterAppointments = () => {
     let filtered = allAppointments;
+
+    // FIRST: Always exclude cancelled appointments
+    filtered = filtered.filter(apt => {
+      const status = apt.status?.toLowerCase();
+      return status !== 'cancelled' && status !== APPOINTMENT_STATUS.CANCELLED.toLowerCase();
+    });
 
     // Apply status filter
     switch (activeFilter) {
@@ -540,19 +541,18 @@ export default function EnhancedDoctorPrescriptions() {
       });
     }
 
+    console.log(`Filtered ${filtered.length} appointments for prescriptions (excluded cancelled)`);
     setFilteredAppointments(filtered);
   };
 
-  // UPDATED: Enhanced patient name getter to use appointment-specific key
+  // Enhanced patient name getter to use appointment-specific key
   const getPatientName = (appointment) => {
     if (!appointment) return "Unknown Patient";
     
-    // Check if this is a family booking with patient_name
     if (appointment.is_family_booking && appointment.patient_name) {
       return appointment.patient_name;
     }
     
-    // Use the patientNames state with appointment-specific key
     const appointmentKey = `${appointment.$id}`;
     return patientNames[appointmentKey] || appointment.patient_name || "Unknown Patient";
   };
@@ -765,8 +765,15 @@ export default function EnhancedDoctorPrescriptions() {
     </Modal>
   );
 
-  // OPTIMIZED PRESCRIPTION CARD - More compact and readable
+  // Optimized prescription card - exclude cancelled appointments
   const renderOptimizedPrescriptionCard = ({ item: appointment }) => {
+    // SAFETY CHECK: Skip cancelled appointments (should not happen due to filtering, but extra safety)
+    const status = appointment.status?.toLowerCase();
+    if (status === 'cancelled' || status === APPOINTMENT_STATUS.CANCELLED.toLowerCase()) {
+      console.warn('Cancelled appointment found in prescription list, skipping:', appointment.$id);
+      return null;
+    }
+
     const statusInfo = getStatusInfo(appointment.has_prescription);
     const branchInfo = getBranchInfo(appointment.branch_id);
     const appointmentDate = parseAppointmentDate(appointment.date);
@@ -999,12 +1006,12 @@ export default function EnhancedDoctorPrescriptions() {
             </View>
             <Text style={styles.emptyStateText}>
               {searchQuery || selectedServices.length > 0 || selectedDateRange !== 'all' ? 
-               'No matching prescriptions found' : 'No prescriptions found'}
+               'No matching prescriptions found' : 'No active appointments found'}
             </Text>
             <Text style={styles.emptyStateSubtext}>
               {searchQuery || selectedServices.length > 0 || selectedDateRange !== 'all' 
                 ? 'Try adjusting your search terms or filters' 
-                : 'Prescriptions will appear here once you add them to appointments'
+                : 'Only active appointments appear here. Cancelled appointments are excluded.'
               }
             </Text>
           </View>
@@ -1195,7 +1202,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   
-  // OPTIMIZED PRESCRIPTION CARD - More compact and space-efficient
+  // Optimized prescription card
   optimizedCard: {
     backgroundColor: 'white',
     borderRadius: 12,
@@ -1346,7 +1353,7 @@ const styles = StyleSheet.create({
     color: 'white',
   },
 
-  // Filter Modal (keeping existing styles)
+  // Filter Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',

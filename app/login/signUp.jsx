@@ -13,7 +13,7 @@ export default function SignUp() {
     const [password, setPassword] = useState('');
     const [userName, setUserName] = useState('');
     const [isDoctor, setIsDoctor] = useState(false);
-    const [doctorLicense, setDoctorLicense] = useState(''); // New state for doctor license
+    const [doctorLicense, setDoctorLicense] = useState('');
     const [loading, setLoading] = useState(false);
 
     const onCreateAccount = async () => {
@@ -26,7 +26,6 @@ export default function SignUp() {
             return;
         }
 
-        // Validate doctor license if registering as doctor
         if (isDoctor && !doctorLicense.trim()) {
             Toast.show({
                 type: 'error',
@@ -39,40 +38,61 @@ export default function SignUp() {
         try {
             setLoading(true);
             
-            // Create user account
+            // Step 1: Create user account
             const user = await account.create(
-                ID.unique(),    // Unique ID
-                email,          // Email
-                password,       // Password
-                userName        // Name
+                ID.unique(),
+                email,
+                password,
+                userName
             );
             
             console.log("User created with ID:", user.$id);
 
-            // Create email session after account creation
+            // Step 2: Create session immediately after account creation
             const session = await account.createEmailPasswordSession(email, password);
-            console.log("Session created");
-            
-            // Set the user's role using our utility with additional data
+            console.log("Session created successfully");
+
+            // Step 3: Set user preferences with role information
+            // This is the critical step that was potentially failing
+            const preferences = {
+                role: isDoctor ? 'doctor' : 'patient',
+                isDoctor: isDoctor,
+                ...(isDoctor && doctorLicense.trim() && { doctorLicense: doctorLicense.trim() })
+            };
+
+            console.log("Setting user preferences:", preferences);
+            await account.updatePrefs(preferences);
+            console.log("User preferences set successfully");
+
+            // Step 4: Verify the preferences were set (optional but helpful for debugging)
+            const updatedUser = await account.get();
+            console.log("User preferences after update:", updatedUser.prefs);
+
+            // Step 5: Use RoleManager to set additional role data
             const role = isDoctor ? 'doctor' : 'patient';
             const additionalData = isDoctor && doctorLicense.trim() 
                 ? { doctorLicense: doctorLicense.trim() }
                 : {};
                 
             await RoleManager.setUserRole(user.$id, role, account, additionalData);
-            console.log(`User role set to: ${role}`);
+            console.log(`RoleManager: User role set to: ${role}`);
             
-            // Save user details to local storage with role info and doctor license
+            // Step 6: Save comprehensive user data to local storage
             const userData = {
                 uid: user.$id,
                 email: user.email,
                 displayName: user.name,
                 isDoctor: isDoctor,
                 role: role,
-                ...(isDoctor && { doctorLicense: doctorLicense.trim() }) // Add license if doctor
+                ...(isDoctor && doctorLicense.trim() && { doctorLicense: doctorLicense.trim() })
             };
+
             await setLocalStorage('userDetail', userData);
-            console.log("User data saved to localStorage");
+            console.log("User data saved to localStorage:", userData);
+
+            // Step 7: Set role caches for immediate access
+            await RoleManager.setGlobalRoleFlag(isDoctor);
+            await RoleManager.cacheRole(user.$id, isDoctor);
 
             Toast.show({
                 type: 'success',
@@ -80,20 +100,29 @@ export default function SignUp() {
                 text2: 'Account created successfully!',
             });
 
-            // Redirect based on role
+            // Step 8: Redirect based on role
+            console.log(`Redirecting ${isDoctor ? 'doctor' : 'patient'} to appropriate dashboard`);
             if (isDoctor) {
-                console.log("Redirecting to doctor dashboard");
                 router.push('/doctor');
             } else {
-                console.log("Redirecting to patient dashboard");
                 router.push('(tabs)');
             }
+
         } catch (error) {
             console.error('Signup Error:', error);
+            
+            // Provide more specific error messages
+            let errorMessage = 'Failed to create account';
+            if (error.message.includes('email')) {
+                errorMessage = 'Email is already in use or invalid';
+            } else if (error.message.includes('password')) {
+                errorMessage = 'Password is too weak (minimum 8 characters)';
+            }
+            
             Toast.show({
                 type: 'error',
                 text1: 'Error',
-                text2: error.message || 'Failed to create account',
+                text2: errorMessage,
             });
         } finally {
             setLoading(false);

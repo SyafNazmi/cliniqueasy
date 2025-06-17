@@ -1,18 +1,15 @@
-// configs/AppwriteConfig.jsx - ROBUST VERSION for Expo SDK 53
+// configs/AppwriteConfig.jsx - FIXED VERSION with proper subscription management
 
-// Add polyfill at the top
 import 'react-native-url-polyfill/auto';
-
-import { Client, Account, Databases, ID, Query } from 'react-native-appwrite'; // Use react-native-appwrite instead of appwrite
+import { Client, Account, Databases, ID, Query } from 'react-native-appwrite';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Enhanced localStorage polyfill with better error handling
+// Enhanced localStorage polyfill
 if (typeof global.localStorage === 'undefined') {
   global.localStorage = {
     getItem: async (key) => {
       try {
-        const value = await AsyncStorage.getItem(key);
-        return value;
+        return await AsyncStorage.getItem(key);
       } catch (error) {
         console.warn('Storage getItem error:', error);
         return null;
@@ -42,29 +39,25 @@ if (typeof global.localStorage === 'undefined') {
   };
 }
 
-// Also mock sessionStorage
 if (typeof global.sessionStorage === 'undefined') {
   global.sessionStorage = global.localStorage;
 }
 
-// Appwrite Client Configuration with enhanced error handling
 const client = new Client();
 
 try {
   client
-    .setEndpoint('https://cloud.appwrite.io/v1') // Your Appwrite cloud endpoint
-    .setProject('67e0310c000b89e3feee'); // Your Project ID from Appwrite Console
+    .setEndpoint('https://cloud.appwrite.io/v1')
+    .setProject('67e0310c000b89e3feee');
 } catch (error) {
   console.error('Failed to configure Appwrite client:', error);
 }
 
-// Create instances
 const account = new Account(client);
 const databases = new Databases(client);
 
-// Enhanced Database Service with better error handling
+// Database Service (unchanged)
 const DatabaseService = {
-    // Create a new document in a specific collection
     async createDocument(collectionId, documentData, permissions = []) {
         try {
           const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
@@ -83,9 +76,8 @@ const DatabaseService = {
           console.error('Error creating document:', error);
           throw error;
         }
-      },
+    },
 
-    // List documents in a collection with optional queries
     async listDocuments(collectionId, queries = [], limit = 25) {
         try {
           const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
@@ -103,9 +95,8 @@ const DatabaseService = {
           console.error('Error listing documents:', error);
           throw error;
         }
-      },
+    },
 
-    // Get a specific document by its ID
     async getDocument(collectionId, documentId) {
         try {
             const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
@@ -124,7 +115,6 @@ const DatabaseService = {
         }
     },
 
-    // Update a document
     async updateDocument(collectionId, documentId, data, permissions = []) {
         try {
             const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
@@ -145,7 +135,6 @@ const DatabaseService = {
         }
     },
 
-    // Delete a document
     async deleteDocument(collectionId, documentId) {
         try {
             const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
@@ -164,7 +153,6 @@ const DatabaseService = {
         }
     },
 
-    // Advanced query helper
     createQuery(method, field, value) {
         try {
             switch(method) {
@@ -188,206 +176,297 @@ const DatabaseService = {
     }
 };
 
-// ROBUST Realtime Service with comprehensive error handling
+// FIXED Realtime Service with proper subscription management
 const RealtimeService = {
-    activeSubscriptions: new Set(),
+    activeSubscriptions: new Map(), // Changed to Map for better tracking
+    subscriptionCount: 0,
     
-    // Subscribe to collection changes with robust error handling
-    subscribeToCollection(collectionId, callback) {
-      try {
-        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
-        
-        if (!databaseId) {
-          console.warn('Database ID is not defined, skipping subscription');
-          return null;
-        }
-        
-        console.log('Setting up subscription for collection:', collectionId);
-        
-        const subscription = client.subscribe(
-          `databases.${databaseId}.collections.${collectionId}.documents`,
-          (response) => {
-            try {
-              console.log('Raw realtime response:', JSON.stringify(response, null, 2));
-              
-              // Handle different response formats that might come from Appwrite
-              let processedResponse;
-              
-              if (typeof response === 'string') {
-                try {
-                  // If response is a string, try to parse it
-                  processedResponse = JSON.parse(response);
-                } catch (parseError) {
-                  console.error('Failed to parse response string:', parseError);
-                  console.error('Raw response that failed:', response);
-                  return; // Exit early if we can't parse
-                }
-              } else if (response && typeof response === 'object') {
-                // Response is already an object
-                processedResponse = response;
-              } else {
-                console.warn('Unexpected response type:', typeof response, response);
-                return;
-              }
-              
-              // Safely extract data with fallbacks
-              const safeResponse = {
-                events: Array.isArray(processedResponse.events) ? processedResponse.events : 
-                       Array.isArray(processedResponse.event) ? [processedResponse.event] : [],
-                payload: processedResponse.payload || processedResponse.data || processedResponse,
-                timestamp: processedResponse.timestamp || Date.now()
-              };
-              
-              // Validate that we have the necessary data
-              if (safeResponse.events.length > 0) {
-                console.log('Processed realtime event:', safeResponse);
-                callback(safeResponse);
-              } else {
-                console.log('No valid events found in response');
-              }
-              
-            } catch (callbackError) {
-              console.error('Error in realtime callback:', callbackError);
-              console.error('Response that caused callback error:', response);
-              // Don't throw - just log to prevent crashes
-            }
-          }
-        );
-
-        if (subscription) {
-          this.activeSubscriptions.add(subscription);
-          console.log('Successfully created subscription for collection:', collectionId);
-          
-          // Return a cleanup function
-          return () => {
-            try {
-              subscription();
-              this.activeSubscriptions.delete(subscription);
-              console.log('Unsubscribed from collection:', collectionId);
-            } catch (unsubError) {
-              console.error('Error unsubscribing:', unsubError);
-            }
-          };
-        } else {
-          console.warn('Failed to create subscription - client.subscribe returned null');
-          return null;
-        }
-        
-      } catch (error) {
-        console.error('Error setting up collection subscription:', error);
-        return null;
-      }
+    // Create a unique subscription ID
+    generateSubscriptionId() {
+        return `sub_${++this.subscriptionCount}_${Date.now()}`;
     },
-
-    // Subscribe to specific document changes
-    subscribeToDocument(collectionId, documentId, callback) {
-      try {
-        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
-        
-        if (!databaseId) {
-          console.warn('Database ID is not defined, skipping document subscription');
-          return null;
-        }
-        
-        console.log('Setting up document subscription:', documentId);
-        
-        const subscription = client.subscribe(
-          `databases.${databaseId}.collections.${collectionId}.documents.${documentId}`,
-          (response) => {
-            try {
-              console.log('Document realtime response:', JSON.stringify(response, null, 2));
-              
-              let processedResponse;
-              
-              if (typeof response === 'string') {
-                try {
-                  processedResponse = JSON.parse(response);
-                } catch (parseError) {
-                  console.error('Failed to parse document response:', parseError);
-                  return;
+    
+    // Subscribe to collection changes with proper deduplication
+    subscribeToCollection(collectionId, callback, subscriptionId = null) {
+        try {
+            const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+            
+            if (!databaseId) {
+                console.warn('Database ID is not defined, skipping subscription');
+                return null;
+            }
+            
+            // Generate or use provided subscription ID
+            const subId = subscriptionId || this.generateSubscriptionId();
+            const channelName = `databases.${databaseId}.collections.${collectionId}.documents`;
+            
+            // Check if we already have an active subscription for this channel
+            if (this.activeSubscriptions.has(subId)) {
+                console.warn(`Subscription ${subId} already exists, cleaning up first`);
+                this.unsubscribe(subId);
+            }
+            
+            console.log(`Setting up subscription ${subId} for collection:`, collectionId);
+            
+            // Create a debounced callback to prevent rapid firing
+            let lastCallTime = 0;
+            const DEBOUNCE_DELAY = 100; // 100ms debounce
+            
+            const debouncedCallback = (response) => {
+                const now = Date.now();
+                if (now - lastCallTime < DEBOUNCE_DELAY) {
+                    console.log('Debouncing realtime callback');
+                    return;
                 }
-              } else if (response && typeof response === 'object') {
-                processedResponse = response;
-              } else {
-                console.warn('Unexpected document response type:', typeof response);
-                return;
-              }
-              
-              const safeResponse = {
-                events: Array.isArray(processedResponse.events) ? processedResponse.events : 
-                       Array.isArray(processedResponse.event) ? [processedResponse.event] : [],
-                payload: processedResponse.payload || processedResponse.data || processedResponse,
-                timestamp: processedResponse.timestamp || Date.now()
-              };
-              
-              if (safeResponse.events.length > 0) {
-                callback(safeResponse);
-              }
-              
-            } catch (callbackError) {
-              console.error('Error in document realtime callback:', callbackError);
+                lastCallTime = now;
+                
+                try {
+                    console.log(`[${subId}] Realtime event received:`, {
+                        events: response.events,
+                        timestamp: now
+                    });
+                    
+                    // Process the response
+                    let processedEvent = response;
+                    
+                    if (typeof response === 'string') {
+                        try {
+                            processedEvent = JSON.parse(response);
+                        } catch (parseError) {
+                            console.error('Failed to parse response:', parseError);
+                            return;
+                        }
+                    }
+                    
+                    // Validate the event structure
+                    if (!processedEvent || !processedEvent.events || !Array.isArray(processedEvent.events)) {
+                        console.warn('Invalid event structure:', processedEvent);
+                        return;
+                    }
+                    
+                    // Filter for relevant events only
+                    const relevantEvents = processedEvent.events.filter(event => 
+                        event.includes('create') || 
+                        event.includes('update') || 
+                        event.includes('delete')
+                    );
+                    
+                    if (relevantEvents.length === 0) {
+                        console.log('No relevant events found, skipping callback');
+                        return;
+                    }
+                    
+                    // Create a clean event object
+                    const cleanEvent = {
+                        events: relevantEvents,
+                        payload: processedEvent.payload,
+                        timestamp: now,
+                        subscriptionId: subId,
+                        type: this.getEventType(relevantEvents[0])
+                    };
+                    
+                    console.log(`[${subId}] Calling callback with processed event:`, cleanEvent);
+                    callback(cleanEvent);
+                    
+                } catch (callbackError) {
+                    console.error(`[${subId}] Error in realtime callback:`, callbackError);
+                }
+            };
+            
+            // Create the subscription
+            const unsubscribeFunction = client.subscribe(channelName, debouncedCallback);
+            
+            if (unsubscribeFunction && typeof unsubscribeFunction === 'function') {
+                // Store subscription info
+                this.activeSubscriptions.set(subId, {
+                    unsubscribe: unsubscribeFunction,
+                    collectionId,
+                    channelName,
+                    createdAt: Date.now()
+                });
+                
+                console.log(`Successfully created subscription ${subId} for collection:`, collectionId);
+                
+                // Return cleanup function with subscription ID
+                return {
+                    subscriptionId: subId,
+                    unsubscribe: () => this.unsubscribe(subId)
+                };
+                
+            } else {
+                console.error('client.subscribe did not return a valid unsubscribe function');
+                return null;
             }
-          }
-        );
-
-        if (subscription) {
-          this.activeSubscriptions.add(subscription);
-          
-          return () => {
-            try {
-              subscription();
-              this.activeSubscriptions.delete(subscription);
-              console.log('Unsubscribed from document:', documentId);
-            } catch (unsubError) {
-              console.error('Error unsubscribing from document:', unsubError);
-            }
-          };
+            
+        } catch (error) {
+            console.error('Error setting up collection subscription:', error);
+            return null;
         }
-        
-        return null;
-      } catch (error) {
-        console.error('Error setting up document subscription:', error);
-        return null;
-      }
     },
-
+    
+    // Subscribe to specific document with deduplication
+    subscribeToDocument(collectionId, documentId, callback, subscriptionId = null) {
+        try {
+            const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+            
+            if (!databaseId) {
+                console.warn('Database ID is not defined, skipping document subscription');
+                return null;
+            }
+            
+            const subId = subscriptionId || this.generateSubscriptionId();
+            const channelName = `databases.${databaseId}.collections.${collectionId}.documents.${documentId}`;
+            
+            if (this.activeSubscriptions.has(subId)) {
+                console.warn(`Document subscription ${subId} already exists, cleaning up first`);
+                this.unsubscribe(subId);
+            }
+            
+            console.log(`Setting up document subscription ${subId}:`, documentId);
+            
+            // Debounced callback for document updates
+            let lastCallTime = 0;
+            const DEBOUNCE_DELAY = 100;
+            
+            const debouncedCallback = (response) => {
+                const now = Date.now();
+                if (now - lastCallTime < DEBOUNCE_DELAY) {
+                    return;
+                }
+                lastCallTime = now;
+                
+                try {
+                    let processedEvent = response;
+                    
+                    if (typeof response === 'string') {
+                        try {
+                            processedEvent = JSON.parse(response);
+                        } catch (parseError) {
+                            console.error('Failed to parse document response:', parseError);
+                            return;
+                        }
+                    }
+                    
+                    if (!processedEvent || !processedEvent.events) {
+                        console.warn('Invalid document event structure:', processedEvent);
+                        return;
+                    }
+                    
+                    const cleanEvent = {
+                        events: Array.isArray(processedEvent.events) ? processedEvent.events : [processedEvent.events],
+                        payload: processedEvent.payload,
+                        timestamp: now,
+                        subscriptionId: subId,
+                        documentId,
+                        type: this.getEventType(processedEvent.events[0] || processedEvent.events)
+                    };
+                    
+                    callback(cleanEvent);
+                    
+                } catch (callbackError) {
+                    console.error(`[${subId}] Error in document realtime callback:`, callbackError);
+                }
+            };
+            
+            const unsubscribeFunction = client.subscribe(channelName, debouncedCallback);
+            
+            if (unsubscribeFunction && typeof unsubscribeFunction === 'function') {
+                this.activeSubscriptions.set(subId, {
+                    unsubscribe: unsubscribeFunction,
+                    collectionId,
+                    documentId,
+                    channelName,
+                    createdAt: Date.now()
+                });
+                
+                return {
+                    subscriptionId: subId,
+                    unsubscribe: () => this.unsubscribe(subId)
+                };
+            }
+            
+            return null;
+            
+        } catch (error) {
+            console.error('Error setting up document subscription:', error);
+            return null;
+        }
+    },
+    
+    // Helper to determine event type
+    getEventType(eventString) {
+        if (!eventString) return 'unknown';
+        
+        if (eventString.includes('create')) return 'create';
+        if (eventString.includes('update')) return 'update';
+        if (eventString.includes('delete')) return 'delete';
+        
+        return 'unknown';
+    },
+    
+    // Unsubscribe from a specific subscription
+    unsubscribe(subscriptionId) {
+        try {
+            const subscription = this.activeSubscriptions.get(subscriptionId);
+            
+            if (subscription) {
+                subscription.unsubscribe();
+                this.activeSubscriptions.delete(subscriptionId);
+                console.log(`Unsubscribed from ${subscriptionId}`);
+                return true;
+            } else {
+                console.warn(`Subscription ${subscriptionId} not found`);
+                return false;
+            }
+        } catch (error) {
+            console.error(`Error unsubscribing from ${subscriptionId}:`, error);
+            return false;
+        }
+    },
+    
+    // Get subscription info
+    getSubscriptionInfo(subscriptionId) {
+        return this.activeSubscriptions.get(subscriptionId) || null;
+    },
+    
+    // List all active subscriptions
+    listActiveSubscriptions() {
+        const subscriptions = [];
+        this.activeSubscriptions.forEach((value, key) => {
+            subscriptions.push({
+                id: key,
+                ...value,
+                age: Date.now() - value.createdAt
+            });
+        });
+        return subscriptions;
+    },
+    
     // Safely unsubscribe from all active subscriptions
     unsubscribeAll() {
-      console.log('Unsubscribing from all realtime subscriptions...');
-      
-      this.activeSubscriptions.forEach(subscription => {
-        try {
-          if (typeof subscription === 'function') {
-            subscription();
-          }
-        } catch (error) {
-          console.error('Error during bulk unsubscribe:', error);
-        }
-      });
-      
-      this.activeSubscriptions.clear();
-      console.log('All subscriptions cleaned up');
+        console.log('Unsubscribing from all realtime subscriptions...');
+        
+        const subscriptionIds = Array.from(this.activeSubscriptions.keys());
+        
+        subscriptionIds.forEach(subId => {
+            this.unsubscribe(subId);
+        });
+        
+        console.log(`Cleaned up ${subscriptionIds.length} subscriptions`);
     }
 };
 
-// Enhanced Authentication Service
+// Authentication Service (unchanged)
 const AuthService = {
-    // Create a new user account
     async register(email, password, name) {
         try {
-            return await account.create(
-                ID.unique(), 
-                email, 
-                password, 
-                name
-            );
+            return await account.create(ID.unique(), email, password, name);
         } catch (error) {
             console.error('Registration error:', error);
             throw error;
         }
     },
 
-    // Login user
     async login(email, password) {
         try {
             return await account.createEmailSession(email, password);
@@ -397,7 +476,6 @@ const AuthService = {
         }
     },
 
-    // Logout current user
     async logout() {
         try {
             return await account.deleteSession('current');
@@ -407,7 +485,6 @@ const AuthService = {
         }
     },
 
-    // Get current user account
     async getCurrentUser() {
         try {
             return await account.get();
