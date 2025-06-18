@@ -592,7 +592,7 @@ export const DoctorsData = [
 
   // Branch 9 doctors (Klinik Warisan Semporna)
   {
-    name: "Dr. Zainab Mohd",
+    name: "Zainab Mohd",
     specialty: "Internal Medicine",
     branchId: "9",
     contact: "+60 89-445-566",
@@ -601,7 +601,7 @@ export const DoctorsData = [
     image: "doctor-sarah.png"
   },
   {
-    name: "Dr. William Chin",
+    name: "William Chin",
     specialty: "Cardiology",
     branchId: "9",
     contact: "+60 89-445-567",
@@ -612,7 +612,7 @@ export const DoctorsData = [
 
   // Branch 10 doctors (Permai Asia City - Kota Kinabalu)
   {
-    name: "Dr. Richard Teo",
+    name: "Richard Teo",
     specialty: "Surgery",
     branchId: "10",
     contact: "+60 88-324-650",
@@ -621,7 +621,7 @@ export const DoctorsData = [
     image: "doctor3.png"
   },
   {
-    name: "Dr. Priya Sharma",
+    name: "Priya Sharma",
     specialty: "Emergency Medicine",
     branchId: "10",
     contact: "+60 88-324-600",
@@ -630,7 +630,7 @@ export const DoctorsData = [
     image: "doctor-emma.png"
   },
   {
-    name: "Dr. Anthony Wong",
+    name: "Anthony Wong",
     specialty: "Neurology",
     branchId: "10",
     contact: "+60 88-324-651",
@@ -639,7 +639,7 @@ export const DoctorsData = [
     image: "doctor1.png"
   },
   {
-    name: "Dr. Shalini Krishnan",
+    name: "Shalini Krishnan",
     specialty: "Pediatrics",
     branchId: "10",
     contact: "+60 88-324-652",
@@ -650,7 +650,7 @@ export const DoctorsData = [
 
   // Branch 11 doctors (Permai Jalan Pantai - Kota Kinabalu)
   {
-    name: "Dr. Marina Abdullah",
+    name: "Marina Abdullah",
     specialty: "General Medicine",
     branchId: "11",
     contact: "+60 88-428-600",
@@ -659,7 +659,7 @@ export const DoctorsData = [
     image: "doctor2.png"
   },
   {
-    name: "Dr. Daniel Kho",
+    name: "Daniel Kho",
     specialty: "Dermatology",
     branchId: "11",
     contact: "+60 88-428-601",
@@ -668,7 +668,7 @@ export const DoctorsData = [
     image: "doctor-wong.png"
   },
   {
-    name: "Dr. Sufiah Ismail",
+    name: "Sufiah Ismail",
     specialty: "Family Medicine",
     branchId: "11",
     contact: "+60 88-428-602",
@@ -679,7 +679,7 @@ export const DoctorsData = [
 
   // Branch 12 doctors (Permai Api Api - Kota Kinabalu)
   {
-    name: "Dr. Benjamin Lee",
+    name: "Benjamin Lee",
     specialty: "Emergency Medicine",
     branchId: "12",
     contact: "+60 88-211-333",
@@ -688,7 +688,7 @@ export const DoctorsData = [
     image: "doctor1.png"
   },
   {
-    name: "Dr. Alicia Fernandez",
+    name: "Alicia Fernandez",
     specialty: "Internal Medicine",
     branchId: "12",
     contact: "+60 88-211-334",
@@ -697,7 +697,7 @@ export const DoctorsData = [
     image: "doctor-emma.png"
   },
   {
-    name: "Dr. Hafiz Rahman",
+    name: "Hafiz Rahman",
     specialty: "Orthopedics",
     branchId: "12",
     contact: "+60 88-211-335",
@@ -706,7 +706,7 @@ export const DoctorsData = [
     image: "doctor3.png"
   },
   {
-    name: "Dr. Grace Lim",
+    name: "Grace Lim",
     specialty: "Gynecology",
     branchId: "12",
     contact: "+60 88-211-336",
@@ -717,7 +717,7 @@ export const DoctorsData = [
 
   // Branch 13 doctors (Permai Putatan - Kota Kinabalu)
   {
-    name: "Dr. Steven Chew",
+    name: "Steven Chew",
     specialty: "Cardiology",
     branchId: "13",
     contact: "+60 88-518-911",
@@ -726,7 +726,7 @@ export const DoctorsData = [
     image: "doctor1.png"
   },
   {
-    name: "Dr. Nadia Ahmad",
+    name: "Nadia Ahmad",
     specialty: "Psychiatry",
     branchId: "13",
     contact: "+60 88-518-912",
@@ -735,7 +735,7 @@ export const DoctorsData = [
     image: "doctor-sarah.png"
   },
   {
-    name: "Dr. Marcus Tan",
+    name: "Marcus Tan",
     specialty: "Surgery",
     branchId: "13",
     contact: "+60 88-518-913",
@@ -744,7 +744,7 @@ export const DoctorsData = [
     image: "doctor3.png"
   },
   {
-    name: "Dr. Farah Zainal",
+    name: "Farah Zainal",
     specialty: "ENT",
     branchId: "13",
     contact: "+60 88-518-914",
@@ -753,7 +753,7 @@ export const DoctorsData = [
     image: "doctor-chen.png"
   },
   {
-    name: "Dr. Jonathan Yap",
+    name: "Jonathan Yap",
     specialty: "Ophthalmology",
     branchId: "13",
     contact: "+60 88-518-915",

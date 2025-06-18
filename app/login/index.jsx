@@ -10,11 +10,12 @@ export default function LoginScreen() {
   return (
     <View>
     <View style={{ display:'flex', alignItems: 'center', marginTop:80 }}>
-      <Image source={require('./../../assets/images/homescreen-page.png')} 
+      <Image source={require('./../../assets/images/Homescreen.png')} 
             style={styles?.image}/>
     </View>
     
     <View style={[styles.container]}>
+        <Text style={styles.appName}>Cliniqueasy</Text>
         <Text style={styles.heading}>Your Friendly Health Booking
         Appointment & Medical Tracking App</Text>
         <Text style={styles.description}>
@@ -51,6 +52,14 @@ const styles = StyleSheet.create({
       marginTop: -20,
       borderTopLeftRadius: 20,
       borderTopRightRadius: 20,
+    },
+    appName: {
+      fontSize: 32,
+      fontWeight: 'bold',
+      color: 'white',
+      textAlign: 'center',
+      marginBottom: 10,
+      letterSpacing: 1,
     },
     heading: {
       fontSize: 25,

@@ -1438,7 +1438,7 @@ const styles = StyleSheet.create({
     color: '#333',
   },
 
-  // NEW: Restriction Notice
+  // Restriction Notice
   restrictionNotice: {
     backgroundColor: '#FFFBEB',
     borderRadius: 12,
@@ -1636,25 +1636,72 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-
   prescriptionPendingBadge: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  backgroundColor: '#F5F3FF',
-  paddingHorizontal: 8,
-  paddingVertical: 4,
-  borderRadius: 8,
-  gap: 4,
-},
-prescriptionPendingText: {
-  fontSize: 11,
-  color: '#8B5CF6',
-  fontWeight: '600',
-},
-completeHintText: {
-  fontSize: 12,
-  color: '#F59E0B',
-},
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F3FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 4,
+  },
+  prescriptionPendingText: {
+    fontSize: 11,
+    color: '#8B5CF6',
+    fontWeight: '600',
+  },
+  completeHintText: {
+    fontSize: 12,
+    color: '#F59E0B',
+  },
+
+  // MISSING STYLES - ADD THESE:
+  disabledButton: {
+    opacity: 0.5,
+    backgroundColor: '#F5F5F5',
+  },
+  
+  fullWidthButton: {
+    flex: 1,
+    width: '100%',
+  },
+  
+  readonlyStatusContainer: {
+    marginBottom: 20,
+  },
+  
+  readonlyStatusCard: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+    borderLeftWidth: 4,
+    borderLeftColor: '#E5E7EB',
+  },
+  
+  readonlyStatusContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  
+  readonlyStatusTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  
+  readonlyStatusSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+  },
   
   // Action Buttons
   actionButtons: {
@@ -1746,285 +1793,240 @@ completeHintText: {
     borderRadius: 8,
     marginBottom: 16,
   },
-
-currentAppointmentInfo: {
-  backgroundColor: '#FFF3E0',
-  borderRadius: 12,
-  padding: 16,
-  marginBottom: 20,
-  borderLeftWidth: 4,
-  borderLeftColor: '#FF9500',
-},
-
-currentAppointmentHeader: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  marginBottom: 8,
-},
-
-currentAppointmentTitle: {
-  fontSize: 14,
-  fontWeight: '600',
-  color: '#FF9500',
-  marginLeft: 6,
-},
-
-currentAppointmentText: {
-  fontSize: 16,
-  fontWeight: 'bold',
-  color: '#333',
-  marginBottom: 4,
-},
-
-currentAppointmentSubtext: {
-  fontSize: 13,
-  color: '#666',
-},
-
-modalSection: {
-  marginBottom: 20,
-},
-
-modalSectionSubtitle: {
-  fontSize: 13,
-  color: '#666',
-  marginBottom: 16,
-  lineHeight: 18,
-},
-
-// Date Selection Styles
-dateScrollView: {
-  marginHorizontal: -20,
-  marginBottom: 16,
-},
-
-dateScrollContent: {
-  paddingHorizontal: 20,
-},
-
-dateCard: {
-  width: 60,
-  height: 75,
-  backgroundColor: '#F5F5F5',
-  borderRadius: 12,
-  justifyContent: 'center',
-  alignItems: 'center',
-  marginRight: 10,
-  borderWidth: 1,
-  borderColor: '#E0E0E0',
-},
-
-selectedDateCard: {
-  backgroundColor: '#0AD476',
-  borderColor: '#0AD476',
-},
-
-dateCardLabel: {
-  fontSize: 11,
-  color: '#666',
-  fontWeight: '500',
-  marginBottom: 2,
-},
-
-dateCardNumber: {
-  fontSize: 18,
-  fontWeight: 'bold',
-  color: '#333',
-  marginBottom: 2,
-},
-
-dateCardMonth: {
-  fontSize: 10,
-  color: '#666',
-},
-
-selectedDateCardText: {
-  color: '#fff',
-},
-
-selectedDateDisplay: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  backgroundColor: '#F0FDF4',
-  padding: 12,
-  borderRadius: 8,
-  marginBottom: 20,
-  borderWidth: 1,
-  borderColor: '#0AD476',
-},
-
-selectedDateDisplayText: {
-  fontSize: 13,
-  color: '#0AD476',
-  fontWeight: '600',
-  marginLeft: 6,
-},
-
-// Enhanced Time Slots
-timeSlotsHeader: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  marginBottom: 4,
-},
-
-loadingIndicator: {
-  flexDirection: 'row',
-  alignItems: 'center',
-},
-
-loadingSlotsText: {
-  fontSize: 11,
-  color: '#666',
-  marginLeft: 4,
-},
-
-enhancedTimeSlotsGrid: {
-  flexDirection: 'row',
-  flexWrap: 'wrap',
-  justifyContent: 'space-between',
-  gap: 8,
-},
-
-enhancedTimeSlot: {
-  width: '48%',
-  backgroundColor: '#F5F5F5',
-  paddingVertical: 12,
-  paddingHorizontal: 8,
-  borderRadius: 8,
-  borderWidth: 1,
-  borderColor: '#E0E0E0',
-  alignItems: 'center',
-  justifyContent: 'center',
-  minHeight: 50,
-},
-
-enhancedTimeSlotText: {
-  fontSize: 13,
-  color: '#333',
-  fontWeight: '500',
-  textAlign: 'center',
-},
-
-bookedTimeSlot: {
-  backgroundColor: '#FFEBEE',
-  borderColor: '#FFCDD2',
-  opacity: 0.6,
-},
-
-bookedTimeSlotText: {
-  color: '#999',
-  textDecorationLine: 'line-through',
-},
-
-currentTimeSlot: {
-  backgroundColor: '#FFF3E0',
-  borderColor: '#FFB74D',
-},
-
-currentTimeSlotText: {
-  color: '#FF9500',
-  fontWeight: '600',
-},
-
-bookedLabel: {
-  fontSize: 9,
-  color: '#FF5722',
-  marginTop: 2,
-  fontWeight: '500',
-},
-
-currentLabel: {
-  fontSize: 9,
-  color: '#FF9500',
-  marginTop: 2,
-  fontWeight: '600',
-},
-
-availabilityInfo: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  marginTop: 12,
-  paddingTop: 12,
-  borderTopWidth: 1,
-  borderTopColor: '#F0F0F0',
-},
-
-availabilityText: {
-  fontSize: 12,
-  color: '#666',
-  marginLeft: 4,
-},
-
-// Summary Styles
-rescheduleApproximateSummary: {
-  backgroundColor: '#F0FDF4',
-  borderRadius: 12,
-  padding: 16,
-  marginBottom: 20,
-  borderWidth: 1,
-  borderColor: '#0AD476',
-},
-
-summaryTitle: {
-  fontSize: 14,
-  fontWeight: '600',
-  color: '#0AD476',
-  marginBottom: 12,
-  textAlign: 'center',
-},
-
-summaryContent: {
-  alignItems: 'center',
-},
-
-summaryFromTo: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: '100%',
-},
-
-summaryColumn: {
-  flex: 1,
-  alignItems: 'center',
-},
-
-summaryArrow: {
-  marginHorizontal: 12,
-},
-
-summaryLabel: {
-  fontSize: 11,
-  color: '#666',
-  marginBottom: 4,
-  fontWeight: '500',
-},
-
-summaryValue: {
-  fontSize: 12,
-  color: '#333',
-  fontWeight: '600',
-  textAlign: 'center',
-  marginBottom: 2,
-},
-
-// Button States
-disabledConfirmButton: {
-  backgroundColor: '#CCC',
-  opacity: 0.6,
-},
-
-// Update existing modal footer for better spacing
-modalFooter: {
-  flexDirection: 'row',
-  padding: 16, // Reduced padding
-  gap: 12,
-  borderTopWidth: 1,
-  borderTopColor: '#F0F0F0',
-},
+  currentAppointmentInfo: {
+    backgroundColor: '#FFF3E0',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF9500',
+  },
+  currentAppointmentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  currentAppointmentTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FF9500',
+    marginLeft: 6,
+  },
+  currentAppointmentText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 4,
+  },
+  currentAppointmentSubtext: {
+    fontSize: 13,
+    color: '#666',
+  },
+  modalSection: {
+    marginBottom: 20,
+  },
+  modalSectionSubtitle: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 16,
+    lineHeight: 18,
+  },
   
-  // Time Slots
+  // Date Selection Styles
+  dateScrollView: {
+    marginHorizontal: -20,
+    marginBottom: 16,
+  },
+  dateScrollContent: {
+    paddingHorizontal: 20,
+  },
+  dateCard: {
+    width: 60,
+    height: 75,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  selectedDateCard: {
+    backgroundColor: '#0AD476',
+    borderColor: '#0AD476',
+  },
+  dateCardLabel: {
+    fontSize: 11,
+    color: '#666',
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  dateCardNumber: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 2,
+  },
+  dateCardMonth: {
+    fontSize: 10,
+    color: '#666',
+  },
+  selectedDateCardText: {
+    color: '#fff',
+  },
+  selectedDateDisplay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#0AD476',
+  },
+  selectedDateDisplayText: {
+    fontSize: 13,
+    color: '#0AD476',
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  
+  // Enhanced Time Slots
+  timeSlotsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  loadingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  loadingSlotsText: {
+    fontSize: 11,
+    color: '#666',
+    marginLeft: 4,
+  },
+  enhancedTimeSlotsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  enhancedTimeSlot: {
+    width: '48%',
+    backgroundColor: '#F5F5F5',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 50,
+  },
+  enhancedTimeSlotText: {
+    fontSize: 13,
+    color: '#333',
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  bookedTimeSlot: {
+    backgroundColor: '#FFEBEE',
+    borderColor: '#FFCDD2',
+    opacity: 0.6,
+  },
+  bookedTimeSlotText: {
+    color: '#999',
+    textDecorationLine: 'line-through',
+  },
+  currentTimeSlot: {
+    backgroundColor: '#FFF3E0',
+    borderColor: '#FFB74D',
+  },
+  currentTimeSlotText: {
+    color: '#FF9500',
+    fontWeight: '600',
+  },
+  bookedLabel: {
+    fontSize: 9,
+    color: '#FF5722',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  currentLabel: {
+    fontSize: 9,
+    color: '#FF9500',
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  availabilityInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
+  },
+  availabilityText: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 4,
+  },
+  
+  // Summary Styles
+  rescheduleApproximateSummary: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#0AD476',
+  },
+  summaryTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0AD476',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  summaryContent: {
+    alignItems: 'center',
+  },
+  summaryFromTo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  summaryColumn: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  summaryArrow: {
+    marginHorizontal: 12,
+  },
+  summaryLabel: {
+    fontSize: 11,
+    color: '#666',
+    marginBottom: 4,
+    fontWeight: '500',
+  },
+  summaryValue: {
+    fontSize: 12,
+    color: '#333',
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  
+  // Button States
+  disabledConfirmButton: {
+    backgroundColor: '#CCC',
+    opacity: 0.6,
+  },
+  
+  // Time Slots (Regular)
   timeSlotsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
