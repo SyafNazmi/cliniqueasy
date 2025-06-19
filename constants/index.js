@@ -800,71 +800,427 @@ export async function initializeDoctors() {
   const { DatabaseService } = await import('../configs/AppwriteConfig');
 
   try {
-    // Check if doctors exist already
-    const existingDoctors = await DatabaseService.listDocuments(COLLECTIONS.DOCTORS, [], 100);
+    console.log("🏥 Starting doctor initialization...");
     
-    // Create a map of existing doctors by name for quick lookup
-    const existingDoctorsMap = {};
-    existingDoctors.documents.forEach(doc => {
-      existingDoctorsMap[doc.name] = doc;
+    // FIXED: Get ALL existing doctors without limit issues
+    let allExistingDoctors = [];
+    let offset = 0;
+    const limit = 100;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const batch = await DatabaseService.listDocuments(
+        COLLECTIONS.DOCTORS, 
+        [
+          DatabaseService.createQuery('limit', limit),
+          DatabaseService.createQuery('offset', offset)
+        ]
+      );
+      
+      allExistingDoctors = [...allExistingDoctors, ...batch.documents];
+      
+      if (batch.documents.length < limit) {
+        hasMore = false;
+      } else {
+        offset += limit;
+      }
+    }
+    
+    console.log(`📊 Found ${allExistingDoctors.length} existing doctors in database`);
+    console.log(`📋 Processing ${DoctorsData.length} doctors from constants`);
+    
+    // Create a more reliable unique key mapping
+    const existingDoctorsMap = new Map();
+    allExistingDoctors.forEach(doc => {
+      // Use multiple possible keys for matching
+      const keys = [
+        `${doc.name}_${doc.branchId}`,
+        `${doc.name.toLowerCase()}_${doc.branchId}`,
+        doc.name,
+        doc.$id
+      ];
+      keys.forEach(key => {
+        existingDoctorsMap.set(key, doc);
+      });
     });
     
-    for (const doctor of DoctorsData) {
-      if (existingDoctorsMap[doctor.name]) {
-        // Doctor exists - check if image needs updating
-        const existingDoctor = existingDoctorsMap[doctor.name];
-        if (existingDoctor.image !== doctor.image) {
-          console.log(`Updating image for doctor: ${doctor.name} from ${existingDoctor.image} to ${doctor.image}`);
-          await updateDoctorDocument(existingDoctor.$id, { image: doctor.image });
+    let createdCount = 0;
+    let updatedCount = 0;
+    let errorCount = 0;
+    const errors = [];
+    
+    // Process each doctor with better error handling
+    for (const [index, doctor] of DoctorsData.entries()) {
+      try {
+        console.log(`📝 Processing doctor ${index + 1}/${DoctorsData.length}: ${doctor.name} (Branch ${doctor.branchId})`);
+        
+        // Check if doctor exists using multiple matching strategies
+        const uniqueKey = `${doctor.name}_${doctor.branchId}`;
+        const lowerKey = `${doctor.name.toLowerCase()}_${doctor.branchId}`;
+        
+        let existingDoctor = existingDoctorsMap.get(uniqueKey) || 
+                           existingDoctorsMap.get(lowerKey) ||
+                           existingDoctorsMap.get(doctor.name);
+        
+        if (existingDoctor) {
+          // Doctor exists - check if update needed
+          const fieldsToUpdate = {};
+          const fieldsToCheck = ['specialty', 'branchId', 'contact', 'image', 'qualifications', 'availability'];
+          
+          let needsUpdate = false;
+          for (const field of fieldsToCheck) {
+            if (Array.isArray(doctor[field])) {
+              // Compare arrays
+              const currentArray = JSON.stringify((doctor[field] || []).sort());
+              const existingArray = JSON.stringify((existingDoctor[field] || []).sort());
+              if (currentArray !== existingArray) {
+                fieldsToUpdate[field] = doctor[field];
+                needsUpdate = true;
+              }
+            } else {
+              // Compare regular fields
+              if (doctor[field] !== existingDoctor[field]) {
+                fieldsToUpdate[field] = doctor[field];
+                needsUpdate = true;
+              }
+            }
+          }
+          
+          if (needsUpdate) {
+            console.log(`🔄 Updating doctor: ${doctor.name} (Branch ${doctor.branchId})`);
+            await DatabaseService.updateDocument(COLLECTIONS.DOCTORS, existingDoctor.$id, fieldsToUpdate);
+            updatedCount++;
+          } else {
+            console.log(`✅ Doctor already up to date: ${doctor.name} (Branch ${doctor.branchId})`);
+          }
+          
+        } else {
+          // Doctor doesn't exist - create new
+          console.log(`➕ Creating new doctor: ${doctor.name} (Branch ${doctor.branchId})`);
+          
+          // Ensure all required fields are present
+          const doctorToCreate = {
+            name: doctor.name,
+            specialty: doctor.specialty,
+            branchId: String(doctor.branchId), // Ensure string
+            contact: doctor.contact,
+            image: doctor.image,
+            qualifications: doctor.qualifications || [],
+            availability: doctor.availability || []
+          };
+          
+          await DatabaseService.createDocument(COLLECTIONS.DOCTORS, doctorToCreate);
+          createdCount++;
         }
-      } else {
-        // Doctor doesn't exist, create new
-        console.log(`Creating new doctor: ${doctor.name}`);
-        await createDoctorDocument(doctor);
+        
+        // Add small delay to prevent overwhelming the database
+        if (index % 10 === 0 && index > 0) {
+          console.log(`⏸️  Processed ${index} doctors, taking a brief pause...`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+      } catch (doctorError) {
+        console.error(`❌ Error processing doctor ${doctor.name}:`, doctorError);
+        errorCount++;
+        errors.push({
+          doctor: doctor.name,
+          branchId: doctor.branchId,
+          error: doctorError.message
+        });
+        
+        // Continue with next doctor instead of stopping
+        continue;
       }
     }
 
-    console.log("Doctors initialization and updates completed successfully.");
+    console.log("✅ Doctor initialization completed!");
+    console.log(`📊 Summary: Created ${createdCount}, Updated ${updatedCount}, Errors ${errorCount}, Total processed: ${DoctorsData.length}`);
+    
+    if (errors.length > 0) {
+      console.log("❌ Errors encountered:");
+      errors.forEach(err => {
+        console.log(`  - ${err.doctor} (Branch ${err.branchId}): ${err.error}`);
+      });
+    }
+    
+    return {
+      success: errorCount < DoctorsData.length, // Success if not all failed
+      created: createdCount,
+      updated: updatedCount,
+      errors: errorCount,
+      totalDoctors: DoctorsData.length,
+      errorDetails: errors
+    };
+    
   } catch (error) {
-    console.error("Error initializing/updating doctors:", error);
-  }
-}
-
-export async function updateDoctorDocument(doctorId, updateData) {
-  const { DatabaseService } = await import('../configs/AppwriteConfig');
-  try {
-    return await DatabaseService.updateDocument(
-      COLLECTIONS.DOCTORS,
-      doctorId,
-      updateData
-    );
-  } catch (error) {
-    console.error('Error updating doctor document:', error);
+    console.error("❌ Critical error in doctor initialization:", error);
     throw error;
   }
 }
 
-// Helper function for debugging - Call this in AppointmentBooking.jsx to see what's happening
+// IMPROVED: More robust refresh function
+export async function refreshAllDoctors() {
+  const { DatabaseService } = await import('../configs/AppwriteConfig');
+  
+  try {
+    console.log("🗑️ Starting complete doctor refresh...");
+    
+    // Delete all existing doctors in batches
+    let deletedCount = 0;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const existingDoctors = await DatabaseService.listDocuments(
+        COLLECTIONS.DOCTORS, 
+        [DatabaseService.createQuery('limit', 50)]
+      );
+      
+      if (existingDoctors.documents.length === 0) {
+        hasMore = false;
+        break;
+      }
+      
+      for (const doctor of existingDoctors.documents) {
+        try {
+          await DatabaseService.deleteDocument(COLLECTIONS.DOCTORS, doctor.$id);
+          deletedCount++;
+          console.log(`🗑️  Deleted: ${doctor.name} (${deletedCount})`);
+        } catch (deleteError) {
+          console.error(`❌ Failed to delete doctor ${doctor.name}:`, deleteError);
+        }
+      }
+      
+      // Small delay between batches
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    
+    console.log(`✅ Deleted ${deletedCount} existing doctors`);
+    
+    // Create all doctors fresh
+    let createCount = 0;
+    const errors = [];
+    
+    for (const [index, doctor] of DoctorsData.entries()) {
+      try {
+        console.log(`➕ Creating doctor ${index + 1}/${DoctorsData.length}: ${doctor.name} (Branch ${doctor.branchId})`);
+        
+        const doctorToCreate = {
+          name: doctor.name,
+          specialty: doctor.specialty,
+          branchId: String(doctor.branchId),
+          contact: doctor.contact,
+          image: doctor.image,
+          qualifications: doctor.qualifications || [],
+          availability: doctor.availability || []
+        };
+        
+        await DatabaseService.createDocument(COLLECTIONS.DOCTORS, doctorToCreate);
+        createCount++;
+        
+        // Add delay every 10 doctors
+        if (index % 10 === 0 && index > 0) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+        
+      } catch (createError) {
+        console.error(`❌ Failed to create doctor ${doctor.name}:`, createError);
+        errors.push({
+          doctor: doctor.name,
+          branchId: doctor.branchId,
+          error: createError.message
+        });
+      }
+    }
+    
+    console.log(`✅ Complete doctor refresh completed!`);
+    console.log(`📊 Deleted: ${deletedCount}, Created: ${createCount}, Errors: ${errors.length}`);
+    
+    if (errors.length > 0) {
+      console.log("❌ Creation errors:");
+      errors.forEach(err => {
+        console.log(`  - ${err.doctor} (Branch ${err.branchId}): ${err.error}`);
+      });
+    }
+    
+    return { 
+      success: errors.length === 0,
+      deleted: deletedCount,
+      created: createCount,
+      errors: errors.length,
+      errorDetails: errors
+    };
+    
+  } catch (error) {
+    console.error("❌ Critical error during doctor refresh:", error);
+    throw error;
+  }
+}
+
+// ENHANCED: Better status checking
+export async function checkDoctorStatus() {
+  try {
+    const { DatabaseService } = await import('../configs/AppwriteConfig');
+    
+    // Count all doctors in database
+    let totalDoctors = 0;
+    let offset = 0;
+    const limit = 100;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const batch = await DatabaseService.listDocuments(
+        COLLECTIONS.DOCTORS,
+        [
+          DatabaseService.createQuery('limit', limit),
+          DatabaseService.createQuery('offset', offset)
+        ]
+      );
+      
+      totalDoctors += batch.documents.length;
+      
+      if (batch.documents.length < limit) {
+        hasMore = false;
+      } else {
+        offset += limit;
+      }
+    }
+    
+    console.log('📊 DOCTOR STATUS CHECK');
+    console.log(`Database doctors: ${totalDoctors}`);
+    console.log(`Expected doctors: ${DoctorsData.length}`);
+    console.log(`Missing: ${DoctorsData.length - totalDoctors}`);
+    console.log(`Progress: ${((totalDoctors / DoctorsData.length) * 100).toFixed(1)}%`);
+    
+    return {
+      database: totalDoctors,
+      expected: DoctorsData.length,
+      missing: DoctorsData.length - totalDoctors,
+      progress: (totalDoctors / DoctorsData.length) * 100
+    };
+  } catch (error) {
+    console.error('Error checking doctor status:', error);
+    return { error: error.message };
+  }
+}
+
+// ENHANCED: getDoctorsForBranch function (this is called in your appointment booking)
 export async function getDoctorsForBranch(branchId) {
   const { DatabaseService } = await import('../configs/AppwriteConfig');
   try {
-    console.log(`Fetching doctors for branch ID: ${branchId}`);
+    console.log(`🔍 Fetching doctors for branch ID: ${branchId}`);
+    
+    // Ensure branchId is string for consistent comparison
+    const normalizedBranchId = String(branchId);
     
     // First check all doctors to debug
-    const allDoctors = await DatabaseService.listDocuments(COLLECTIONS.DOCTORS, [], 100);
-    console.log(`Total doctors in database: ${allDoctors.documents.length}`);
+    const allDoctors = await DatabaseService.listDocuments(COLLECTIONS.DOCTORS, [], 200);
+    console.log(`📊 Total doctors in database: ${allDoctors.documents.length}`);
     
-    // Now get branch-specific doctors
-    const branchDoctors = await DatabaseService.listDocuments(
-      COLLECTIONS.DOCTORS, 
-      [DatabaseService.createQuery('equal', 'branchId', String(branchId))],
-      100
-    );
+    if (allDoctors.documents.length === 0) {
+      console.log("⚠️  No doctors found in database at all. Initializing...");
+      
+      // Try to initialize doctors if none exist
+      try {
+        const initResult = await initializeDoctors();
+        console.log("Initialize result:", initResult);
+        
+        // Try fetching again after initialization
+        const newAllDoctors = await DatabaseService.listDocuments(COLLECTIONS.DOCTORS, [], 200);
+        if (newAllDoctors.documents.length > 0) {
+          console.log(`✅ After initialization: ${newAllDoctors.documents.length} doctors available`);
+          
+          // Filter for this branch
+          const branchDoctors = newAllDoctors.documents.filter(doc => 
+            String(doc.branchId) === normalizedBranchId
+          );
+          
+          console.log(`🏥 Found ${branchDoctors.length} doctors for branch ${normalizedBranchId} after initialization`);
+          return branchDoctors;
+        }
+      } catch (initError) {
+        console.error("❌ Failed to initialize doctors:", initError);
+      }
+    }
     
-    console.log(`Found ${branchDoctors.documents.length} doctors for branch ${branchId}`);
-    return branchDoctors.documents;
+    // Debug: Show all branch IDs in database
+    const branchIds = [...new Set(allDoctors.documents.map(d => d.branchId))];
+    console.log(`📋 Available branch IDs in database: ${branchIds.join(', ')}`);
+    
+    // Now get branch-specific doctors using different query methods
+    let branchDoctors = [];
+    
+    try {
+      // Method 1: Use direct query
+      const queryResult = await DatabaseService.listDocuments(
+        COLLECTIONS.DOCTORS, 
+        [DatabaseService.createQuery('equal', 'branchId', normalizedBranchId)],
+        100
+      );
+      branchDoctors = queryResult.documents;
+      console.log(`🔍 Query method found ${branchDoctors.length} doctors`);
+    } catch (queryError) {
+      console.log("⚠️  Query method failed, using filter method:", queryError.message);
+      
+      // Method 2: Filter all doctors
+      branchDoctors = allDoctors.documents.filter(doc => 
+        String(doc.branchId) === normalizedBranchId
+      );
+      console.log(`🔍 Filter method found ${branchDoctors.length} doctors`);
+    }
+    
+    if (branchDoctors.length === 0) {
+      console.log(`⚠️  No doctors found for branch ${normalizedBranchId}`);
+      console.log(`📋 Expected doctors for this branch from constants:`, 
+        DoctorsData.filter(d => String(d.branchId) === normalizedBranchId).length
+      );
+      
+      // Try to load missing doctors for this specific branch
+      const expectedDoctors = DoctorsData.filter(d => String(d.branchId) === normalizedBranchId);
+      if (expectedDoctors.length > 0) {
+        console.log(`🔧 Attempting to create ${expectedDoctors.length} missing doctors for branch ${normalizedBranchId}`);
+        
+        for (const doctor of expectedDoctors) {
+          try {
+            const doctorToCreate = {
+              name: doctor.name,
+              specialty: doctor.specialty,
+              branchId: normalizedBranchId,
+              contact: doctor.contact,
+              image: doctor.image,
+              qualifications: doctor.qualifications || [],
+              availability: doctor.availability || []
+            };
+            
+            await DatabaseService.createDocument(COLLECTIONS.DOCTORS, doctorToCreate);
+            console.log(`✅ Created doctor: ${doctor.name} for branch ${normalizedBranchId}`);
+          } catch (createError) {
+            console.error(`❌ Failed to create doctor ${doctor.name}:`, createError);
+          }
+        }
+        
+        // Try fetching again after creating missing doctors
+        try {
+          const retryResult = await DatabaseService.listDocuments(
+            COLLECTIONS.DOCTORS, 
+            [DatabaseService.createQuery('equal', 'branchId', normalizedBranchId)],
+            100
+          );
+          branchDoctors = retryResult.documents;
+          console.log(`🔄 After creating missing doctors: ${branchDoctors.length} doctors found`);
+        } catch (retryError) {
+          console.error("❌ Retry fetch failed:", retryError);
+        }
+      }
+    }
+    
+    console.log(`📋 Final result: ${branchDoctors.length} doctors for branch ${normalizedBranchId}`);
+    branchDoctors.forEach(doc => {
+      console.log(`  - ${doc.name} (${doc.specialty}) - ID: ${doc.$id}`);
+    });
+    
+    return branchDoctors;
   } catch (error) {
-    console.error(`Error fetching doctors for branch ${branchId}:`, error);
+    console.error(`❌ Error fetching doctors for branch ${branchId}:`, error);
     throw error;
   }
 }

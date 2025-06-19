@@ -394,7 +394,7 @@ export default function HomeScreen() {
                 <Text style={styles.noAppointmentsTitle}>No upcoming appointments</Text>
                 <Text style={styles.noAppointmentsText}>Schedule your next appointment for you or your family</Text>
                 <TouchableOpacity 
-                  onPress={() => router.push('/appointment/appointmentBooking')}
+                  onPress={() => router.push('/(tabs)/AddNew')}
                   style={styles.bookAppointmentButton}
                 >
                   <Text style={styles.bookAppointmentText}>Book Appointment</Text>

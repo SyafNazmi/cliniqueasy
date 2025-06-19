@@ -301,7 +301,7 @@ export default function AppointmentsScreen() {
       {activeTab === 'upcoming' && (
         <TouchableOpacity 
           style={styles.fab}
-          onPress={() => router.push('/appointment/appointmentBooking')}
+          onPress={() => router.push('/(tabs)/AddNew')}
         >
           <Ionicons name="add" size={24} color="white" />
         </TouchableOpacity>

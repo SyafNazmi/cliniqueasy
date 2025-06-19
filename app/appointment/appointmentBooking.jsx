@@ -312,39 +312,41 @@ const AppointmentBooking = () => {
 
   // EXTRACTED: Doctor loading
   const loadDoctors = useCallback(async () => {
-    try {
-      console.log('Fetching doctors for branchId:', branchId);
+  try {
+    console.log('Fetching doctors for branchId:', branchId);
+    
+    const doctorsForBranch = await getDoctorsForBranch(branchId);
+    
+    if (doctorsForBranch && doctorsForBranch.length > 0) {
+      console.log(`Found ${doctorsForBranch.length} doctors for branch ${branchId}`);
+      setDoctors(doctorsForBranch);
+    } else {
+      console.log('No doctors found for this branch in the database. Using local fallback.');
       
-      const doctorsForBranch = await getDoctorsForBranch(branchId);
+      const { DoctorsData } = require('../../constants');
+      const filteredDoctors = DoctorsData.filter(doc => doc.branchId === branchId);
       
-      if (doctorsForBranch && doctorsForBranch.length > 0) {
-        console.log(`Found ${doctorsForBranch.length} doctors for branch ${branchId}`);
-        setDoctors(doctorsForBranch);
+      if (filteredDoctors.length > 0) {
+        // FIXED: Create globally unique temporary IDs that include branch info
+        const formattedDoctors = filteredDoctors.map((doc, index) => ({
+          ...doc,
+          $id: `temp_branch_${branchId}_doctor_${index}` // ✅ Now unique across branches
+        }));
+        
+        console.log(`Using ${formattedDoctors.length} doctors from local data.`);
+        console.log('Doctor IDs:', formattedDoctors.map(d => ({ name: d.name, id: d.$id })));
+        setDoctors(formattedDoctors);
       } else {
-        console.log('No doctors found for this branch in the database. Using local fallback.');
-        
-        const { DoctorsData } = require('../../constants');
-        const filteredDoctors = DoctorsData.filter(doc => doc.branchId === branchId);
-        
-        if (filteredDoctors.length > 0) {
-          const formattedDoctors = filteredDoctors.map((doc, index) => ({
-            ...doc,
-            $id: `temp_${index}`
-          }));
-          
-          console.log(`Using ${formattedDoctors.length} doctors from local data.`);
-          setDoctors(formattedDoctors);
-        } else {
-          console.log('No doctors found in local data either.');
-          setDoctors([]);
-        }
+        console.log('No doctors found in local data either.');
+        setDoctors([]);
       }
-    } catch (err) {
-      console.error('Error fetching doctors:', err);
-      setError(err.message);
-      Alert.alert('Error', `Failed to fetch doctors: ${err.message}`);
     }
-  }, [branchId]);
+  } catch (err) {
+    console.error('Error fetching doctors:', err);
+    setError(err.message);
+    Alert.alert('Error', `Failed to fetch doctors: ${err.message}`);
+  }
+}, [branchId]);
 
   // Fetch booked appointments for a specific doctor and date
   const fetchBookedSlots = async (doctorId, date) => {
