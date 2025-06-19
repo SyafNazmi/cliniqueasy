@@ -1,4 +1,6 @@
 // components/QRScannerModal.jsx - Fixed Version with Debouncing
+// Fixed QRScannerModal.jsx - Corrected data flow
+
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
@@ -150,7 +152,7 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
   // Process QR code and handle multiple medications with user confirmation
   const processQRCode = async (qrData) => {
     try {
-      console.log('Processing QR code:', qrData);
+      console.log('QRScannerModal: Processing QR code:', qrData);
       
       // Double-check we're not already processing
       if (!processingRef.current) {
@@ -161,16 +163,16 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
       const prescriptionMeds = await processPrescriptionQR(qrData);
       
       if (prescriptionMeds && prescriptionMeds.length > 0) {
-        console.log(`Found ${prescriptionMeds.length} medications`);
+        console.log(`QRScannerModal: Found ${prescriptionMeds.length} medications`);
         
         // Show confirmation dialog with medication details
-        showMedicationConfirmation(prescriptionMeds);
+        showMedicationConfirmation(prescriptionMeds, qrData);
         
       } else {
         throw new Error('No medication data found');
       }
     } catch (error) {
-      console.error('QR scan error:', error);
+      console.error('QRScannerModal: QR scan error:', error);
       Alert.alert(
         'Error',
         'Unable to process prescription data. Please try again.',
@@ -184,8 +186,8 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
     }
   };
 
-  // Show detailed medication confirmation dialog
-  const showMedicationConfirmation = (medications) => {
+  // 🚨 FIX: Enhanced medication confirmation with proper data passing
+  const showMedicationConfirmation = (medications, originalQrData) => {
     // Reset loading state but keep processing flag until user decides
     setLoading(false);
     
@@ -201,11 +203,25 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
       // Reset processing state
       processingRef.current = false;
       
-      onScanSuccess({
-        medications: medications,
-        totalCount: medications.length,
-        action: action
-      });
+      // 🚨 FIX: Pass both the processed medications and the original QR data
+      console.log('QRScannerModal: User chose action:', action);
+      
+      // Check if this was a raw QR scan or processed medications
+      if (typeof originalQrData === 'string' && originalQrData.startsWith('APPT:')) {
+        // For raw QR codes, pass the string for proper processing
+        console.log('QRScannerModal: Passing raw QR string:', originalQrData);
+        onScanSuccess(originalQrData);
+      } else {
+        // For processed medications (like demos), pass the processed object
+        console.log('QRScannerModal: Passing processed medications object');
+        onScanSuccess({
+          medications: medications,
+          totalCount: medications.length,
+          action: action,
+          originalQrData: originalQrData
+        });
+      }
+      
       onClose();
     };
 
@@ -271,12 +287,14 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
       setLoading(true);
       const demoQR = `DEMO:${demoType}:APT12345`;
       
+      console.log('QRScannerModal: Processing demo QR:', demoQR);
+      
       // Small delay to ensure state updates
       setTimeout(() => {
         processQRCode(demoQR);
       }, 100);
     } catch (error) {
-      console.error('Demo scan error:', error);
+      console.error('QRScannerModal: Demo scan error:', error);
       Alert.alert(
         'Error',
         'Demo scan failed. Please try manual entry.',

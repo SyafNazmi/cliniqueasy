@@ -1,3 +1,5 @@
+// app/doctor/prescriptions/create.jsx - Updated to use shared constants
+
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Platform, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,27 +8,25 @@ import { router, useLocalSearchParams } from 'expo-router';
 import PageHeader from '../../../components/PageHeader';
 import { DatabaseService, Query } from '../../../configs/AppwriteConfig';
 import { addPrescription } from '../../../service/PrescriptionScanner';
+import { getLocalStorage } from '../../../service/Storage';
 
-// Predefined options for medication fields
-const MEDICATION_TYPES = [
-  'Tablet', 'Capsule', 'Liquid', 'Injection', 'Topical', 'Inhaler', 'Patch', 'Drops'
-];
+// 🚨 UPDATED: Import shared constants for consistency
+import {
+  MEDICATION_TYPES,
+  ILLNESS_TYPES,
+  FREQUENCIES,
+  DURATIONS,
+  convertMedicationTypesToArray,
+  convertIllnessTypesToArray,
+  convertFrequenciesToArray,
+  convertDurationsToArray
+} from '../../../constants/MedicationConstants';
 
-const FREQUENCY_OPTIONS = [
-  'Once Daily', 'Twice Daily', 'Three times Daily', 'Four times Daily',
-  'Every Morning', 'Every Evening', 'Every 4 Hours', 'Every 6 Hours',
-  'Every 8 Hours', 'Every 12 Hours', 'Weekly', 'As Needed'
-];
-
-const DURATION_OPTIONS = [
-  '7 days', '14 days', '30 days', '90 days', 'On going'
-];
-
-const ILLNESS_TYPES = [
-  'Hypertension', 'Diabetes', 'Asthma', 'Cholesterol', 'Anxiety',
-  'Depression', 'Blood Pressure', 'Thyroid', 'Allergies', 'Pain Relief',
-  'Inflammation', 'Infection', 'Prenatal Care', 'Vitamin Deficiency', 'Heart Condition'
-];
+// Convert to simple arrays for dropdown compatibility
+const MEDICATION_TYPE_OPTIONS = convertMedicationTypesToArray();
+const FREQUENCY_OPTIONS = convertFrequenciesToArray();
+const DURATION_OPTIONS = convertDurationsToArray();
+const ILLNESS_TYPE_OPTIONS = convertIllnessTypesToArray();
 
 export default function CreatePrescriptionScreen() {
   const params = useLocalSearchParams();
@@ -36,6 +36,7 @@ export default function CreatePrescriptionScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [appointment, setAppointment] = useState(null);
   const [patientName, setPatientName] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
   const [medications, setMedications] = useState([
     {
       name: '',
@@ -58,73 +59,77 @@ export default function CreatePrescriptionScreen() {
   const [currentField, setCurrentField] = useState('');
   
   useEffect(() => {
-    if (appointmentId) {
-      loadAppointment();
-    } else {
-      setLoading(false);
-    }
+    loadInitialData();
   }, [appointmentId]);
   
-  const loadAppointment = async () => {
+  const loadInitialData = async () => {
     try {
-      const appointmentData = await DatabaseService.getDocument('67e0332c0001131d71ec', appointmentId);
-      setAppointment(appointmentData);
+      setLoading(true);
       
-      // Fetch patient name using the entire appointment object
-      if (appointmentData) {
-        await fetchPatientName(appointmentData); // Pass entire appointment object, not just user_id
+      // Load current user info
+      const userData = await getLocalStorage('userDetail');
+      setCurrentUser(userData);
+      
+      if (appointmentId) {
+        await loadAppointment();
       }
     } catch (error) {
-      console.error('Error loading appointment:', error);
-      Alert.alert('Error', 'Could not load appointment information');
+      console.error('Error loading initial data:', error);
+      Alert.alert('Error', 'Failed to load initial data');
     } finally {
       setLoading(false);
     }
   };
   
-  // Optimized patient name lookup function based on the discovered data structure
+  const loadAppointment = async () => {
+    try {
+      const appointmentData = await DatabaseService.getDocument(
+        '67e0332c0001131d71ec', // Your appointments collection ID
+        appointmentId
+      );
+      setAppointment(appointmentData);
+      
+      // Fetch patient name using the entire appointment object
+      if (appointmentData) {
+        await fetchPatientName(appointmentData);
+      }
+    } catch (error) {
+      console.error('Error loading appointment:', error);
+      Alert.alert('Error', 'Could not load appointment information');
+    }
+  };
+  
+  // Patient name lookup function (same as existing logic)
   const fetchPatientName = async (appointmentData) => {
     try {
       console.log('Fetching patient info for appointment:', appointmentData.$id);
-      console.log('Is family booking:', appointmentData?.is_family_booking);
-      console.log('Patient name from appointment:', appointmentData?.patient_name);
-      console.log('Patient ID from appointment:', appointmentData?.patient_id);
-      console.log('User ID from appointment:', appointmentData?.user_id);
       
       let patientName = 'Unknown Patient';
       
-      // Use the same logic as the appointment detail view for consistency
       if (appointmentData.is_family_booking && appointmentData.patient_name) {
-        // Family booking with patient name - use it directly
         patientName = appointmentData.patient_name;
-        console.log(`Using family booking patient name: ${patientName}`);
       } 
       else if (appointmentData.is_family_booking && appointmentData.patient_id) {
-        // Family booking with patient_id but no name
         try {
           const patientResponse = await DatabaseService.listDocuments(
-            '67e032ec0025cf1956ff', // Patient profiles collection
+            '67e032ec0025cf1956ff',
             [Query.equal('$id', appointmentData.patient_id)]
           );
           
           if (patientResponse.documents && patientResponse.documents.length > 0) {
             const patientData = patientResponse.documents[0];
             patientName = patientData.fullName || patientData.name || patientData.displayName || 'Family Member';
-            console.log(`Found family member by patient_id: ${patientName}`);
           } else {
             patientName = 'Family Member';
-            console.log('Family member not found in patient profiles, using default');
           }
         } catch (error) {
-          console.log('Error fetching family member by patient_id:', error);
           patientName = 'Family Member';
         }
       }
       else if (appointmentData.user_id) {
-        // Regular booking - fetch by user_id
         try {
           const usersResponse = await DatabaseService.listDocuments(
-            '67e032ec0025cf1956ff', // Users collection
+            '67e032ec0025cf1956ff',
             [Query.equal('userId', appointmentData.user_id)]
           );
           
@@ -134,13 +139,10 @@ export default function CreatePrescriptionScreen() {
               (appointmentData.user_id.includes('@') ? 
                 appointmentData.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
                 `Patient ${appointmentData.user_id.substring(0, 8)}`);
-            console.log(`Found account holder by user_id: ${patientName}`);
           } else {
-            // Fallback formatting for user_id
             patientName = appointmentData.user_id.includes('@') ? 
               appointmentData.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
               `Patient ${appointmentData.user_id.substring(0, 8)}`;
-            console.log(`Using fallback formatting for user_id: ${patientName}`);
           }
         } catch (error) {
           console.error('Error fetching account holder by user_id:', error);
@@ -153,7 +155,6 @@ export default function CreatePrescriptionScreen() {
       
     } catch (error) {
       console.error('Error in fetchPatientName:', error);
-      // Fallback to appointment data
       const fallbackName = appointmentData?.patient_name || 
                           (appointmentData?.user_id?.includes('@') ? 
                             appointmentData.user_id.split('@')[0].replace(/[._-]/g, ' ') : 
@@ -162,6 +163,7 @@ export default function CreatePrescriptionScreen() {
     }
   };
   
+  // Medication management functions
   const addMedication = () => {
     setMedications([
       ...medications,
@@ -181,6 +183,15 @@ export default function CreatePrescriptionScreen() {
   const updateMedication = (index, field, value) => {
     const updatedMedications = [...medications];
     updatedMedications[index][field] = value;
+    
+    // 🚨 UPDATED: Auto-update times when frequency changes using shared constants
+    if (field === 'frequencies') {
+      const frequencyData = FREQUENCIES.find(freq => freq.label === value);
+      if (frequencyData && frequencyData.times) {
+        updatedMedications[index]['times'] = [...frequencyData.times];
+      }
+    }
+    
     setMedications(updatedMedications);
   };
   
@@ -192,11 +203,12 @@ export default function CreatePrescriptionScreen() {
     }
   };
   
+  // 🚨 UPDATED: Dropdown functions using shared constants
   const openDropdown = (type, index, field) => {
     let options = [];
     switch (type) {
       case 'medicationType':
-        options = MEDICATION_TYPES;
+        options = MEDICATION_TYPE_OPTIONS;
         break;
       case 'frequency':
         options = FREQUENCY_OPTIONS;
@@ -205,7 +217,7 @@ export default function CreatePrescriptionScreen() {
         options = DURATION_OPTIONS;
         break;
       case 'illness':
-        options = ILLNESS_TYPES;
+        options = ILLNESS_TYPE_OPTIONS;
         break;
       default:
         return;
@@ -223,6 +235,7 @@ export default function CreatePrescriptionScreen() {
     setDropdownVisible(false);
   };
   
+  // UPDATED: Submit function using your existing addPrescription function
   const handleSubmit = async () => {
     try {
       // Validate required fields
@@ -237,69 +250,81 @@ export default function CreatePrescriptionScreen() {
       
       setSubmitting(true);
       
-      // Make sure each medication has times as a proper array
+      // 🚨 UPDATED: Format medications with proper times array and illness types
       const formattedMedications = medications.map(med => {
-        // Create a copy of the medication to avoid mutating the original
         const formattedMed = {...med};
         
-        // Ensure times is an array
+        // Ensure times is an array (your system expects this)
         if (!Array.isArray(formattedMed.times)) {
-          // If times is a string, try to parse it
           if (typeof formattedMed.times === 'string') {
             try {
-              // Check if it looks like JSON
               if (formattedMed.times.startsWith('[') && formattedMed.times.endsWith(']')) {
                 formattedMed.times = JSON.parse(formattedMed.times);
               } else {
-                // If it's a single time as string, put it in an array
                 formattedMed.times = [formattedMed.times];
               }
             } catch (e) {
-              // If parsing fails, default to an array with a single time
               formattedMed.times = [formattedMed.times];
             }
           } else if (!formattedMed.times) {
-            // If times is null/undefined, default to an empty array or a default time
-            formattedMed.times = ['09:00'];
+            // Use shared constants to get default times for frequency
+            const frequencyData = FREQUENCIES.find(freq => freq.label === med.frequencies);
+            formattedMed.times = frequencyData ? frequencyData.times : ['09:00'];
           } else {
-            // For any other non-array value, convert to string and wrap in array
             formattedMed.times = [String(formattedMed.times)];
           }
         }
         
-        // Make sure all times in the array are strings
+        // Ensure all times are strings
         formattedMed.times = formattedMed.times.map(time => String(time));
+        
+        // 🚨 SYNCHRONIZED: Ensure illness_type field uses correct naming
+        formattedMed.illness_type = formattedMed.illnessType || '';
         
         return formattedMed;
       });
       
-      console.log("Formatted medications with proper times arrays:", formattedMedications);
+      console.log("Creating prescription with formatted medications:", formattedMedications);
       
-      // Add prescription to database
-      await addPrescription(appointmentId, formattedMedications, doctorNotes);
-      
-      // Update appointment to indicate it has a prescription
-      await DatabaseService.updateDocument(
-        '67e0332c0001131d71ec', // Use the APPOINTMENTS_COLLECTION_ID constant here
-        appointmentId, 
-        {
-          has_prescription: true
-        }
+      // Use existing addPrescription function
+      const prescription = await addPrescription(
+        appointmentId,
+        formattedMedications,
+        doctorNotes
       );
+      
+      console.log("Prescription created successfully:", prescription);
+      
+      // Generate QR code content using the format your system expects
+      const qrContent = `APPT:${appointmentId}:${prescription.reference_code}`;
       
       Alert.alert(
         'Success',
-        'Prescription created successfully',
-        [{ text: 'OK', onPress: () => router.back() }]
+        `Prescription created successfully!\n\nReference Code: ${prescription.reference_code}\n\nThe patient can scan the QR code: ${qrContent}\n\nThis will add all ${formattedMedications.length} medications to their tracker with synchronized illness types.`,
+        [
+          { 
+            text: 'View Prescription', 
+            onPress: () => router.replace({
+              pathname: '/doctor/prescriptions/view',
+              params: { 
+                appointmentId,
+                new: 'true' // Flag to show success modal
+              }
+            })
+          }
+        ]
       );
+      
     } catch (error) {
       console.error('Error creating prescription:', error);
-      Alert.alert('Error', 'Failed to create prescription. Please try again.');
+      Alert.alert(
+        'Error', 
+        `Failed to create prescription: ${error.message}\n\nPlease try again.`
+      );
     } finally {
       setSubmitting(false);
     }
   };
-  
   
   // Render dropdown modal
   const renderDropdownModal = () => (
@@ -340,6 +365,13 @@ export default function CreatePrescriptionScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
+          
+          {/* 🚨 NEW: Show count of available options */}
+          <View style={styles.dropdownFooter}>
+            <Text style={styles.dropdownFooterText}>
+              {dropdownOptions.length} {dropdownType === 'illness' ? 'illness types' : 'options'} available
+            </Text>
+          </View>
         </View>
       </TouchableOpacity>
     </Modal>
@@ -388,9 +420,7 @@ export default function CreatePrescriptionScreen() {
             <View style={styles.appointmentDetail}>
               <Ionicons name="person" size={16} color="#0AD476" />
               <Text style={styles.appointmentDetailLabel}>Patient:</Text>
-              <Text style={styles.appointmentDetailValue}>
-                {patientName || appointment.user_id}
-              </Text>
+              <Text style={styles.appointmentDetailValue}>{patientName}</Text>
             </View>
             <View style={styles.appointmentDetail}>
               <Ionicons name="calendar" size={16} color="#0AD476" />
@@ -409,6 +439,17 @@ export default function CreatePrescriptionScreen() {
             </View>
           </View>
         )}
+        
+        {/* 🚨 NEW: Consistency notice */}
+        <View style={styles.consistencyNotice}>
+          <View style={styles.consistencyHeader}>
+            <Ionicons name="sync-outline" size={20} color="#1a8e2d" />
+            <Text style={styles.consistencyTitle}>Synchronized with Patient App</Text>
+          </View>
+          <Text style={styles.consistencyText}>
+            Illness types and medication details will appear exactly the same in the patient's medication tracker.
+          </Text>
+        </View>
         
         <Text style={styles.sectionTitle}>Medications</Text>
         
@@ -495,8 +536,11 @@ export default function CreatePrescriptionScreen() {
               </View>
             </View>
             
+            {/* 🚨 HIGHLIGHTED: Synchronized illness type field */}
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Illness Type</Text>
+              <View style={styles.illnessTypeHeader}>
+                <Text style={styles.inputLabel}>Illness Type</Text>
+              </View>
               <TouchableOpacity
                 style={styles.dropdownButton}
                 onPress={() => openDropdown('illness', index, 'illnessType')}
@@ -507,6 +551,24 @@ export default function CreatePrescriptionScreen() {
                 <Ionicons name="chevron-down" size={20} color="#666" />
               </TouchableOpacity>
             </View>
+            
+            {/* 🚨 NEW: Show medication times if frequency is set */}
+            {medication.frequencies && medication.frequencies !== 'As Needed' && (
+              <View style={styles.timesPreview}>
+                <Text style={styles.timesPreviewLabel}>Reminder Times:</Text>
+                <View style={styles.timesPreviewList}>
+                  {medication.times.map((time, timeIndex) => (
+                    <View key={timeIndex} style={styles.timePreviewChip}>
+                      <Ionicons name="time-outline" size={14} color="#1a8e2d" />
+                      <Text style={styles.timePreviewText}>{time}</Text>
+                    </View>
+                  ))}
+                </View>
+                <Text style={styles.timesPreviewNote}>
+                  Patient can customize these times in their app
+                </Text>
+              </View>
+            )}
             
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Instructions</Text>
@@ -609,6 +671,33 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
   },
+  
+  // 🚨 NEW: Consistency notice styles
+  consistencyNotice: {
+    backgroundColor: '#f0f9f0',
+    borderRadius: 12,
+    padding: 15,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#1a8e2d20',
+  },
+  consistencyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  consistencyTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1a8e2d',
+    marginLeft: 8,
+  },
+  consistencyText: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+  },
+  
   appointmentCard: {
     backgroundColor: '#f9fafb',
     borderRadius: 12,
@@ -693,6 +782,15 @@ const styles = StyleSheet.create({
     color: '#FF4747',
     fontWeight: 'bold',
   },
+  
+  // Illness type header 
+  illnessTypeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+
   input: {
     backgroundColor: '#f5f5f5',
     borderRadius: 10,
@@ -715,6 +813,50 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
   },
+  
+  // 🚨 NEW: Times preview styles
+  timesPreview: {
+    backgroundColor: '#f8fdf9',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#e6f7e9',
+  },
+  timesPreviewLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1a8e2d',
+    marginBottom: 8,
+  },
+  timesPreviewList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 8,
+  },
+  timePreviewChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e6f7e9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1a8e2d20',
+  },
+  timePreviewText: {
+    fontSize: 12,
+    color: '#1a8e2d',
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  timesPreviewNote: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  
   textArea: {
     backgroundColor: '#f5f5f5',
     borderRadius: 10,
@@ -773,6 +915,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
   },
+  
+  // 🚨 NEW: Dropdown footer
+  dropdownFooter: {
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    marginTop: 10,
+  },
+  dropdownFooterText: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  
   addMedicationButton: {
     flexDirection: 'row',
     alignItems: 'center',

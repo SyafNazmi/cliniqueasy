@@ -193,7 +193,7 @@ export default function AppointmentsScreen() {
           </Text>
           <TouchableOpacity 
             style={styles.bookButton}
-            onPress={() => router.push('/appointment/appointmentBooking')}
+            onPress={() => router.push('/(tabs)/AddNew')}
           >
             <Text style={styles.bookButtonText}>Book an Appointment</Text>
           </TouchableOpacity>
