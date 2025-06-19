@@ -1,4 +1,4 @@
-// components/MedicationReminder.jsx - Optimized Modal Version
+// app/medications/reminders.jsx - Updated to work with Appwrite
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -14,8 +14,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { getMedications, updateMedication } from '../../service/Storage';
-import { scheduleMedicationReminder } from '../../service/Notification';
+import { integratedPatientMedicationService } from '../../service/PatientMedicationService'; // 🚨 NEW: Use Appwrite service
+import { scheduleMedicationReminder, cancelMedicationReminders } from '../../service/Notification';
 import { router } from 'expo-router';
 
 const { width } = Dimensions.get('window');
@@ -35,21 +35,18 @@ const FREQUENCIES = [
   { id: "12", label: "As Needed", times: [] },
 ];
 
-// FIXED: Helper function to cancel medication reminders
-const cancelMedicationReminder = async (medicationId) => {
+// 🚨 FIXED: Helper function to cancel medication reminders
+const cancelMedicationReminderHelper = async (medicationId) => {
   try {
-    // This is a placeholder - implement based on your notification system
-    console.log('Cancelling reminders for medication:', medicationId);
-    // You might need to:
-    // 1. Cancel scheduled notifications by medication ID
-    // 2. Clear notification identifiers from storage
-    // 3. Remove from notification scheduler
+    console.log('🔔 Cancelling reminders for medication:', medicationId);
     
-    // Example implementation:
-    // await Notifications.cancelScheduledNotificationAsync(medicationId);
+    // Use the existing notification service (note: plural function name)
+    await cancelMedicationReminders(medicationId);
+    
+    console.log('✅ Successfully cancelled reminders for:', medicationId);
     return true;
   } catch (error) {
-    console.error('Error cancelling medication reminder:', error);
+    console.error('❌ Error cancelling medication reminder:', error);
     return false;
   }
 };
@@ -68,14 +65,20 @@ export default function MedicationReminders({ navigation }) {
     loadMedications();
   }, []);
 
+  // 🚨 UPDATED: Load medications from Appwrite
   const loadMedications = async () => {
     try {
       setLoading(true);
-      const medicationList = await getMedications();
+      console.log('🔄 Loading medications from Appwrite...');
+      
+      // Use the integrated service to get medications from Appwrite
+      const medicationList = await integratedPatientMedicationService.getPatientMedications();
+      
+      console.log('📋 Loaded medications:', medicationList);
       setMedications(medicationList);
     } catch (error) {
-      console.error('Error loading medications:', error);
-      Alert.alert('Error', 'Failed to load medications');
+      console.error('❌ Error loading medications:', error);
+      Alert.alert('Error', 'Failed to load medications. Please check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -167,7 +170,7 @@ export default function MedicationReminders({ navigation }) {
     }
   };
 
-  // FIXED: Save time changes with proper error handling
+  // 🚨 UPDATED: Save time changes to Appwrite with proper error handling
   const saveTimeChanges = async () => {
     try {
       setSaving(true);
@@ -177,26 +180,43 @@ export default function MedicationReminders({ navigation }) {
         return;
       }
 
-      // Update medication with new times
+      console.log('💾 Saving time changes for medication:', selectedMedication.id);
+      console.log('🕐 New times:', editingTimes);
+
+      // Update medication in Appwrite with new times
       const updatedMedication = {
         ...selectedMedication,
         times: editingTimes
       };
 
-      await updateMedication(selectedMedication.id, updatedMedication);
+      // 🚨 FIXED: Use Appwrite service to update medication with correct data
+      const result = await integratedPatientMedicationService.updatePatientMedication(
+        selectedMedication.id, 
+        { times: editingTimes }
+      );
+
+      console.log('✅ Updated medication in Appwrite:', result);
 
       // Handle reminders properly
       if (selectedMedication.reminderEnabled) {
-        // Cancel existing reminders first
-        await cancelMedicationReminder(selectedMedication.id);
-        // Schedule new reminders
-        await scheduleMedicationReminder(updatedMedication);
+        try {
+          // Cancel existing reminders first
+          await cancelMedicationReminderHelper(selectedMedication.id);
+          
+          // Schedule new reminders with updated times
+          await scheduleMedicationReminder(updatedMedication);
+          
+          console.log('🔔 Updated reminders successfully');
+        } catch (reminderError) {
+          console.error('⚠️ Error updating reminders:', reminderError);
+          // Don't fail the entire operation if reminder update fails
+        }
       }
 
       // Update local state
       setMedications(prevMeds => 
         prevMeds.map(med => 
-          med.id === selectedMedication.id ? updatedMedication : med
+          med.id === selectedMedication.id ? { ...med, times: editingTimes } : med
         )
       );
 
@@ -210,38 +230,53 @@ export default function MedicationReminders({ navigation }) {
       );
 
     } catch (error) {
-      console.error('Error saving time changes:', error);
-      Alert.alert('Error', 'Failed to save time changes. Please try again.');
+      console.error('❌ Error saving time changes:', error);
+      
+      let errorMessage = 'Failed to save time changes. Please try again.';
+      if (error.message?.includes('network') || error.message?.includes('fetch')) {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      } else if (error.message?.includes('permission') || error.message?.includes('unauthorized')) {
+        errorMessage = 'Permission denied. Please log in again.';
+      }
+      
+      Alert.alert('Error', errorMessage);
     } finally {
       setSaving(false);
     }
   };
 
-  // Toggle reminder on/off
+  // 🚨 UPDATED: Toggle reminder on/off with Appwrite update
   const toggleReminder = async (medication) => {
     try {
-      const updatedMedication = {
-        ...medication,
-        reminderEnabled: !medication.reminderEnabled
-      };
+      const newReminderState = !medication.reminderEnabled;
+      
+      console.log(`🔔 ${newReminderState ? 'Enabling' : 'Disabling'} reminders for:`, medication.name);
 
-      await updateMedication(medication.id, updatedMedication);
+      // Update medication in Appwrite
+      await integratedPatientMedicationService.updatePatientMedication(
+        medication.id,
+        { reminder_enabled: newReminderState }
+      );
 
-      if (updatedMedication.reminderEnabled) {
-        await scheduleMedicationReminder(updatedMedication);
+      // Handle notifications
+      if (newReminderState) {
+        await scheduleMedicationReminder({ ...medication, reminderEnabled: true });
       } else {
-        await cancelMedicationReminder(medication.id);
+        await cancelMedicationReminderHelper(medication.id);
       }
 
+      // Update local state
       setMedications(prevMeds => 
         prevMeds.map(med => 
-          med.id === medication.id ? updatedMedication : med
+          med.id === medication.id ? { ...med, reminderEnabled: newReminderState } : med
         )
       );
 
+      console.log('✅ Successfully toggled reminder state');
+
     } catch (error) {
-      console.error('Error toggling reminder:', error);
-      Alert.alert('Error', 'Failed to toggle reminder');
+      console.error('❌ Error toggling reminder:', error);
+      Alert.alert('Error', 'Failed to toggle reminder. Please check your connection and try again.');
     }
   };
 
@@ -309,7 +344,7 @@ export default function MedicationReminders({ navigation }) {
     </View>
   );
 
-  // OPTIMIZED: Time picker with proper modal overlay
+  // Time picker with proper modal overlay
   const renderTimePicker = () => {
     if (!showTimePicker) return null;
 
@@ -365,7 +400,7 @@ export default function MedicationReminders({ navigation }) {
     );
   };
 
-  // OPTIMIZED: Main time editor modal
+  // Main time editor modal
   const renderTimeEditor = () => (
     <Modal
       visible={showTimeEditor}
@@ -474,7 +509,7 @@ export default function MedicationReminders({ navigation }) {
         </View>
       </View>
 
-      {/* OPTIMIZED: Time picker as separate modal */}
+      {/* Time picker as separate modal */}
       {renderTimePicker()}
     </Modal>
   );
@@ -482,6 +517,7 @@ export default function MedicationReminders({ navigation }) {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
+        <Ionicons name="refresh-outline" size={48} color="#ccc" />
         <Text style={styles.loadingText}>Loading medications...</Text>
       </View>
     );
@@ -509,6 +545,12 @@ export default function MedicationReminders({ navigation }) {
             <Text style={styles.emptyStateText}>
               Add some medications to set up reminders
             </Text>
+            <TouchableOpacity 
+              style={styles.addMedicationButton}
+              onPress={() => router.push('/medications/add')}
+            >
+              <Text style={styles.addMedicationButtonText}>Add Medication</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <FlatList
@@ -556,10 +598,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#f8f8f8',
   },
   loadingText: {
     fontSize: 16,
     color: '#666',
+    marginTop: 10,
   },
   medicationsList: {
     paddingBottom: 20,
@@ -703,8 +747,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#999',
     textAlign: 'center',
+    marginBottom: 20,
   },
-  // OPTIMIZED Modal styles
+  addMedicationButton: {
+    backgroundColor: '#1a8e2d',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  addMedicationButtonText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  // Modal styles
   modalContainer: {
     flex: 1,
     backgroundColor: 'white',
@@ -843,7 +898,7 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     padding: 5,
   },
-  // OPTIMIZED Time picker styles
+  // Time picker styles
   timePickerOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',

@@ -80,6 +80,9 @@ export default function ViewPrescriptionScreen() {
     } finally {
       setLoading(false);
     }
+    const result = await getPrescriptions(appointmentId);
+    setPrescription(result.prescription);
+    setMedications(result.medications);
   };
 
   // FIXED: Updated fetchPatientName function to match appointment detail logic
