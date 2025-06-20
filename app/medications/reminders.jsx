@@ -1,5 +1,5 @@
 // app/medications/reminders.jsx - Updated to work with Appwrite
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -60,22 +60,59 @@ export default function MedicationReminders({ navigation }) {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [currentTimeIndex, setCurrentTimeIndex] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [patients, setPatients] = useState([]);
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [showPatientDropdown, setShowPatientDropdown] = useState(false);
 
   useEffect(() => {
+  const initializeData = async () => {
+    await loadPatients();
     loadMedications();
-  }, []);
+  };
+  
+  initializeData();
+}, [selectedPatient]);
+
+  const loadPatients = useCallback(async () => {
+  try {
+    console.log('👥 Loading patients for reminders...');
+    const patientList = await integratedPatientMedicationService.getFormattedPatientList();
+    
+    console.log('📋 Available patients:', patientList);
+    setPatients(patientList || []);
+    
+    // Auto-select owner if no patient selected
+    if (!selectedPatient && patientList.length > 0) {
+      const owner = patientList.find(p => p.isOwner) || patientList[0];
+      setSelectedPatient(owner);
+    }
+  } catch (error) {
+    console.error('❌ Error loading patients:', error);
+    setPatients([]);
+  }
+}, [selectedPatient]);
 
   // 🚨 UPDATED: Load medications from Appwrite
   const loadMedications = async () => {
     try {
       setLoading(true);
-      console.log('🔄 Loading medications from Appwrite...');
+      console.log('🔄 Loading medications for patient:', selectedPatient?.name);
       
       // Use the integrated service to get medications from Appwrite
-      const medicationList = await integratedPatientMedicationService.getPatientMedications();
+      const medicationList = await integratedPatientMedicationService.getPatientMedications({
+        patientId: selectedPatient?.id || 'all'
+      });
       
-      console.log('📋 Loaded medications:', medicationList);
-      setMedications(medicationList);
+      // Filter medications by selected patient
+      const filteredMeds = selectedPatient 
+        ? medicationList.filter(med => 
+            med.patientId === selectedPatient.id || 
+            (selectedPatient.isOwner && !med.patientId)
+          )
+        : medicationList;
+      
+      console.log(`📋 Loaded ${filteredMeds.length} medications for ${selectedPatient?.name}:`, filteredMeds);
+      setMedications(filteredMeds);
     } catch (error) {
       console.error('❌ Error loading medications:', error);
       Alert.alert('Error', 'Failed to load medications. Please check your connection and try again.');
@@ -83,6 +120,93 @@ export default function MedicationReminders({ navigation }) {
       setLoading(false);
     }
   };
+
+  const PatientDropdown = () => (
+    <View style={styles.patientSelectorContainer}>
+      <TouchableOpacity
+        style={styles.patientDropdownButton}
+        onPress={() => setShowPatientDropdown(!showPatientDropdown)}
+      >
+        <View style={styles.patientDropdownContent}>
+          <View style={[
+            styles.patientAvatar,
+            selectedPatient?.isOwner ? styles.ownerAvatar : styles.familyAvatar
+          ]}>
+            <Ionicons 
+              name={selectedPatient?.isOwner ? "person" : "people"} 
+              size={16} 
+              color="white" 
+            />
+          </View>
+          <View style={styles.patientInfo}>
+            <Text style={styles.patientName}>
+              {selectedPatient?.name || 'Select Patient'}
+            </Text>
+            <Text style={styles.patientType}>
+              {selectedPatient?.isOwner 
+                ? 'Account Owner' 
+                : selectedPatient?.relationship || 'Family Member'
+              }
+            </Text>
+          </View>
+        </View>
+        <Ionicons 
+          name={showPatientDropdown ? 'chevron-up' : 'chevron-down'} 
+          size={20} 
+          color="#666" 
+        />
+      </TouchableOpacity>
+
+      {showPatientDropdown && (
+        <View style={styles.patientDropdownMenu}>
+          {patients.map((patient) => (
+            <TouchableOpacity
+              key={patient.id}
+              style={[
+                styles.patientDropdownItem,
+                selectedPatient?.id === patient.id && styles.selectedPatientItem
+              ]}
+              onPress={() => {
+                setSelectedPatient(patient);
+                setShowPatientDropdown(false);
+              }}
+            >
+              <View style={[
+                styles.patientAvatar,
+                patient.isOwner ? styles.ownerAvatar : styles.familyAvatar
+              ]}>
+                <Ionicons 
+                  name={patient.isOwner ? "person" : "people"} 
+                  size={16} 
+                  color="white" 
+                />
+              </View>
+              <View style={styles.patientInfo}>
+                <Text style={[
+                  styles.patientName,
+                  selectedPatient?.id === patient.id && styles.selectedPatientText
+                ]}>
+                  {patient.name}
+                </Text>
+                <Text style={[
+                  styles.patientType,
+                  selectedPatient?.id === patient.id && styles.selectedPatientText
+                ]}>
+                  {patient.isOwner 
+                    ? 'Account Owner' 
+                    : patient.relationship || 'Family Member'
+                  }
+                </Text>
+              </View>
+              {selectedPatient?.id === patient.id && (
+                <Ionicons name="checkmark-circle" size={20} color="#1a8e2d" />
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+    </View>
+  );
 
   // Open time editor for any medication
   const openTimeEditor = (medication) => {
@@ -538,30 +662,31 @@ export default function MedicationReminders({ navigation }) {
 
       {/* Content */}
       <View style={styles.content}>
+        <PatientDropdown />
         {medications.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="medical-outline" size={60} color="#ccc" />
-            <Text style={styles.emptyStateTitle}>No Medications</Text>
-            <Text style={styles.emptyStateText}>
-              Add some medications to set up reminders
-            </Text>
-            <TouchableOpacity 
-              style={styles.addMedicationButton}
-              onPress={() => router.push('/medications/add')}
-            >
-              <Text style={styles.addMedicationButtonText}>Add Medication</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <FlatList
-            data={medications}
-            renderItem={renderMedicationCard}
-            keyExtractor={(item) => item.id}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.medicationsList}
-          />
-        )}
-      </View>
+                <View style={styles.emptyState}>
+                  <Ionicons name="medical-outline" size={60} color="#ccc" />
+                  <Text style={styles.emptyStateTitle}>No Medications</Text>
+                  <Text style={styles.emptyStateText}>
+                    {selectedPatient?.name || 'This patient'} has no medications with reminders
+                  </Text>
+                  <TouchableOpacity 
+                    style={styles.addMedicationButton}
+                    onPress={() => router.push('/medications/add')}
+                  >
+                    <Text style={styles.addMedicationButtonText}>Add Medication</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <FlatList
+                  data={medications}
+                  renderItem={renderMedicationCard}
+                  keyExtractor={(item) => item.id}
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.medicationsList}
+                />
+              )}
+            </View>
 
       {/* Time Editor Modal */}
       {renderTimeEditor()}
@@ -940,4 +1065,77 @@ const styles = StyleSheet.create({
   timePicker: {
     height: 200,
   },
+
+  patientSelectorContainer: {
+  marginBottom: 20,
+  zIndex: 1000,
+  },
+  patientDropdownButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  patientDropdownContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  patientAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  ownerAvatar: {
+    backgroundColor: '#1a8e2d',
+  },
+  familyAvatar: {
+    backgroundColor: '#2196F3',
+  },
+  patientInfo: {
+    flex: 1,
+  },
+  patientName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  patientType: {
+    fontSize: 12,
+    color: '#666',
+  },
+  patientDropdownMenu: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    marginTop: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  patientDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f5f5f5',
+  },
+  selectedPatientItem: {
+    backgroundColor: '#f8fdf9',
+  },
+  selectedPatientText: {
+    color: '#1a8e2d',
+},
 });

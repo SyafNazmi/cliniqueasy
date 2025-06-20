@@ -18,6 +18,9 @@ export default function CalendarScreen() {
     const [medications, setMedications] = useState([]);
     const [doseHistory, setDoseHistory] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [patients, setPatients] = useState([]);
+    const [selectedPatient, setSelectedPatient] = useState(null);
+    const [showPatientDropdown, setShowPatientDropdown] = useState(false);
 
     // 🚨 FIXED: Add the missing helper function for "As Needed" medications
     const isAsNeeded = (medication) => {
@@ -35,21 +38,50 @@ export default function CalendarScreen() {
         return medication.times || [];
     };
 
+    const loadPatients = useCallback(async () => {
+      try {
+            console.log('👥 Loading patients for calendar...');
+            const patientList = await integratedPatientMedicationService.getFormattedPatientList();
+            
+            console.log('📋 Available patients:', patientList);
+            setPatients(patientList || []);
+            
+            // Auto-select owner if no patient selected
+            if (!selectedPatient && patientList.length > 0) {
+                const owner = patientList.find(p => p.isOwner) || patientList[0];
+                setSelectedPatient(owner);
+            }
+        } catch (error) {
+            console.error('❌ Error loading patients:', error);
+            setPatients([]);
+        }
+    }, [selectedPatient]);
+
     // 🚨 UPDATED: Load both medications and dose history from Appwrite
     const loadData = useCallback(async () => {
         try {
             setLoading(true);
-            console.log('🔄 Loading calendar data from Appwrite...');
+            console.log('🔄 Loading calendar data for patient:', selectedPatient?.name);
             
             const [meds, history] = await Promise.all([
-                integratedPatientMedicationService.getPatientMedications(),
+                integratedPatientMedicationService.getPatientMedications({ 
+                    patientId: selectedPatient?.id || 'all' 
+                }),
                 doseTrackingService.getAllDoseHistory()
             ]);
 
-            console.log("📋 Calendar medications from Appwrite:", meds);
-            console.log("📊 Calendar dose history from Appwrite:", history);
+            // Filter medications by selected patient
+            const filteredMeds = selectedPatient 
+                ? meds.filter(med => 
+                    med.patientId === selectedPatient.id || 
+                    (selectedPatient.isOwner && !med.patientId)
+                  )
+                : meds;
+
+            console.log(`📋 Calendar medications for ${selectedPatient?.name}:`, filteredMeds);
+            console.log("📊 Calendar dose history:", history);
             
-            setMedications(meds || []);
+            setMedications(filteredMeds || []);
             setDoseHistory(history || []);
         } catch (error) {
             console.error("❌ Error loading calendar data:", error);
@@ -61,19 +93,107 @@ export default function CalendarScreen() {
                     { text: 'OK' }
                 ]
             );
-            // Set empty arrays as fallback
             setMedications([]);
             setDoseHistory([]);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [selectedPatient]);
 
-    useFocusEffect(
-        useCallback(() => {
-            loadData();
-        }, [loadData])
-    );
+    const PatientDropdown = () => (
+      <View style={styles.patientSelectorContainer}>
+          <TouchableOpacity
+              style={styles.patientDropdownButton}
+              onPress={() => setShowPatientDropdown(!showPatientDropdown)}
+          >
+              <View style={styles.patientDropdownContent}>
+                  <View style={[
+                      styles.patientAvatar,
+                      selectedPatient?.isOwner ? styles.ownerAvatar : styles.familyAvatar
+                  ]}>
+                      <Ionicons 
+                          name={selectedPatient?.isOwner ? "person" : "people"} 
+                          size={16} 
+                          color="white" 
+                      />
+                  </View>
+                  <View style={styles.patientInfo}>
+                      <Text style={styles.patientName}>
+                          {selectedPatient?.name || 'Select Patient'}
+                      </Text>
+                      <Text style={styles.patientType}>
+                          {selectedPatient?.isOwner 
+                              ? 'Account Owner' 
+                              : selectedPatient?.relationship || 'Family Member'
+                          }
+                      </Text>
+                  </View>
+              </View>
+              <Ionicons 
+                  name={showPatientDropdown ? 'chevron-up' : 'chevron-down'} 
+                  size={20} 
+                  color="#666" 
+              />
+          </TouchableOpacity>
+
+          {showPatientDropdown && (
+              <View style={styles.patientDropdownMenu}>
+                  {patients.map((patient) => (
+                      <TouchableOpacity
+                          key={patient.id}
+                          style={[
+                              styles.patientDropdownItem,
+                              selectedPatient?.id === patient.id && styles.selectedPatientItem
+                          ]}
+                          onPress={() => {
+                              setSelectedPatient(patient);
+                              setShowPatientDropdown(false);
+                          }}
+                      >
+                          <View style={[
+                              styles.patientAvatar,
+                              patient.isOwner ? styles.ownerAvatar : styles.familyAvatar
+                          ]}>
+                              <Ionicons 
+                                  name={patient.isOwner ? "person" : "people"} 
+                                  size={16} 
+                                  color="white" 
+                              />
+                          </View>
+                          <View style={styles.patientInfo}>
+                              <Text style={[
+                                  styles.patientName,
+                                  selectedPatient?.id === patient.id && styles.selectedPatientText
+                              ]}>
+                                  {patient.name}
+                              </Text>
+                              <Text style={[
+                                  styles.patientType,
+                                  selectedPatient?.id === patient.id && styles.selectedPatientText
+                              ]}>
+                                  {patient.isOwner 
+                                      ? 'Account Owner' 
+                                      : patient.relationship || 'Family Member'
+                                  }
+                              </Text>
+                          </View>
+                          {selectedPatient?.id === patient.id && (
+                              <Ionicons name="checkmark-circle" size={20} color="#1a8e2d" />
+                          )}
+                      </TouchableOpacity>
+                  ))}
+              </View>
+          )}
+      </View>
+  );
+
+  useFocusEffect(
+      useCallback(() => {
+          loadPatients().then(() => {
+              loadData();
+          });
+      }, [loadPatients, loadData])
+  );
 
     const getDaysInMonth = (date) => {
         const year = date.getFullYear();
@@ -433,6 +553,8 @@ export default function CalendarScreen() {
                     <Text style={styles.headerTitle}>Calendar</Text>
                 </View>
 
+                <PatientDropdown />
+
                 <View style={styles.calendarContainer}>
                     <View style={styles.monthHeader}>
                         <TouchableOpacity
@@ -731,5 +853,79 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         color: "#4CAF50",
         marginLeft: 4,
+    },
+
+    patientSelectorContainer: {
+    margin: 20,
+    marginBottom: 10,
+    zIndex: 1000,
+    },
+    patientDropdownButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 15,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    patientDropdownContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    patientAvatar: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    ownerAvatar: {
+        backgroundColor: '#1a8e2d',
+    },
+    familyAvatar: {
+        backgroundColor: '#2196F3',
+    },
+    patientInfo: {
+        flex: 1,
+    },
+    patientName: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#333',
+        marginBottom: 2,
+    },
+    patientType: {
+        fontSize: 12,
+        color: '#666',
+    },
+    patientDropdownMenu: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        marginTop: 5,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 3,
+    },
+    patientDropdownItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f5f5f5',
+    },
+    selectedPatientItem: {
+        backgroundColor: '#f8fdf9',
+    },
+    selectedPatientText: {
+        color: '#1a8e2d',
     },
 });

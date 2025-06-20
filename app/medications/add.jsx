@@ -61,6 +61,43 @@ const useUserInitialization = () => {
   const [availablePatients, setAvailablePatients] = useState([]);
   const [userLoading, setUserLoading] = useState(true);
 
+    // Manual refresh function for patients
+  const refreshPatients = async () => {
+    if (!currentUser) return;
+    
+    try {
+      console.log('🔄 Manually refreshing patients list...');
+      const userId = currentUser.uid || currentUser.userId || currentUser.$id;
+      
+      // Force reload from service
+      const context = await integratedPatientMedicationService.getCurrentUserContext();
+      
+      const patients = [
+        {
+          id: userId,
+          name: currentUser.name || currentUser.firstName || 'You (Account Owner)',
+          type: 'owner',
+          isOwner: true
+        },
+        ...context.familyMembers.map(fm => ({
+          id: fm.id,
+          name: fm.name,
+          type: 'family',
+          isOwner: false,
+          relationship: fm.relationship
+        }))
+      ];
+      
+      setAvailablePatients(patients);
+      console.log('✅ Patients refreshed successfully:', patients.length);
+      
+      Alert.alert('Success', `Loaded ${patients.length} patient(s) successfully!`);
+    } catch (error) {
+      console.error('❌ Error refreshing patients:', error);
+      Alert.alert('Error', 'Failed to refresh patient list. Please try again.');
+    }
+  };
+
   // 🔧 FIX: Actually load the current user from storage
   useEffect(() => {
     const loadCurrentUser = async () => {
@@ -180,7 +217,7 @@ const useUserInitialization = () => {
     loadAvailablePatients();
   }, [currentUser, userLoading]);
 
-  return { currentUser, availablePatients, userLoading };
+  return { currentUser, availablePatients, userLoading, refreshPatients };
 };
 
 // ===== COMPONENTS =====
@@ -596,7 +633,7 @@ export default function AddMedicationScreen() {
   const params = useLocalSearchParams();
   
   // 🔧 FIX: Use the corrected hook with destructuring
-  const { currentUser, availablePatients, userLoading } = useUserInitialization();
+  const { currentUser, availablePatients, userLoading, refreshPatients } = useUserInitialization();
   
   // ===== STATE =====
   const [showQRModal, setShowQRModal] = useState(true);
@@ -623,43 +660,6 @@ export default function AddMedicationScreen() {
   // ===== REFS =====
   const scanProcessingRef = useRef(false);
   const lastProcessedResult = useRef(null);
-
-  // Manual refresh function for patients
-  const refreshPatients = async () => {
-    if (!currentUser) return;
-    
-    try {
-      console.log('🔄 Manually refreshing patients list...');
-      const userId = currentUser.uid || currentUser.userId || currentUser.$id;
-      
-      // Force reload from service
-      const context = await integratedPatientMedicationService.getCurrentUserContext();
-      
-      const patients = [
-        {
-          id: userId,
-          name: currentUser.name || currentUser.firstName || 'You (Account Owner)',
-          type: 'owner',
-          isOwner: true
-        },
-        ...context.familyMembers.map(fm => ({
-          id: fm.id,
-          name: fm.name,
-          type: 'family',
-          isOwner: false,
-          relationship: fm.relationship
-        }))
-      ];
-      
-      setAvailablePatients(patients);
-      console.log('✅ Patients refreshed successfully:', patients.length);
-      
-      Alert.alert('Success', `Loaded ${patients.length} patient(s) successfully!`);
-    } catch (error) {
-      console.error('❌ Error refreshing patients:', error);
-      Alert.alert('Error', 'Failed to refresh patient list. Please try again.');
-    }
-  };
   
   // 🔧 FIX: Show loading while user is being loaded
   if (userLoading) {
