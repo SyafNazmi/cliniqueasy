@@ -1,5 +1,4 @@
 // components/QRScannerModal.jsx - Fixed Version with Debouncing
-// Fixed QRScannerModal.jsx - Corrected data flow
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
@@ -86,8 +85,8 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
     }
   };
 
-  // Enhanced barcode scanning with debouncing and duplicate prevention
-  const handleBarCodeScanned = ({ type, data }) => {
+    // Enhanced barcode scanning with debouncing and duplicate prevention
+    const handleBarCodeScanned = ({ type, data }) => {
     const currentTime = Date.now();
     
     // Prevent multiple processing
@@ -151,40 +150,82 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
   
   // Process QR code and handle multiple medications with user confirmation
   const processQRCode = async (qrData) => {
-    try {
-      console.log('QRScannerModal: Processing QR code:', qrData);
-      
-      // Double-check we're not already processing
-      if (!processingRef.current) {
-        console.log("Process QR code called but processing flag is false. Aborting.");
-        return;
-      }
-      
-      const prescriptionMeds = await processPrescriptionQR(qrData);
-      
-      if (prescriptionMeds && prescriptionMeds.length > 0) {
-        console.log(`QRScannerModal: Found ${prescriptionMeds.length} medications`);
-        
-        // Show confirmation dialog with medication details
-        showMedicationConfirmation(prescriptionMeds, qrData);
-        
-      } else {
-        throw new Error('No medication data found');
-      }
-    } catch (error) {
-      console.error('QRScannerModal: QR scan error:', error);
-      Alert.alert(
-        'Error',
-        'Unable to process prescription data. Please try again.',
-        [{ 
-          text: 'OK', 
+  try {
+    console.log('QRScannerModal: Processing QR code:', qrData);
+    
+    // Double-check we're not already processing
+    if (!processingRef.current) {
+      console.log("Process QR code called but processing flag is false. Aborting.");
+      return;
+    }
+    
+    // 🔒 Use secure scanner (this will handle all security checks)
+    const prescriptionMeds = await processPrescriptionQR(qrData);
+    
+    if (prescriptionMeds && prescriptionMeds.length > 0) {
+      console.log(`QRScannerModal: Found ${prescriptionMeds.length} medications`);
+      showMedicationConfirmation(prescriptionMeds, qrData);
+    } else {
+      throw new Error('No medication data found');
+    }
+  } catch (error) {
+    console.error('QRScannerModal: QR scan error:', error);
+    
+    // 🔒 Enhanced error handling for security issues
+    let errorTitle = 'Scan Failed';
+    let errorMessage = error.message;
+    let errorIcon = 'alert-circle-outline';
+    
+    // Categorize errors for better user experience
+    if (error.message.includes('Access denied') || error.message.includes('another patient')) {
+      errorTitle = '🚫 Access Denied';
+      errorIcon = 'shield-outline';
+      errorMessage = 'This prescription belongs to another patient. You can only scan your own prescriptions.';
+    } else if (error.message.includes('Invalid prescription code') || error.message.includes('Invalid QR code format')) {
+      errorTitle = '❌ Invalid Code';
+      errorIcon = 'scan-outline';
+      errorMessage = 'The QR code appears to be invalid or damaged. Please ask your doctor for a new prescription QR code.';
+    } else if (error.message.includes('log in') || error.message.includes('not authenticated')) {
+      errorTitle = '🔐 Login Required';
+      errorIcon = 'log-in-outline';
+      errorMessage = 'Please log in to scan prescriptions.';
+    } else if (error.message.includes('Appointment not found')) {
+      errorTitle = '📅 Appointment Not Found';
+      errorIcon = 'calendar-outline';
+      errorMessage = 'The appointment associated with this prescription could not be found.';
+    } else if (error.message.includes('No prescription found')) {
+      errorTitle = '💊 No Prescription';
+      errorIcon = 'medical-outline';
+      errorMessage = 'No prescription was found for this appointment.';
+    }
+    
+    Alert.alert(
+      errorTitle,
+      errorMessage,
+      [
+        { 
+          text: 'Try Again', 
+          onPress: () => resetScanningState()
+        },
+        {
+          text: 'Use Manual Entry',
           onPress: () => {
             resetScanningState();
+            setShowManualEntry(true);
+            }
           }
-        }]
+        ]
       );
     }
   };
+
+  // Also add this helper function to show security status in the modal:
+  const renderSecurityBadge = () => (
+    <View style={styles.securityBadge}>
+      <Ionicons name="shield-checkmark" size={16} color="#1a8e2d" />
+      <Text style={styles.securityText}>Secure Prescription Scanner</Text>
+    </View>
+  );
 
   // 🚨 FIX: Enhanced medication confirmation with proper data passing
   const showMedicationConfirmation = (medications, originalQrData) => {
@@ -404,7 +445,10 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
       <View style={styles.modalOverlay}>
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Scan Prescription QR</Text>
+            <View>
+               <Text style={styles.modalTitle}>Scan Prescription QR</Text>
+               {renderSecurityBadge()}
+            </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <Ionicons name="close" size={24} color="#333" />
             </TouchableOpacity>
@@ -561,10 +605,27 @@ const styles = StyleSheet.create({
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     padding: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#e5e5e5',
+  },
+   // Security badge styles
+  securityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e6f7e9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 4,
+    alignSelf: 'flex-start',
+  },
+  securityText: {
+    fontSize: 12,
+    color: '#1a8e2d',
+    fontWeight: '500',
+    marginLeft: 4,
   },
   modalTitle: {
     fontSize: 18,

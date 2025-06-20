@@ -1,34 +1,30 @@
-// service/PrescriptionScanner.js - FIXED VERSION with Correct Times Mapping
+// service/PrescriptionScanner.js - FIXED VERSION with Security Validation
+
 import { DatabaseService, Query } from '../configs/AppwriteConfig';
-
-// Collection IDs
-const PRESCRIPTION_COLLECTION_ID = '6824b4cd000e65702ee3'; // Prescriptions collection
-const PRESCRIPTION_MEDICATIONS_COLLECTION_ID = '6824b57b0008686a86b3'; // Prescription medications
-const APPOINTMENTS_COLLECTION_ID = '67e0332c0001131d71ec'; // Appointments
-
-// 🚨 THIS IS THE KEY FIX - Frequency to Times Mapping
-const FREQUENCY_TIMES = {
-  "Once Daily": ["09:00"],
-  "Twice Daily": ["09:00", "21:00"],
-  "Three times Daily": ["09:00", "15:00", "21:00"],
-  "Four times Daily": ["09:00", "13:00", "17:00", "21:00"],
-  "Every Morning": ["08:00"],
-  "Every Evening": ["20:00"],
-  "Every 4 Hours": ["08:00", "12:00", "16:00", "20:00", "00:00", "04:00"],
-  "Every 6 Hours": ["06:00", "12:00", "18:00", "00:00"],
-  "Every 8 Hours": ["08:00", "16:00", "00:00"],
-  "Every 12 Hours": ["08:00", "20:00"],
-  "Weekly": ["09:00"],
-  "As Needed": []
-};
+import { getLocalStorage } from './Storage';
+import { COLLECTIONS } from '../constants/index';
+import { FREQUENCIES } from '../constants/MedicationConstants'; // ✅ Import centralized frequencies
 
 /**
- * Get correct times array based on frequency
+ * ✅ Get correct times array based on frequency using centralized constants
  * @param {string} frequency - The frequency string
  * @returns {Array} - Array of time strings
  */
 const getTimesForFrequency = (frequency) => {
-  return FREQUENCY_TIMES[frequency] || ["09:00"];
+  const frequencyData = FREQUENCIES.find(freq => freq.label === frequency);
+  return frequencyData ? frequencyData.times : ["09:00"];
+};
+
+/**
+ * 🔒 Generate secure reference code with better entropy
+ */
+const generateSecureReferenceCode = () => {
+  const timestamp = Date.now().toString();
+  const random1 = Math.random().toString(36).substr(2, 6).toUpperCase();
+  const random2 = Math.random().toString(36).substr(2, 4).toUpperCase();
+  
+  // Create a more secure reference code: RX + last 8 digits of timestamp + 10 random chars
+  return `RX${timestamp.slice(-8)}${random1}${random2}`;
 };
 
 /**
@@ -41,54 +37,28 @@ const getTimesForFrequency = (frequency) => {
 export const addPrescription = async (appointmentId, medications, doctorNotes = '') => {
   try {
     console.log('Creating prescription for appointment:', appointmentId);
-    console.log('Medications to be added:', medications);
     
-    // 1. Create the main prescription record
+    // 1. Create the main prescription record with secure reference code
     const prescriptionData = {
       appointment_id: appointmentId,
       doctor_notes: doctorNotes,
       status: 'Active',
-      issued_date: new Date().toISOString().split('T')[0], // Format: YYYY-MM-DD
-      reference_code: generateReferenceCode()
+      issued_date: new Date().toISOString().split('T')[0],
+      reference_code: generateSecureReferenceCode()
     };
     
     const prescription = await DatabaseService.createDocument(
-      PRESCRIPTION_COLLECTION_ID,
+      COLLECTIONS.PRESCRIPTIONS,
       prescriptionData
     );
     
-    console.log('Created prescription:', prescription.$id);
+    console.log('Created prescription with secure reference:', prescription.reference_code);
     
-    // 2. Add each medication to the prescription
+    // 2. Add medications
     for (let i = 0; i < medications.length; i++) {
       const medication = medications[i];
       
-      // 🚨 FIX: Get correct times based on frequency
-      let timesArray = [];
-      if (medication.frequencies) {
-        // Use frequency mapping first
-        timesArray = getTimesForFrequency(medication.frequencies);
-      } else if (Array.isArray(medication.times)) {
-        // Fall back to provided times if no frequency
-        timesArray = medication.times.map(time => String(time));
-      } else if (typeof medication.times === 'string') {
-        // Handle string times
-        try {
-          if (medication.times.startsWith('[') && medication.times.endsWith(']')) {
-            const parsed = JSON.parse(medication.times);
-            timesArray = Array.isArray(parsed) ? parsed.map(time => String(time)) : [String(medication.times)];
-          } else {
-            timesArray = [String(medication.times)];
-          }
-        } catch (e) {
-          timesArray = [String(medication.times)];
-        }
-      } else {
-        // Default fallback
-        timesArray = ['09:00'];
-      }
-      
-      console.log(`Medication ${i + 1} (${medication.frequencies}) times array:`, timesArray);
+      let timesArray = getTimesForFrequency(medication.frequencies) || ['09:00'];
       
       const medicationData = {
         prescription_id: prescription.$id,
@@ -99,30 +69,20 @@ export const addPrescription = async (appointmentId, medications, doctorNotes = 
         duration: medication.duration,
         illness_type: medication.illnessType || '',
         notes: medication.notes || '',
-        times: timesArray // Store as actual array with correct times
+        times: timesArray
       };
       
-      console.log(`Creating medication ${i + 1}:`, medicationData);
-      
-      try {
-        const createdMedication = await DatabaseService.createDocument(
-          PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
-          medicationData
-        );
-        console.log(`Successfully created medication ${i + 1}:`, createdMedication.$id);
-      } catch (medicationError) {
-        console.error(`Error creating medication ${i + 1}:`, medicationError);
-        console.error('Medication data that failed:', medicationData);
-        throw medicationError;
-      }
+      await DatabaseService.createDocument(
+        COLLECTIONS.PRESCRIPTION_MEDICATIONS,
+        medicationData
+      );
     }
     
     console.log(`Successfully added ${medications.length} medications to prescription`);
-    
     return prescription;
+    
   } catch (error) {
     console.error('Error creating prescription:', error);
-    console.error('Full error details:', error.message);
     throw error;
   }
 };
@@ -138,7 +98,7 @@ export const getPrescriptions = async (appointmentId) => {
     
     // 1. Find prescriptions for this appointment
     const prescriptionsResponse = await DatabaseService.listDocuments(
-      PRESCRIPTION_COLLECTION_ID,
+      COLLECTIONS.PRESCRIPTIONS,
       [Query.equal('appointment_id', appointmentId)]
     );
     
@@ -156,7 +116,7 @@ export const getPrescriptions = async (appointmentId) => {
     
     // 3. Get all medications for this prescription
     const medicationsResponse = await DatabaseService.listDocuments(
-      PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
+      COLLECTIONS.PRESCRIPTION_MEDICATIONS,
       [Query.equal('prescription_id', prescription.$id)]
     );
     
@@ -165,7 +125,7 @@ export const getPrescriptions = async (appointmentId) => {
     // 4. Process medications to ensure times is properly formatted
     const processedMedications = medicationsResponse.documents.map(med => ({
       ...med,
-      times: ensureTimesArray(med.times, med.frequencies) // Pass frequency for correct times
+      times: ensureTimesArray(med.times, med.frequencies)
     }));
     
     return {
@@ -179,102 +139,210 @@ export const getPrescriptions = async (appointmentId) => {
 };
 
 /**
- * Process prescription QR code
+ * 🔒 MAIN SECURITY FUNCTION: Process prescription QR code with comprehensive validation
  * @param {string} qrData - QR code data
- * @returns {Promise<Array>} - Array of medications
+ * @returns {Promise<Array>} - Array of medications (only if authorized)
  */
 export const processPrescriptionQR = async (qrData) => {
   try {
-    console.log('Processing QR data:', qrData);
+    console.log('🔒 SECURE SCAN: Processing QR code:', qrData);
     
-    // Check if this is a demo code
+    // 1. 🔒 Get current user context - SECURITY CHECKPOINT 1
+    const currentUser = await getLocalStorage('userDetail');
+    if (!currentUser || (!currentUser.uid && !currentUser.userId && !currentUser.$id)) {
+      console.error('🔒 SECURITY: No valid user found');
+      throw new Error('Please log in to scan prescriptions.');
+    }
+    
+    const userId = currentUser.uid || currentUser.userId || currentUser.$id;
+    console.log('🔒 SECURITY: Authorized user:', userId);
+    
+    // 2. Handle demo codes first (no security needed for demos)
     if (qrData.startsWith('DEMO:')) {
+      console.log('🔒 Demo QR detected, skipping security checks');
       return processDemoQR(qrData);
     }
     
-    // Regular appointment QR code (format: APPT:appointmentId:referenceCode)
+    // 3. 🔒 Parse and validate QR format - SECURITY CHECKPOINT 2
     const parts = qrData.split(':');
-    
-    if (parts.length < 2 || parts[0] !== 'APPT') {
-      throw new Error('Invalid QR code format. Expected: APPT:appointmentId:referenceCode');
+    if (parts.length < 3 || parts[0] !== 'APPT') {
+      await logSecurityEvent(userId, 'UNKNOWN', 'INVALID_QR_FORMAT', 'MEDIUM');
+      throw new Error('Invalid QR code format. Please scan a valid prescription QR code from your healthcare provider.');
     }
     
     const appointmentId = parts[1];
-    const referenceCode = parts[2] || '';
+    const referenceCode = parts[2];
     
-    console.log(`Processing appointment ID: ${appointmentId}, Reference: ${referenceCode}`);
+    console.log(`🔒 SECURITY: Validating appointment ${appointmentId} with reference ${referenceCode}`);
     
-    // 1. First find the appointment
+    // 4. 🔒 SECURITY CHECKPOINT 3: Verify appointment exists and ownership
     let appointment;
     try {
-      appointment = await DatabaseService.getDocument(
-        APPOINTMENTS_COLLECTION_ID, 
-        appointmentId
-      );
-      console.log('Found appointment:', appointment.$id);
+      appointment = await DatabaseService.getDocument(COLLECTIONS.APPOINTMENTS, appointmentId);
     } catch (error) {
-      console.error('Appointment not found:', error.message);
-      // Continue anyway - maybe we have a prescription without valid appointment
+      await logSecurityEvent(userId, appointmentId, 'APPOINTMENT_NOT_FOUND', 'HIGH');
+      throw new Error('Appointment not found. Please verify the QR code is valid and not expired.');
     }
     
-    // 2. Find prescriptions for this appointment
-    let prescriptions;
-    try {
-      prescriptions = await DatabaseService.listDocuments(
-        PRESCRIPTION_COLLECTION_ID,
-        [Query.equal('appointment_id', appointmentId)]
-      );
-      
-      console.log(`Found ${prescriptions.total} prescriptions`);
-      
-      if (!prescriptions.documents || prescriptions.documents.length === 0) {
-        console.log('No prescriptions found, falling back to demo data');
-        return getMultipleDemoMedications(appointmentId, referenceCode);
-      }
-    } catch (error) {
-      console.error('Error fetching prescriptions:', error.message);
-      return getMultipleDemoMedications(appointmentId, referenceCode);
+    // 5. 🔒 SECURITY CHECKPOINT 4: Verify patient access (most critical check)
+    const isAuthorized = await verifyPatientAccess(appointment, currentUser);
+    if (!isAuthorized) {
+      // Log critical security violation
+      await logSecurityEvent(userId, appointmentId, 'UNAUTHORIZED_QR_SCAN_ATTEMPT', 'CRITICAL');
+      throw new Error('🚫 Access denied: This prescription belongs to another patient. You can only scan your own prescriptions.');
     }
     
-    // 3. Get the most recent prescription
-    const prescription = prescriptions.documents[0];
+    console.log('🔒 SECURITY: Patient access verified ✓');
     
-    // 4. Get ALL medications for this prescription
-    try {
-      const medications = await DatabaseService.listDocuments(
-        PRESCRIPTION_MEDICATIONS_COLLECTION_ID,
-        [Query.equal('prescription_id', prescription.$id)]
-      );
-      
-      console.log(`Found ${medications.total} medications`);
-      
-      if (!medications.documents || medications.documents.length === 0) {
-        console.log('No medications found, falling back to demo data');
-        return getMultipleDemoMedications(appointmentId, referenceCode);
-      }
-      
-      // 5. 🚨 FIX: Format and return ALL medications with correct times
-      return medications.documents.map(med => ({
-        name: med.name || '',
-        type: med.type || '',
-        dosage: med.dosage || '',
-        frequencies: med.frequencies || '',
-        duration: med.duration || '',
-        illnessType: med.illness_type || '',
-        notes: med.notes || '',
-        times: ensureTimesArray(med.times, med.frequencies), // Preserves custom times, uses frequency as fallback
-        appointmentId,
-        referenceCode
-      }));
-    } catch (error) {
-      console.error('Error fetching medications:', error.message);
-      return getMultipleDemoMedications(appointmentId, referenceCode);
+    // 6. 🔒 SECURITY CHECKPOINT 5: Validate prescription and reference code
+    const prescriptions = await DatabaseService.listDocuments(
+      COLLECTIONS.PRESCRIPTIONS,
+      [Query.equal('appointment_id', appointmentId)]
+    );
+    
+    if (!prescriptions.documents || prescriptions.documents.length === 0) {
+      await logSecurityEvent(userId, appointmentId, 'NO_PRESCRIPTION_FOUND', 'MEDIUM');
+      throw new Error('No prescription found for this appointment. Please contact your healthcare provider.');
     }
+    
+    const validPrescription = prescriptions.documents.find(
+      prescription => prescription.reference_code === referenceCode
+    );
+    
+    if (!validPrescription) {
+      await logSecurityEvent(userId, appointmentId, 'INVALID_REFERENCE_CODE', 'HIGH');
+      throw new Error('Invalid prescription code. The QR code may be tampered with or expired.');
+    }
+    
+    console.log('🔒 SECURITY: Reference code verified ✓');
+    
+    // 7. Get medications (only after all security checks pass)
+    const medications = await DatabaseService.listDocuments(
+      COLLECTIONS.PRESCRIPTION_MEDICATIONS,
+      [Query.equal('prescription_id', validPrescription.$id)]
+    );
+    
+    if (!medications.documents || medications.documents.length === 0) {
+      throw new Error('No medications found in this prescription.');
+    }
+    
+    // 8. Log successful secure access
+    await logSecurityEvent(userId, appointmentId, 'QR_SCAN_SUCCESS', 'INFO');
+    console.log('🔒 SECURITY: All checks passed ✓ Returning medications');
+    
+    // 9. Format and return medications with security metadata
+    return medications.documents.map(med => ({
+      name: med.name || '',
+      type: med.type || '',
+      dosage: med.dosage || '',
+      frequencies: med.frequencies || '',
+      duration: med.duration || '',
+      illnessType: med.illness_type || '',
+      notes: med.notes || '',
+      times: getTimesForFrequency(med.frequencies),
+      appointmentId,
+      referenceCode,
+      prescriptionId: validPrescription.$id,
+      verifiedAccess: true,
+      securityValidated: true
+    }));
+    
   } catch (error) {
-    console.error('Error processing QR code:', error);
+    console.error('🔒 SECURE SCAN FAILED:', error.message);
     throw error;
   }
 };
+
+/**
+ * 🔒 CRITICAL SECURITY FUNCTION: Verify patient has access to this appointment
+ * This is the core security check that prevents cross-patient access
+ * @param {Object} appointment - The appointment document
+ * @param {Object} currentUser - The current logged-in user
+ * @returns {Promise<boolean>} - True if access is authorized
+ */
+const verifyPatientAccess = async (appointment, currentUser) => {
+  try {
+    const userId = currentUser.uid || currentUser.userId || currentUser.$id;
+    
+    console.log('🔒 CRITICAL SECURITY CHECK:');
+    console.log('🔒 Current user ID:', userId);
+    console.log('🔒 Appointment user_id:', appointment.user_id);
+    console.log('🔒 Is family booking:', appointment.is_family_booking);
+    console.log('🔒 Appointment patient name:', appointment.patient_name);
+    
+    // Primary check: Direct appointment owner
+    if (appointment.user_id === userId) {
+      console.log('🔒 ✅ AUTHORIZED: Direct appointment owner');
+      return true;
+    }
+    
+    // Secondary check: Family booking account holder
+    if (appointment.is_family_booking && appointment.user_id === userId) {
+      console.log('🔒 ✅ AUTHORIZED: Family booking account holder');
+      return true;
+    }
+    
+    // Additional check: If there's a primary_user_id field (some systems use this)
+    if (appointment.primary_user_id && appointment.primary_user_id === userId) {
+      console.log('🔒 ✅ AUTHORIZED: Primary user match');
+      return true;
+    }
+    
+    // Log the failed authorization attempt with details
+    console.log('🔒 ❌ UNAUTHORIZED: Access denied');
+    console.log('🔒 Attempted access by user:', userId);
+    console.log('🔒 Appointment belongs to:', appointment.user_id);
+    
+    return false;
+    
+  } catch (error) {
+    console.error('🔒 CRITICAL ERROR in patient access verification:', error);
+    // Fail secure - deny access on any error
+    return false;
+  }
+};
+
+/**
+ * 🔒 Security event logging function - FIXED
+ * @param {string} userId - User ID who performed the action
+ * @param {string} appointmentId - Appointment ID involved
+ * @param {string} event - Type of security event
+ * @param {string} severity - Severity level (INFO, MEDIUM, HIGH, CRITICAL)
+ */
+const logSecurityEvent = async (userId, appointmentId, event, severity) => {
+  try {
+    // ✅ FIXED: Match the exact database schema
+    const logData = {
+      action: event,                    // ✅ Changed from 'event_type' to 'action'
+      userId: userId,                   // ✅ Changed from 'user_id' to 'userId'
+      timestamp: new Date().toISOString(),
+      userAgent: 'mobile_app',          // ✅ Changed from 'user_agent' to 'userAgent'
+      ip: 'mobile_app',                 // ✅ Changed from 'ip_address' to 'ip'
+      metadata: JSON.stringify({        // ✅ Store extra data in metadata field
+        appointment_id: appointmentId,
+        severity: severity,
+        source: 'QR_SCANNER'
+      })
+    };
+    
+    console.log('🔒 AUDIT LOG DATA:', logData);
+    
+    // Try to create audit log, but don't fail the operation if logging fails
+    try {
+      await DatabaseService.createDocument(COLLECTIONS.AUDIT_LOGS, logData);
+      console.log(`🔒 AUDIT: ${severity} - ${event} logged for user ${userId}`);
+    } catch (logError) {
+      console.error('🔒 Database logging failed:', logError);
+      // Fallback: At least log to console if database logging fails
+      console.warn('🔒 AUDIT FALLBACK:', logData);
+    }
+    
+  } catch (error) {
+    console.error('🔒 Failed to log security event:', error);
+    // Security logging failure should not break the main flow
+  }
+};
+
 
 /**
  * Enhanced demo QR handler that returns multiple medications with correct times
@@ -297,9 +365,10 @@ const processDemoQR = (qrData) => {
           duration: '30 days',
           illnessType: 'Blood Pressure',
           notes: 'Take in the morning with food',
-          times: getTimesForFrequency('Once Daily'), // ["09:00"]
+          times: getTimesForFrequency('Once Daily'),
           appointmentId: 'demo',
-          referenceCode
+          referenceCode,
+          isDemo: true
         },
         {
           name: 'Hydrochlorothiazide',
@@ -309,9 +378,10 @@ const processDemoQR = (qrData) => {
           duration: '30 days',
           illnessType: 'Blood Pressure',
           notes: 'Take with plenty of water',
-          times: getTimesForFrequency('Once Daily'), // ["09:00"]
+          times: getTimesForFrequency('Once Daily'),
           appointmentId: 'demo',
-          referenceCode
+          referenceCode,
+          isDemo: true
         }
       ];
       
@@ -325,9 +395,10 @@ const processDemoQR = (qrData) => {
           duration: '30 days',
           illnessType: 'Diabetes',
           notes: 'Take with meals to reduce stomach upset',
-          times: getTimesForFrequency('Twice Daily'), // ["09:00", "21:00"]
+          times: getTimesForFrequency('Twice Daily'),
           appointmentId: 'demo',
-          referenceCode
+          referenceCode,
+          isDemo: true
         },
         {
           name: 'Glipizide',
@@ -337,9 +408,10 @@ const processDemoQR = (qrData) => {
           duration: '30 days',
           illnessType: 'Diabetes',
           notes: 'Take 30 minutes before breakfast',
-          times: getTimesForFrequency('Once Daily'), // ["09:00"]
+          times: getTimesForFrequency('Once Daily'),
           appointmentId: 'demo',
-          referenceCode
+          referenceCode,
+          isDemo: true
         }
       ];
       
@@ -353,9 +425,10 @@ const processDemoQR = (qrData) => {
           duration: '7 days',
           illnessType: 'Infection',
           notes: 'Complete the full course even if you feel better',
-          times: getTimesForFrequency('Three times Daily'), // ["09:00", "15:00", "21:00"]
+          times: getTimesForFrequency('Three times Daily'),
           appointmentId: 'demo',
-          referenceCode
+          referenceCode,
+          isDemo: true
         },
         {
           name: 'Ibuprofen',
@@ -365,9 +438,10 @@ const processDemoQR = (qrData) => {
           duration: '5 days',
           illnessType: 'Pain Relief',
           notes: 'Take with food to prevent stomach irritation',
-          times: getTimesForFrequency('Three times Daily'), // ["09:00", "15:00", "21:00"]
+          times: getTimesForFrequency('Three times Daily'),
           appointmentId: 'demo',
-          referenceCode
+          referenceCode,
+          isDemo: true
         }
       ];
       
@@ -381,9 +455,10 @@ const processDemoQR = (qrData) => {
           duration: '90 days',
           illnessType: 'Cholesterol',
           notes: 'Take in the evening',
-          times: getTimesForFrequency('Every Evening'), // ["20:00"]
+          times: getTimesForFrequency('Every Evening'),
           appointmentId: 'demo',
-          referenceCode
+          referenceCode,
+          isDemo: true
         },
         {
           name: 'Omega-3',
@@ -393,9 +468,10 @@ const processDemoQR = (qrData) => {
           duration: '90 days',
           illnessType: 'Cholesterol',
           notes: 'Take with meals',
-          times: getTimesForFrequency('Twice Daily'), // ["09:00", "21:00"]
+          times: getTimesForFrequency('Twice Daily'),
           appointmentId: 'demo',
-          referenceCode
+          referenceCode,
+          isDemo: true
         }
       ];
       
@@ -411,7 +487,7 @@ const processDemoQR = (qrData) => {
  * @returns {Array} - Array with multiple default medications
  */
 const getMultipleDemoMedications = (appointmentId, referenceCode) => {
-  console.log("🚨 SCANNER - Creating demo medications for:", appointmentId);
+  console.log("Creating demo medications for:", appointmentId);
   
   const medications = [
     {
@@ -422,9 +498,10 @@ const getMultipleDemoMedications = (appointmentId, referenceCode) => {
       duration: '7 days',
       illnessType: 'Infection',
       notes: 'Eat after Taking Meal',
-      times: getTimesForFrequency('Three times Daily'), // 🚨 FIX: Use frequency mapping
+      times: getTimesForFrequency('Three times Daily'),
       appointmentId,
-      referenceCode
+      referenceCode,
+      isDemo: true
     },
     {
       name: 'Pospan',
@@ -434,9 +511,10 @@ const getMultipleDemoMedications = (appointmentId, referenceCode) => {
       duration: '7 days',
       illnessType: 'Inflammation',
       notes: 'Eat after Taking Meal',
-      times: getTimesForFrequency('Twice Daily'), // 🚨 FIX: Use frequency mapping
+      times: getTimesForFrequency('Twice Daily'),
       appointmentId,
-      referenceCode
+      referenceCode,
+      isDemo: true
     },
     {
       name: 'Amoxicillin',
@@ -446,16 +524,12 @@ const getMultipleDemoMedications = (appointmentId, referenceCode) => {
       duration: '7 days',
       illnessType: 'Infection',
       notes: 'Eat after Taking Meal',
-      times: getTimesForFrequency('Once Daily'), // 🚨 FIX: Use frequency mapping
+      times: getTimesForFrequency('Once Daily'),
       appointmentId,
-      referenceCode
+      referenceCode,
+      isDemo: true
     }
   ];
-
-  console.log("🚨 SCANNER - Generated medications:");
-  medications.forEach((med, index) => {
-    console.log(`🚨 SCANNER - ${index + 1}. ${med.name}: ${med.frequencies} → ${JSON.stringify(med.times)}`);
-  });
 
   return medications;
 };
@@ -468,18 +542,18 @@ const getMultipleDemoMedications = (appointmentId, referenceCode) => {
  */
 const ensureTimesArray = (times, frequency = null) => {
   try {
-    console.log('🚨 ensureTimesArray called with:', { times, frequency });
-    
-    // 🚨 FIX: Always prioritize frequency mapping if frequency is provided
-    if (frequency && FREQUENCY_TIMES[frequency]) {
-      const mappedTimes = FREQUENCY_TIMES[frequency];
-      console.log(`🚨 Using frequency mapping for "${frequency}":`, mappedTimes);
-      return mappedTimes;
+    // Always prioritize frequency mapping if frequency is provided
+    if (frequency) {
+      const frequencyData = FREQUENCIES.find(freq => freq.label === frequency);
+      if (frequencyData) {
+        const mappedTimes = frequencyData.times;
+        console.log(`Using frequency mapping for "${frequency}":`, mappedTimes);
+        return mappedTimes;
+      }
     }
     
     // Only use existing times if no frequency is provided
     if (Array.isArray(times) && times.length > 0) {
-      console.log('🚨 Using existing times array:', times);
       return times.map(time => String(time));
     }
     
@@ -490,7 +564,6 @@ const ensureTimesArray = (times, frequency = null) => {
         try {
           const parsed = JSON.parse(times);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            console.log('🚨 Using parsed JSON times:', parsed);
             return parsed.map(time => String(time));
           }
         } catch (e) {
@@ -499,12 +572,10 @@ const ensureTimesArray = (times, frequency = null) => {
       }
       
       // If it's a single time as string, return as array
-      console.log('🚨 Using single time string:', [times]);
       return [String(times)];
     }
     
     // Default fallback
-    console.log('🚨 Using default fallback time: ["09:00"]');
     return ['09:00'];
   } catch (error) {
     console.error('Error ensuring times array:', error);
@@ -512,16 +583,5 @@ const ensureTimesArray = (times, frequency = null) => {
   }
 };
 
-
-/**
- * Generate a unique reference code for prescriptions
- * @returns {string} - Reference code
- */
-const generateReferenceCode = () => {
-  const timestamp = Date.now().toString().slice(-6);
-  const random = Math.random().toString(36).substr(2, 4).toUpperCase();
-  return `RX${timestamp}${random}`;
-};
-
-// Export the frequency mapping for use in other components
-export { getTimesForFrequency, FREQUENCY_TIMES };
+// Export the frequency mapping function for use in other components
+export { getTimesForFrequency };
