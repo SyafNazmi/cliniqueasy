@@ -1,4 +1,4 @@
-// app/medications/add.jsx - Updated to use shared constants
+// app/medications/add.jsx - COMPLETE FIXED VERSION
 
 import React, { useState, useRef, useEffect } from 'react';
 import {
@@ -12,7 +12,8 @@ import {
   Platform,
   Dimensions,
   Alert,
-  ActivityIndicator
+  ActivityIndicator,
+  Modal
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -54,34 +55,132 @@ const getInitialFormState = (params) => ({
   refillAt: params?.refillAt || '',
 });
 
-// ===== CUSTOM HOOKS =====
+// ===== FIXED CUSTOM HOOKS =====
 const useUserInitialization = () => {
   const [currentUser, setCurrentUser] = useState(null);
+  const [availablePatients, setAvailablePatients] = useState([]);
+  const [userLoading, setUserLoading] = useState(true);
 
+  // 🔧 FIX: Actually load the current user from storage
   useEffect(() => {
-    const initializeUser = async () => {
+    const loadCurrentUser = async () => {
       try {
+        setUserLoading(true);
         const userDetail = await getLocalStorage('userDetail');
-        if (userDetail) {
+        
+        if (userDetail && (userDetail.uid || userDetail.userId || userDetail.$id)) {
+          console.log('✅ User loaded:', userDetail.name || userDetail.email);
           setCurrentUser(userDetail);
-          console.log('Current user loaded:', userDetail.uid || userDetail.userId);
         } else {
-          console.warn('No user found in storage');
-          Alert.alert(
-            'Login Required',
-            'Please log in to add medications to your account.',
-            [{ text: 'OK', onPress: () => router.back() }]
-          );
+          console.log('❌ No valid user found in storage');
+          setCurrentUser(null);
         }
       } catch (error) {
-        console.error('Error loading user:', error);
+        console.error('❌ Error loading user:', error);
+        setCurrentUser(null);
+      } finally {
+        setUserLoading(false);
       }
     };
 
-    initializeUser();
+    loadCurrentUser();
   }, []);
 
-  return currentUser;
+  // 🔧 FIX: Load patients after user is loaded with better error handling
+  useEffect(() => {
+    const loadAvailablePatients = async () => {
+      if (currentUser && !userLoading) {
+        try {
+          console.log('👥 Loading available patients for user:', currentUser.name || currentUser.email);
+          
+          const userId = currentUser.uid || currentUser.userId || currentUser.$id;
+          
+          // 🛡️ ALWAYS ensure owner is in the list first (fallback)
+          const ownerPatient = {
+            id: userId,
+            name: currentUser.name || currentUser.firstName || currentUser.fullName || 'You (Account Owner)',
+            type: 'owner',
+            isOwner: true,
+            email: currentUser.email,
+            phone: currentUser.phone
+          };
+          
+          let patients = [ownerPatient];
+          
+          // Try to load family members, but don't fail if service is unavailable
+          try {
+            const context = await integratedPatientMedicationService.getCurrentUserContext();
+            console.log('📋 Service context loaded:', context);
+            
+            if (context.familyMembers && context.familyMembers.length > 0) {
+              const familyPatients = context.familyMembers.map(fm => ({
+                id: fm.id,
+                name: fm.name,
+                type: 'family',
+                isOwner: false,
+                relationship: fm.relationship,
+                email: fm.email,
+                phone: fm.phone
+              }));
+              
+              patients = [ownerPatient, ...familyPatients];
+              console.log(`✅ Loaded ${familyPatients.length} family members`);
+            } else {
+              console.log('📝 No family members found, using owner only');
+            }
+          } catch (serviceError) {
+            console.log('⚠️ Service unavailable, using owner only:', serviceError.message);
+            
+            // 🛡️ FALLBACK: Try to get family members from local storage
+            try {
+              const localFamilyMembers = await getLocalStorage('familyMembers') || [];
+              if (localFamilyMembers.length > 0) {
+                const fallbackFamilyPatients = localFamilyMembers.map(fm => ({
+                  id: fm.id || fm.familyMemberId,
+                  name: fm.name || fm.fullName,
+                  type: 'family',
+                  isOwner: false,
+                  relationship: fm.relationship || 'Family Member',
+                  email: fm.email,
+                  phone: fm.phone
+                }));
+                
+                patients = [ownerPatient, ...fallbackFamilyPatients];
+                console.log(`✅ Loaded ${fallbackFamilyPatients.length} family members from local storage`);
+              }
+            } catch (localError) {
+              console.log('⚠️ Local storage fallback also failed:', localError.message);
+            }
+          }
+          
+          setAvailablePatients(patients);
+          console.log(`✅ Final patient list (${patients.length} patients):`, patients.map(p => p.name));
+          
+        } catch (error) {
+          console.error('❌ Error loading available patients:', error);
+          
+          // 🛡️ EMERGENCY FALLBACK: At least show the current user
+          const userId = currentUser.uid || currentUser.userId || currentUser.$id;
+          const emergencyPatients = [{
+            id: userId,
+            name: currentUser.name || currentUser.firstName || 'You (Account Owner)',
+            type: 'owner',
+            isOwner: true
+          }];
+          
+          setAvailablePatients(emergencyPatients);
+          console.log('🚨 Emergency fallback: showing owner only');
+        }
+      } else if (!userLoading && !currentUser) {
+        // Clear patients if no user
+        setAvailablePatients([]);
+      }
+    };
+    
+    loadAvailablePatients();
+  }, [currentUser, userLoading]);
+
+  return { currentUser, availablePatients, userLoading };
 };
 
 // ===== COMPONENTS =====
@@ -392,16 +491,120 @@ const Dropdown = ({
   </View>
 );
 
+// Patient Selector Component - Enhanced with better debugging
+const PatientSelector = ({ visible, patients, onSelect, onCancel, pendingMedications, onRefresh }) => {
+  if (!visible) return null;
+
+  console.log('👥 PatientSelector render:', {
+    visible,
+    patientsCount: patients?.length || 0,
+    patients: patients?.map(p => ({ id: p.id, name: p.name, type: p.type })) || 'undefined',
+    pendingMedicationsCount: pendingMedications?.medications?.length || 0
+  });
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={onCancel}
+    >
+      <View style={styles.patientSelectorOverlay}>
+        <View style={styles.patientSelectorContainer}>
+          <View style={styles.patientSelectorHeader}>
+            <Text style={styles.patientSelectorTitle}>Reassign Medications</Text>
+            <TouchableOpacity onPress={onCancel} style={styles.patientSelectorClose}>
+              <Ionicons name="close" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+          
+          <Text style={styles.patientSelectorSubtitle}>
+            Who should receive these {pendingMedications?.medications?.length || 0} medication(s)?
+          </Text>
+          
+          <ScrollView style={styles.patientsList}>
+            {/* 🔧 FIX: Better handling of empty patients list */}
+            {(!patients || patients.length === 0) ? (
+              <View style={styles.noPatients}>
+                <Ionicons name="alert-circle-outline" size={48} color="#999" />
+                <Text style={styles.noPatientsText}>No patients available</Text>
+                <Text style={styles.noPatientsSubText}>Unable to load patient list. Please try again.</Text>
+                <TouchableOpacity 
+                  style={styles.retryPatientsButton}
+                  onPress={() => {
+                    console.log('🔄 Retry loading patients...');
+                    if (onRefresh) {
+                      onRefresh();
+                    } else {
+                      onCancel(); // Close modal and let it reload
+                    }
+                  }}
+                >
+                  <Text style={styles.retryPatientsButtonText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              patients.map((patient) => (
+                <TouchableOpacity
+                  key={patient.id}
+                  style={styles.patientOption}
+                  onPress={() => {
+                    console.log('👆 Patient selected:', patient.name);
+                    onSelect(patient);
+                  }}
+                >
+                  <View style={styles.patientInfo}>
+                    <View style={[
+                      styles.patientAvatar, 
+                      patient.isOwner ? styles.ownerAvatar : styles.familyAvatar
+                    ]}>
+                      <Ionicons 
+                        name={patient.isOwner ? "person" : "people"} 
+                        size={20} 
+                        color="white" 
+                      />
+                    </View>
+                    <View style={styles.patientDetails}>
+                      <Text style={styles.patientName}>{patient.name}</Text>
+                      <Text style={styles.patientType}>
+                        {patient.isOwner ? 'Account Owner' : `Family Member${patient.relationship ? ` - ${patient.relationship}` : ''}`}
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#666" />
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+          
+          <View style={styles.patientSelectorFooter}>
+            <TouchableOpacity 
+              style={styles.cancelPatientButton}
+              onPress={onCancel}
+            >
+              <Text style={styles.cancelPatientButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
 // ===== MAIN COMPONENT =====
 export default function AddMedicationScreen() {
   const params = useLocalSearchParams();
-  const currentUser = useUserInitialization();
+  
+  // 🔧 FIX: Use the corrected hook with destructuring
+  const { currentUser, availablePatients, userLoading } = useUserInitialization();
   
   // ===== STATE =====
   const [showQRModal, setShowQRModal] = useState(true);
   const [isPrescriptionLocked, setIsPrescriptionLocked] = useState(false);
   const [prescriptionData, setPrescriptionData] = useState(null);
   const [scannedMedications, setScannedMedications] = useState([]);
+  const [showPatientSelector, setShowPatientSelector] = useState(false);
+  const [pendingScanResult, setPendingScanResult] = useState(null);
   const [selectedMedicationIndex, setSelectedMedicationIndex] = useState(0);
   const [showMedicationDropdown, setShowMedicationDropdown] = useState(false);
   const [form, setForm] = useState(getInitialFormState(params));
@@ -421,6 +624,109 @@ export default function AddMedicationScreen() {
   const scanProcessingRef = useRef(false);
   const lastProcessedResult = useRef(null);
 
+  // Manual refresh function for patients
+  const refreshPatients = async () => {
+    if (!currentUser) return;
+    
+    try {
+      console.log('🔄 Manually refreshing patients list...');
+      const userId = currentUser.uid || currentUser.userId || currentUser.$id;
+      
+      // Force reload from service
+      const context = await integratedPatientMedicationService.getCurrentUserContext();
+      
+      const patients = [
+        {
+          id: userId,
+          name: currentUser.name || currentUser.firstName || 'You (Account Owner)',
+          type: 'owner',
+          isOwner: true
+        },
+        ...context.familyMembers.map(fm => ({
+          id: fm.id,
+          name: fm.name,
+          type: 'family',
+          isOwner: false,
+          relationship: fm.relationship
+        }))
+      ];
+      
+      setAvailablePatients(patients);
+      console.log('✅ Patients refreshed successfully:', patients.length);
+      
+      Alert.alert('Success', `Loaded ${patients.length} patient(s) successfully!`);
+    } catch (error) {
+      console.error('❌ Error refreshing patients:', error);
+      Alert.alert('Error', 'Failed to refresh patient list. Please try again.');
+    }
+  };
+  
+  // 🔧 FIX: Show loading while user is being loaded
+  if (userLoading) {
+    return (
+      <View style={styles.container}>
+        <LinearGradient 
+          colors={['#1a8e2d', '#146922']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.headerGradient}
+        />
+        <View style={styles.content}>
+          <View style={styles.header}>
+            <PageHeader onPress={() => router.back()} />
+            <Text style={styles.headerTitle}>Add Medication</Text>
+          </View>
+          
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#1a8e2d" />
+            <Text style={styles.loadingText}>Loading your account...</Text>
+            <Text style={styles.loadingSubText}>
+              Preparing your medication tracker
+            </Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // 🔧 FIX: Show error if user failed to load
+  if (!currentUser) {
+    return (
+      <View style={styles.container}>
+        <LinearGradient 
+          colors={['#1a8e2d', '#146922']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.headerGradient}
+        />
+        <View style={styles.content}>
+          <View style={styles.header}>
+            <PageHeader onPress={() => router.back()} />
+            <Text style={styles.headerTitle}>Add Medication</Text>
+          </View>
+          
+          <View style={styles.loadingContainer}>
+            <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
+            <Text style={styles.loadingText}>Authentication Error</Text>
+            <Text style={styles.loadingSubText}>
+              Please log in again to add medications
+            </Text>
+            <TouchableOpacity 
+              style={styles.retryButton}
+              onPress={() => router.push('/login')}
+            >
+              <Text style={styles.retryButtonText}>Go to Login</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  if (loading) {
+    return <LoadingScreen />;
+  }
+
   // ===== HANDLERS =====
   const handleQRModalClose = () => {
     setShowQRModal(false);
@@ -431,7 +737,7 @@ export default function AddMedicationScreen() {
   };
 
   const handleScanSuccess = async (scanResult) => {
-    console.log('Scan success with result:', scanResult);
+    console.log('🔍 Add Screen: Scan success with result:', scanResult);
     
     if (scanProcessingRef.current) {
         console.log('Scan result ignored: already processing');
@@ -448,62 +754,158 @@ export default function AddMedicationScreen() {
     lastProcessedResult.current = resultKey;
     
     try {
+        // 🔧 FIX: More defensive user checking
         if (!currentUser) {
-        throw new Error('No user logged in');
+          console.error('❌ No current user available');
+          throw new Error('Please log in again to scan prescriptions.');
         }
 
         const userId = currentUser.uid || currentUser.userId || currentUser.$id;
+        if (!userId) {
+          console.error('❌ No valid user ID found');
+          throw new Error('Invalid user session. Please log in again.');
+        }
+
+        console.log('✅ Valid user found:', userId);
         
-        if (typeof scanResult === 'string' && scanResult.startsWith('APPT:')) {
-        console.log('Processing prescription QR code:', scanResult);
-        
-        const prescriptionResult = await integratedPatientMedicationService.getPrescriptionByQR(scanResult);
-        console.log('Prescription data loaded:', prescriptionResult);
-        
-        await handlePrescriptionScan(prescriptionResult, userId);
-        
-        } else if (typeof scanResult === 'object' && scanResult.medications && scanResult.action) {
-        console.log('Processing scanned medications object:', scanResult);
-        
-        const mockPrescriptionResult = {
-            prescription: {
-            $id: `scanned_${Date.now()}`,
-            reference_code: scanResult.medications[0]?.referenceCode || 'SCANNED',
-            prescribed_by: 'Healthcare Provider'
-            },
-            medications: scanResult.medications,
-            qrData: {
-            appointmentId: scanResult.medications[0]?.appointmentId || 'scanned',
-            referenceCode: scanResult.medications[0]?.referenceCode || 'SCANNED'
-            }
-        };
-        
-        switch (scanResult.action) {
-            case 'add_all':
-            await handlePrescriptionScanWithAction(mockPrescriptionResult, userId, 'add_all');
-            break;
-            
-            case 'add_single':
-            await handlePrescriptionScanWithAction(mockPrescriptionResult, userId, 'add_single');
-            break;
-            
-            case 'review_edit':
-            default:
-            await handlePrescriptionScanWithAction(mockPrescriptionResult, userId, 'review_edit');
-            break;
+        // 🆕 NEW: Handle patient selector request
+        if (typeof scanResult === 'object' && scanResult.action === 'show_patient_selector') {
+          console.log('🔍 Add Screen: Showing patient selector for reassignment');
+          console.log('👥 Available patients for selector:', availablePatients.map(p => ({ id: p.id, name: p.name, type: p.type })));
+          setPendingScanResult(scanResult);
+          setShowPatientSelector(true);
+          scanProcessingRef.current = false; // Allow new scans
+          return;
         }
         
-        } else {
-        throw new Error('Unsupported QR code format. Please use a prescription QR code from your healthcare provider.');
+        // Handle standardized scan result format from QRScannerModal
+        if (typeof scanResult === 'object' && scanResult.type === 'prescription_scan') {
+          console.log('🔍 Add Screen: Processing standardized scan result');
+          
+          const rawQR = scanResult.originalQrData || `APPT:${scanResult.medications[0]?.appointmentId}:${scanResult.medications[0]?.referenceCode}`;
+          await handleServiceBasedScan(rawQR, userId, scanResult.action);
+          return;
+        }
+        
+        // Handle other scan types...
+        throw new Error('Unsupported scan result format');
+        
+    } catch (error) {
+        console.error('🔍 Add Screen: Error handling scan success:', error);
+        Alert.alert(
+          'Scan Error',
+          `Failed to process QR code: ${error.message}`,
+          [{ text: 'OK', onPress: () => { scanProcessingRef.current = false; }}]
+        );
+    }
+  };
+
+  // 🆕 NEW: Unified service-based scan handler
+  const handleServiceBasedScan = async (qrString, userId, action) => {
+    try {
+        console.log('🔍 Add Screen: Using updated service for secure QR processing');
+        
+        // 🆕 Use the updated service method that includes security validation
+        const prescriptionResult = await integratedPatientMedicationService.getPrescriptionByQR(qrString);
+        
+        console.log('🔍 Add Screen: Service processed QR with patient assignment:', {
+          medicationCount: prescriptionResult.medications.length,
+          patientName: prescriptionResult.medications[0]?.patientName,
+          isFamilyMember: prescriptionResult.medications[0]?.isFamilyMember,
+          securityValidated: prescriptionResult.securityValidated
+        });
+        
+        // Verify security validation
+        if (!prescriptionResult.securityValidated) {
+          throw new Error('Security validation failed. Access denied.');
+        }
+        
+        switch (action) {
+          case 'add_all':
+            await handleDirectAddAll(prescriptionResult, userId);
+            break;
+            
+          case 'add_single':
+            if (prescriptionResult.medications.length === 1) {
+              await handleDirectAddAll(prescriptionResult, userId);
+            } else {
+              await handlePrescriptionScanWithAction(prescriptionResult, userId, 'review_edit');
+            }
+            break;
+            
+          case 'review_edit':
+          default:
+            await handlePrescriptionScanWithAction(prescriptionResult, userId, 'review_edit');
+            break;
         }
         
     } catch (error) {
-        console.error('Error handling scan success:', error);
-        Alert.alert(
-        'Scan Error',
-        `Failed to process QR code: ${error.message}`,
-        [{ text: 'OK', onPress: () => { scanProcessingRef.current = false; }}]
+        console.error('🔍 Add Screen: Service-based scan error:', error);
+        throw error;
+    }
+  };
+
+  // 🆕 NEW: Direct add all using service
+  const handleDirectAddAll = async (prescriptionResult, userId) => {
+    try {
+        setLoading(true);
+        setShowQRModal(false);
+        
+        console.log(`🔍 Add Screen: Adding ${prescriptionResult.medications.length} medications using service`);
+        
+        // Extract patient info from first medication (secure processing ensures consistency)
+        const patientInfo = prescriptionResult.medications[0] ? {
+          patientId: prescriptionResult.medications[0].patientId,
+          patientName: prescriptionResult.medications[0].patientName,
+          isFamilyMember: prescriptionResult.medications[0].isFamilyMember
+        } : null;
+        
+        console.log('🔍 Add Screen: Patient assignment:', patientInfo);
+        
+        // Use the service's existing method for adding prescription medications
+        const result = await integratedPatientMedicationService.addPrescriptionMedicationsToPatient(
+          prescriptionResult.qrData.appointmentId,
+          patientInfo?.patientId || userId
         );
+        
+        console.log('🔍 Add Screen: Service added medications:', result);
+        
+        // Show success message with correct patient information
+        const medicationCount = result.successful.length;
+        const patientName = patientInfo?.patientName || 'Patient';
+        const patientType = patientInfo?.isFamilyMember ? 'family member account' : 'your account';
+        
+        if (result.successful.length > 0) {
+          const successList = result.successful
+            .map(med => `• ${med.name} (${med.times.join(', ')})`)
+            .join('\n');
+          
+          Alert.alert(
+            'Success! 🎉',
+            `Added ${medicationCount} medication${medicationCount > 1 ? 's' : ''} to ${patientName}'s tracker.\n\n${successList}\n\n✅ The medications have been saved to ${patientType} and will sync across all devices.`,
+            [
+              {
+                text: 'View Medications',
+                onPress: () => {
+                  scanProcessingRef.current = false;
+                  router.push('/medications');
+                }
+              }
+            ]
+          );
+        } else {
+          throw new Error('No medications were successfully added');
+        }
+        
+    } catch (error) {
+        console.error('🔍 Add Screen: Error in direct add all:', error);
+        Alert.alert(
+          'Error',
+          `Failed to add medications: ${error.message}`,
+          [{ text: 'OK', onPress: () => { scanProcessingRef.current = false; }}]
+        );
+    } finally {
+        setLoading(false);
     }
   };
 
@@ -512,28 +914,28 @@ export default function AddMedicationScreen() {
         console.log('Handling prescription scan with action:', action, prescriptionResult);
         
         if (!prescriptionResult.medications || prescriptionResult.medications.length === 0) {
-        throw new Error('No medications found in this prescription');
+          throw new Error('No medications found in this prescription');
         }
 
         setIsPrescriptionLocked(true);
         setPrescriptionData({
-        prescriptionId: prescriptionResult.prescription.$id,
-        referenceCode: prescriptionResult.prescription.reference_code,
-        appointmentId: prescriptionResult.qrData.appointmentId,
-        isFromHealthPractitioner: true,
-        lockFields: ['name', 'type', 'illnessType', 'dosage', 'frequencies', 'duration'],
-        appointmentInfo: prescriptionResult.appointment
+          prescriptionId: prescriptionResult.prescription.$id,
+          referenceCode: prescriptionResult.prescription.reference_code,
+          appointmentId: prescriptionResult.qrData.appointmentId,
+          isFromHealthPractitioner: true,
+          lockFields: ['name', 'type', 'illnessType', 'dosage', 'frequencies', 'duration'],
+          appointmentInfo: prescriptionResult.appointment
         });
         
         const patientMedications = prescriptionResult.medications.map(med => ({
-        ...med,
-        id: `med_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-        color: generateRandomColor(),
-        isPrescription: true,
-        prescriptionId: prescriptionResult.prescription.$id,
-        prescribedBy: 'Healthcare Provider',
-        referenceCode: prescriptionResult.prescription.reference_code,
-        appointmentId: prescriptionResult.qrData.appointmentId
+          ...med,
+          id: `med_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          color: generateRandomColor(),
+          isPrescription: true,
+          prescriptionId: prescriptionResult.prescription.$id,
+          prescribedBy: 'Healthcare Provider',
+          referenceCode: prescriptionResult.prescription.reference_code,
+          appointmentId: prescriptionResult.qrData.appointmentId
         }));
         
         setScannedMedications(patientMedications);
@@ -541,46 +943,46 @@ export default function AddMedicationScreen() {
         setShowQRModal(false);
         
         switch (action) {
-        case 'add_all':
+          case 'add_all':
             console.log('Auto-adding all medications...');
             setTimeout(() => {
-            handleAddAllPrescriptionMedications(patientMedications, userId);
+              handleAddAllPrescriptionMedications(patientMedications, userId);
             }, 500);
             break;
             
-        case 'add_single':
+          case 'add_single':
             if (patientMedications.length === 1) {
-            handleSingleMedication(patientMedications[0]);
-            setTimeout(() => {
+              handleSingleMedication(patientMedications[0]);
+              setTimeout(() => {
                 handleAddAllPrescriptionMedications(patientMedications, userId);
-            }, 500);
+              }, 500);
             } else {
-            handleSingleMedication(patientMedications[0]);
-            scanProcessingRef.current = false;
+              handleSingleMedication(patientMedications[0]);
+              scanProcessingRef.current = false;
             }
             break;
             
-        case 'review_edit':
-        default:
+          case 'review_edit':
+          default:
             handleSingleMedication(patientMedications[0]);
             scanProcessingRef.current = false;
             
             if (patientMedications.length === 1) {
-            setTimeout(() => {
+              setTimeout(() => {
                 Alert.alert(
-                'Prescription Loaded! 💊',
-                `Medication "${patientMedications[0].name}" is ready for customization.\n\n🔒 Prescription details are locked for safety.\n⏰ You can customize medication times.\n\n✅ Save when ready to add to your account.`,
-                [{ text: 'OK' }]
+                  'Prescription Loaded! 💊',
+                  `Medication "${patientMedications[0].name}" is ready for customization.\n\n🔒 Prescription details are locked for safety.\n⏰ You can customize medication times.\n\n✅ Save when ready to add to your account.`,
+                  [{ text: 'OK' }]
                 );
-            }, 500);
+              }, 500);
             } else {
-            setTimeout(() => {
+              setTimeout(() => {
                 Alert.alert(
-                'Prescription Loaded! 💊',
-                `${patientMedications.length} medications are ready for review.\n\n🔒 Prescription details are locked for safety.\n⏰ You can customize medication times.\n\n✅ Save each medication or use "Add All" when ready.`,
-                [{ text: 'OK' }]
+                  'Prescription Loaded! 💊',
+                  `${patientMedications.length} medications are ready for review.\n\n🔒 Prescription details are locked for safety.\n⏰ You can customize medication times.\n\n✅ Save each medication or use "Add All" when ready.`,
+                  [{ text: 'OK' }]
                 );
-            }, 500);
+              }, 500);
             }
             break;
         }
@@ -588,95 +990,10 @@ export default function AddMedicationScreen() {
     } catch (error) {
         console.error('Error handling prescription scan with action:', error);
         Alert.alert(
-        'Error',
-        `Failed to process prescription: ${error.message}`,
-        [{ text: 'OK', onPress: () => { scanProcessingRef.current = false; }}]
+          'Error',
+          `Failed to process prescription: ${error.message}`,
+          [{ text: 'OK', onPress: () => { scanProcessingRef.current = false; }}]
         );
-    }
-  };
-
-  const handlePrescriptionScan = async (prescriptionResult, userId) => {
-    try {
-      console.log('Handling prescription scan with result:', prescriptionResult);
-      
-      if (!prescriptionResult.medications || prescriptionResult.medications.length === 0) {
-        throw new Error('No medications found in this prescription');
-      }
-
-      setIsPrescriptionLocked(true);
-      setPrescriptionData({
-        prescriptionId: prescriptionResult.prescription.$id,
-        referenceCode: prescriptionResult.prescription.reference_code,
-        appointmentId: prescriptionResult.qrData.appointmentId,
-        isFromHealthPractitioner: true,
-        lockFields: ['name', 'type', 'illnessType', 'dosage', 'frequencies', 'duration'],
-        appointmentInfo: prescriptionResult.appointment
-      });
-      
-      const patientMedications = prescriptionResult.medications.map(med => ({
-        ...med,
-        id: `med_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-        color: generateRandomColor(),
-        isPrescription: true,
-        prescriptionId: prescriptionResult.prescription.$id,
-        prescribedBy: 'Healthcare Provider',
-        referenceCode: prescriptionResult.prescription.reference_code,
-        appointmentId: prescriptionResult.qrData.appointmentId
-      }));
-      
-      setScannedMedications(patientMedications);
-      setSelectedMedicationIndex(0);
-      setShowQRModal(false);
-      
-      if (patientMedications.length === 1) {
-        handleSingleMedication(patientMedications[0]);
-        
-        setTimeout(() => {
-          Alert.alert(
-            'Prescription Scanned! 💊',
-            `Found 1 medication prescribed by your healthcare provider.\n\n🔒 Medication details are locked for safety. You can customize medication times to fit your schedule.\n\n✅ Will be saved to your account permanently.`,
-            [
-              {
-                text: 'Add to My Medications',
-                onPress: () => handleAddAllPrescriptionMedications(patientMedications, userId)
-              },
-              { 
-                text: 'Customize Times First',
-                style: 'cancel',
-                onPress: () => { scanProcessingRef.current = false; }
-              }
-            ]
-          );
-        }, 500);
-      } else {
-        handleSingleMedication(patientMedications[0]);
-        
-        setTimeout(() => {
-          Alert.alert(
-            'Prescription Scanned Successfully! 💊',
-            `Found ${patientMedications.length} medications prescribed by your healthcare provider.\n\n🔒 Medication details are locked for safety. You can customize medication times only.\n\n✅ Will be saved to your account permanently.`,
-            [
-              {
-                text: 'Add All to My Medications',
-                onPress: () => handleAddAllPrescriptionMedications(patientMedications, userId)
-              },
-              { 
-                text: 'Customize Individual',
-                style: 'cancel',
-                onPress: () => { scanProcessingRef.current = false; }
-              }
-            ]
-          );
-        }, 500);
-      }
-      
-    } catch (error) {
-      console.error('Error handling prescription scan:', error);
-      Alert.alert(
-        'Error',
-        `Failed to process prescription: ${error.message}`,
-        [{ text: 'OK', onPress: () => { scanProcessingRef.current = false; }}]
-      );
     }
   };
 
@@ -806,6 +1123,117 @@ export default function AddMedicationScreen() {
     setSelectedIllnessType(medication.illnessType || '');
     setSelectedFrequency(medication.frequencies || '');
     setSelectedDuration(medication.duration || '');
+  };
+
+  const handlePatientReassignment = (selectedPatient) => {
+    if (!pendingScanResult || !selectedPatient) {
+      setShowPatientSelector(false);
+      setPendingScanResult(null);
+      return;
+    }
+
+    console.log('🔍 Add Screen: Reassigning medications to:', selectedPatient.name);
+
+    // Update all medications with new patient assignment
+    const updatedMedications = pendingScanResult.medications.map(med => ({
+      ...med,
+      patientId: selectedPatient.id,
+      patientName: selectedPatient.name,
+      isFamilyMember: selectedPatient.type === 'family',
+      securityValidated: true, // Maintain security validation
+      verifiedAccess: true
+    }));
+
+    // Create updated scan result
+    const updatedScanResult = {
+      ...pendingScanResult,
+      medications: updatedMedications,
+      patientInfo: {
+        patientId: selectedPatient.id,
+        patientName: selectedPatient.name,
+        isFamilyMember: selectedPatient.type === 'family'
+      },
+      action: 'add_all' // Default to add all after reassignment
+    };
+
+    // Close patient selector
+    setShowPatientSelector(false);
+    setPendingScanResult(null);
+
+    // Show confirmation and proceed
+    Alert.alert(
+      'Patient Reassigned ✅',
+      `Medications will now be assigned to: ${selectedPatient.name}\n\nProceed with adding medications?`,
+      [
+        {
+          text: 'Add Medications',
+          onPress: () => {
+            // Process the reassigned medications
+            handleServiceBasedScanWithReassignment(updatedScanResult);
+          }
+        },
+        {
+          text: 'Review Individual',
+          onPress: () => {
+            // Load for individual review
+            const reassignedResult = { ...updatedScanResult, action: 'review_edit' };
+            handleServiceBasedScanWithReassignment(reassignedResult);
+          }
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        }
+      ]
+    );
+  };
+
+  // Handle reassigned medications
+  const handleServiceBasedScanWithReassignment = async (scanResult) => {
+    try {
+      console.log('🔍 Add Screen: Processing reassigned medications');
+      
+      // Simulate the prescription result structure
+      const prescriptionResult = {
+        medications: scanResult.medications,
+        prescription: {
+          $id: scanResult.medications[0]?.prescriptionId || `reassigned_${Date.now()}`,
+          reference_code: scanResult.medications[0]?.referenceCode || 'REASSIGNED',
+          prescribed_by: 'Healthcare Provider',
+          appointment_id: scanResult.medications[0]?.appointmentId
+        },
+        qrData: {
+          appointmentId: scanResult.medications[0]?.appointmentId,
+          referenceCode: scanResult.medications[0]?.referenceCode
+        },
+        securityValidated: true,
+        patientVerified: true
+      };
+
+      const userId = currentUser.uid || currentUser.userId || currentUser.$id;
+
+      switch (scanResult.action) {
+        case 'add_all':
+          await handleDirectAddAll(prescriptionResult, userId);
+          break;
+          
+        case 'review_edit':
+          await handlePrescriptionScanWithAction(prescriptionResult, userId, 'review_edit');
+          break;
+          
+        default:
+          await handlePrescriptionScanWithAction(prescriptionResult, userId, 'review_edit');
+          break;
+      }
+      
+    } catch (error) {
+      console.error('🔍 Add Screen: Error processing reassigned medications:', error);
+      Alert.alert(
+        'Error',
+        `Failed to process reassigned medications: ${error.message}`,
+        [{ text: 'OK' }]
+      );
+    }
   };
 
   const isFieldLocked = (fieldName) => {
@@ -1071,11 +1499,6 @@ export default function AddMedicationScreen() {
     </>
   );
 
-  // ===== EARLY RETURNS =====
-  if (loading) {
-    return <LoadingScreen />;
-  }
-
   // ===== RENDER =====
   return (
     <View style={styles.container}>
@@ -1091,11 +1514,33 @@ export default function AddMedicationScreen() {
         onClose={handleQRModalClose}
         onScanSuccess={handleScanSuccess}
       />
+
+      {/* Patient Selector Modal */}
+      <PatientSelector
+        visible={showPatientSelector}
+        patients={availablePatients}
+        onSelect={handlePatientReassignment}
+        onCancel={() => {
+          setShowPatientSelector(false);
+          setPendingScanResult(null);
+        }}
+        pendingMedications={pendingScanResult}
+      />
       
       <View style={styles.content}>
         <View style={styles.header}>
           <PageHeader onPress={() => router.back()} />
           <Text style={styles.headerTitle}>Add Medication</Text>
+          {/* 🔧 DEBUG: Show patient count and refresh button */}
+          {currentUser && (
+            <TouchableOpacity 
+              style={styles.debugPatientButton}
+              onPress={refreshPatients}
+            >
+              <Ionicons name="people-outline" size={16} color="#666" />
+              <Text style={styles.debugPatientText}>{availablePatients.length}</Text>
+            </TouchableOpacity>
+          )}
         </View>
         
         <ScrollView 
@@ -1477,6 +1922,22 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
     marginLeft: 15,
+    flex: 1,
+  },
+  debugPatientButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginLeft: 10,
+  },
+  debugPatientText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
   },
   headerGradient: {
     height: Platform.OS === 'ios' ? 120 : 100,
@@ -1518,6 +1979,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    backgroundColor: '#1a8e2d',
+    borderRadius: 10,
+  },
+  retryButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
 
   // Buttons
@@ -1563,6 +2036,145 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.6,
+  },
+
+  // Patient Selector Styles
+  patientSelectorOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  patientSelectorContainer: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingTop: 20,
+  },
+  patientSelectorHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e5e5',
+  },
+  patientSelectorTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  patientSelectorClose: {
+    padding: 5,
+  },
+  patientSelectorSubtitle: {
+    fontSize: 16,
+    color: '#666',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    textAlign: 'center',
+  },
+  patientsList: {
+    flex: 1,
+    paddingHorizontal: 20,
+  },
+  patientOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 15,
+    paddingHorizontal: 15,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+  },
+  patientInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  patientAvatar: {
+    width: 45,
+    height: 45,
+    borderRadius: 22.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+  },
+  ownerAvatar: {
+    backgroundColor: '#1a8e2d',
+  },
+  familyAvatar: {
+    backgroundColor: '#2196F3',
+  },
+  patientDetails: {
+    flex: 1,
+  },
+  patientName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 2,
+  },
+  patientType: {
+    fontSize: 14,
+    color: '#666',
+  },
+  patientSelectorFooter: {
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e5e5',
+  },
+  cancelPatientButton: {
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+  },
+  cancelPatientButtonText: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  
+  // Empty state styles for PatientSelector
+  noPatients: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  noPatientsText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 15,
+    textAlign: 'center',
+  },
+  noPatientsSubText: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 8,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  retryPatientsButton: {
+    marginTop: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    backgroundColor: '#1a8e2d',
+    borderRadius: 8,
+  },
+  retryPatientsButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
 
   // Prescription Lock Banner

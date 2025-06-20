@@ -495,11 +495,13 @@ export default function Medications() {
         }, 0);
         
         // Count completed doses ONLY for scheduled medications (exclude "As Needed")
+        // FIXED: Always check if dose belongs to today's filtered medications
         const completedDosesCount = doseHistory.filter(dose => {
-            // Only count taken doses that are NOT "As Needed"
-            const isForSelectedPatient = selectedPatient === 'all' || 
-                filteredTodayMeds.some(med => med.id === dose.medication_id);
-            return dose.taken && !isAsNeededDose(dose.dose_id) && isForSelectedPatient;
+            // Check if this dose belongs to any of today's filtered medications
+            const belongsToTodaysMeds = filteredTodayMeds.some(med => med.id === dose.medication_id);
+            
+            // Only count taken doses that are NOT "As Needed" AND belong to today's medications
+            return dose.taken && !isAsNeededDose(dose.dose_id) && belongsToTodaysMeds;
         }).length;
         
         const progressValue = totalScheduledDoses > 0 
@@ -515,7 +517,9 @@ export default function Medications() {
             selectedPatient,
             totalDoses: totalScheduledDoses,
             completedDoses: completedDosesCount,
-            progress: progressValue
+            progress: progressValue,
+            filteredMedsCount: filteredTodayMeds.length,
+            doseHistoryCount: doseHistory.length
         });
     }, [todaysMedications, doseHistory, selectedPatient, organizeMedicationsByPatientAndTime, filterMedicationsByPatient]);
 

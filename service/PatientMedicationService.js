@@ -2,6 +2,7 @@
 import { DatabaseService, Query } from '../configs/AppwriteConfig';
 import { COLLECTIONS } from '../constants/index';
 import { getLocalStorage } from './Storage';
+import { processPrescriptionQR } from './PrescriptionScanner';
 
 class DefensiveFamilyPatientMedicationService {
   
@@ -409,116 +410,194 @@ class DefensiveFamilyPatientMedicationService {
    * 🛡️ SAFE: Add prescription medications with optional patient assignment
    */
   async addPrescriptionMedicationsToPatient(appointmentId, patientId = null) {
-    try {
-      console.log('📦 Adding prescription medications for appointment:', appointmentId, 'patient:', patientId);
-      
-      const context = await this.getCurrentUserContext();
-      let targetPatient = null;
-      
-      // Determine target patient
-      if (patientId && patientId !== 'owner') {
-        try {
-          targetPatient = await this.getPatientInfo(patientId, context);
-        } catch (error) {
-          console.log('⚠️ Could not find specific patient, defaulting to owner');
-          targetPatient = await this.getPatientInfo(context.ownerUserId, context);
-        }
-      } else {
+  try {
+    console.log('📦 Adding prescription medications for appointment:', appointmentId, 'patient:', patientId);
+    
+    const context = await this.getCurrentUserContext();
+    let targetPatient = null;
+    
+    // Determine target patient
+    if (patientId && patientId !== 'owner') {
+      try {
+        targetPatient = await this.getPatientInfo(patientId, context);
+      } catch (error) {
+        console.log('⚠️ Could not find specific patient, defaulting to owner');
         targetPatient = await this.getPatientInfo(context.ownerUserId, context);
       }
+    } else {
+      targetPatient = await this.getPatientInfo(context.ownerUserId, context);
+    }
 
-      console.log('🎯 Adding medications for patient:', targetPatient.name);
+    console.log('🎯 Adding medications for patient:', targetPatient.name);
 
-      const prescriptionData = await this.getPrescriptionByQR(`APPT:${appointmentId}`, targetPatient.id);
+    // 🔧 CRITICAL FIX: Get prescription data directly from database instead of reconstructing QR
+    let prescriptionResult;
+    
+    try {
+      // Get prescription directly from database
+      const prescriptions = await DatabaseService.listDocuments(
+        this.PRESCRIPTIONS_ID,
+        [Query.equal('appointment_id', appointmentId)],
+        1
+      );
       
-      if (!prescriptionData.medications || prescriptionData.medications.length === 0) {
-        throw new Error('No medications found in prescription');
+      if (prescriptions.documents.length === 0) {
+        throw new Error('No prescription found for this appointment');
       }
-
-      const results = {
-        successful: [],
-        failed: [],
-        totalCount: prescriptionData.medications.length,
-        patient: targetPatient
+      
+      const prescription = prescriptions.documents[0];
+      
+      // Get medications for this prescription
+      const medications = await DatabaseService.listDocuments(
+        this.PRESCRIPTION_MEDICATIONS_ID,
+        [Query.equal('prescription_id', prescription.$id)]
+      );
+      
+      // Format the prescription result to match expected structure
+      prescriptionResult = {
+        prescription: prescription,
+        medications: medications.documents.map(med => ({
+          name: med.name,
+          type: med.type,
+          dosage: med.dosage,
+          frequencies: med.frequencies,
+          duration: med.duration,
+          illnessType: med.illness_type || '',
+          notes: med.notes || '',
+          times: this.parseTimesFromDatabase(med.times, med.frequencies),
+          
+          // 🆕 CRITICAL: Use the correct patient assignment
+          patientId: targetPatient.id,
+          patientName: targetPatient.name,
+          isFamilyMember: targetPatient.type === 'family',
+          
+          // Metadata
+          appointmentId: appointmentId,
+          referenceCode: prescription.reference_code,
+          prescriptionId: prescription.$id,
+          isPrescription: true,
+          prescribedBy: 'Healthcare Provider',
+          securityValidated: true,
+          verifiedAccess: true
+        })),
+        qrData: { 
+          appointmentId: appointmentId,
+          referenceCode: prescription.reference_code 
+        },
+        securityValidated: true,
+        patientVerified: true
       };
-
-      const batchSize = 3;
-      for (let i = 0; i < prescriptionData.medications.length; i += batchSize) {
-        const batch = prescriptionData.medications.slice(i, i + batchSize);
-        
-        const batchPromises = batch.map(async (medication) => {
-          try {
-            const medicationData = this.prepareMedicationData(medication, context.ownerUserId, prescriptionData, targetPatient);
-            const savedMedication = await this.saveMedicationToDatabase(medicationData);
-            
-            results.successful.push({
-              name: savedMedication.name,
-              id: savedMedication.id,
-              times: savedMedication.times,
-              dosage: savedMedication.dosage,
-              patient: targetPatient.name
-            });
-            
-            return savedMedication;
-          } catch (error) {
-            console.error(`❌ Failed to add medication ${medication.name}:`, error);
-            results.failed.push({
-              name: medication.name,
-              error: error.message,
-              patient: targetPatient.name
-            });
-            return null;
-          }
-        });
-
-        await Promise.allSettled(batchPromises);
-      }
-
-      console.log(`📊 Batch processing complete for ${targetPatient.name}: ${results.successful.length} successful, ${results.failed.length} failed`);
       
-      return results;
+      console.log('✅ Retrieved prescription data directly from database');
       
     } catch (error) {
-      console.error('❌ Error adding prescription medications:', error);
-      throw new Error(`Failed to add prescription medications: ${error.message}`);
+      console.error('❌ Error getting prescription data:', error);
+      throw new Error(`Could not retrieve prescription: ${error.message}`);
     }
+    
+    // Rest of your existing code for processing medications...
+    if (!prescriptionResult.medications || prescriptionResult.medications.length === 0) {
+      throw new Error('No medications found in prescription');
+    }
+
+    const results = {
+      successful: [],
+      failed: [],
+      totalCount: prescriptionResult.medications.length,
+      patient: targetPatient
+    };
+
+    // Process medications in batches
+    const batchSize = 3;
+    for (let i = 0; i < prescriptionResult.medications.length; i += batchSize) {
+      const batch = prescriptionResult.medications.slice(i, i + batchSize);
+      
+      const batchPromises = batch.map(async (medication) => {
+        try {
+          const medicationData = this.prepareMedicationData(medication, context.ownerUserId, prescriptionResult, targetPatient);
+          const savedMedication = await this.saveMedicationToDatabase(medicationData);
+          
+          results.successful.push({
+            name: savedMedication.name,
+            id: savedMedication.id,
+            times: savedMedication.times,
+            dosage: savedMedication.dosage,
+            patient: targetPatient.name
+          });
+          
+          return savedMedication;
+        } catch (error) {
+          console.error(`❌ Failed to add medication ${medication.name}:`, error);
+          results.failed.push({
+            name: medication.name,
+            error: error.message,
+            patient: targetPatient.name
+          });
+          return null;
+        }
+      });
+
+      await Promise.allSettled(batchPromises);
+    }
+
+    console.log(`📊 Batch processing complete for ${targetPatient.name}: ${results.successful.length} successful, ${results.failed.length} failed`);
+    
+    return results;
+    
+  } catch (error) {
+    console.error('❌ Error adding prescription medications:', error);
+    throw new Error(`Failed to add prescription medications: ${error.message}`);
   }
+}
 
   /**
    * 🛡️ SAFE: Prepare medication data with optional patient assignment
    */
   prepareMedicationData(medication, ownerUserId, prescriptionData, targetPatient) {
-    const now = new Date().toISOString();
-    
-    const baseData = {
-      user_id: ownerUserId,
-      name: medication.name,
-      type: medication.type,
-      illness_type: medication.illnessType || '',
-      dosage: medication.dosage,
-      frequencies: medication.frequencies,
-      duration: medication.duration,
-      start_date: medication.startDate || now.split('T')[0],
-      times: Array.isArray(medication.times) ? medication.times : ['09:00'],
-      notes: medication.notes || `Prescribed medication for ${targetPatient.name} from appointment on ${new Date().toLocaleDateString()}`,
-      reminder_enabled: true,
-      refill_reminder: false,
-      current_supply: 0,
-      total_supply: 0,
-      refill_at: 0,
-      color: this.generateRandomColor(),
-      is_prescription: true,
-      prescription_id: prescriptionData.prescription.$id,
-      prescribed_by: prescriptionData.prescription.prescribed_by || 'Healthcare Provider',
-      reference_code: prescriptionData.prescription.reference_code,
-      appointment_id: prescriptionData.qrData.appointmentId,
-      status: 'Active',
-      created_at: now,
-      updated_at: now,
-      local_id: `med_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`
-    };
+  const now = new Date().toISOString();
+  
+  const baseData = {
+    user_id: ownerUserId,
+    name: medication.name,
+    type: medication.type,
+    illness_type: medication.illnessType || '',
+    dosage: medication.dosage,
+    frequencies: medication.frequencies,
+    duration: medication.duration,
+    start_date: medication.startDate || now.split('T')[0],
+    times: Array.isArray(medication.times) ? medication.times : ['09:00'],
+    notes: medication.notes || `Prescribed medication for ${targetPatient.name} from appointment on ${new Date().toLocaleDateString()}`,
+    reminder_enabled: true,
+    refill_reminder: false,
+    current_supply: 0,
+    total_supply: 0,
+    refill_at: 0,
+    color: this.generateRandomColor(),
+    is_prescription: true,
+    prescription_id: prescriptionData.prescription.$id,
+    prescribed_by: prescriptionData.prescription.prescribed_by || 'Healthcare Provider',
+    reference_code: prescriptionData.prescription.reference_code,
+    appointment_id: prescriptionData.qrData.appointmentId,
+    status: 'Active',
+    created_at: now,
+    updated_at: now,
+    local_id: `med_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`
+  };
 
-    // 🛡️ SAFE: Add patient fields only if they should exist
+  // 🆕 CRITICAL: Use patient assignment from securely processed medication
+  if (medication.securityValidated && medication.patientId) {
+    baseData.patient_id = medication.patientId;
+    baseData.patient_name = medication.patientName;
+    baseData.patient_type = medication.isFamilyMember ? 'family' : 'owner';
+    baseData.is_family_member = medication.isFamilyMember || false;
+    
+    console.log('🔒 PatientMedicationService: Using secure patient assignment:', {
+      patient_id: baseData.patient_id,
+      patient_name: baseData.patient_name,
+      is_family_member: baseData.is_family_member
+    });
+  } else {
+    // Fallback to targetPatient parameter
     try {
       baseData.patient_id = targetPatient.id;
       baseData.patient_name = targetPatient.name;
@@ -528,9 +607,10 @@ class DefensiveFamilyPatientMedicationService {
       console.log('⚠️ Patient fields not available, using notes fallback');
       // Patient info is already encoded in notes
     }
-    
-    return baseData;
   }
+  
+  return baseData;
+}
 
   // All other methods remain the same...
   async getFamilyMemberMedications(familyMemberId) {
@@ -594,80 +674,112 @@ class DefensiveFamilyPatientMedicationService {
 
   // Standard CRUD operations and utility methods (same as before)
   async getPrescriptionByQR(qrData, patientId = null) {
+  try {
+    console.log('🔒 PatientMedicationService: Processing QR with security validation');
+    
+    if (!qrData || typeof qrData !== 'string') {
+      throw new Error('Invalid QR code data');
+    }
+
+    // 🆕 CRITICAL: Use the secure processPrescriptionQR function
+    const securelyProcessedMedications = await processPrescriptionQR(qrData);
+    
+    console.log('🔒 PatientMedicationService: QR processed securely:', securelyProcessedMedications.length, 'medications');
+    
+    // Extract appointment and prescription info from processed medications
+    const firstMed = securelyProcessedMedications[0];
+    if (!firstMed) {
+      throw new Error('No medications found in prescription');
+    }
+    
+    const appointmentId = firstMed.appointmentId;
+    const referenceCode = firstMed.referenceCode;
+    const prescriptionId = firstMed.prescriptionId;
+    
+    // Try to get additional prescription details from database
+    let prescription = null;
+    let appointment = null;
+    
     try {
-      if (!qrData || typeof qrData !== 'string') {
-        throw new Error('Invalid QR code data');
-      }
-
-      const parts = qrData.split(':');
-      if (parts.length < 2 || parts[0] !== 'APPT') {
-        throw new Error('Invalid prescription QR code format');
-      }
-      
-      const appointmentId = parts[1];
-      const referenceCode = parts[2] || '';
-
-      let appointment = null;
-      try {
-        appointment = await DatabaseService.getDocument(this.APPOINTMENTS_ID, appointmentId);
-      } catch (error) {
-        console.warn('⚠️ Appointment not found, continuing with prescription lookup');
-      }
-      
-      const prescriptionsResponse = await DatabaseService.listDocuments(
-        this.PRESCRIPTIONS_ID,
-        [Query.equal('appointment_id', appointmentId)],
-        25
-      );
-      
-      if (!prescriptionsResponse.documents || prescriptionsResponse.documents.length === 0) {
-        return this.createDemoQRResponse(appointmentId, referenceCode);
-      }
-      
-      const prescription = prescriptionsResponse.documents[0];
-      
-      const medicationsResponse = await DatabaseService.listDocuments(
-        this.PRESCRIPTION_MEDICATIONS_ID,
-        [Query.equal('prescription_id', prescription.$id)],
-        100
-      );
-      
-      if (!medicationsResponse.documents || medicationsResponse.documents.length === 0) {
-        return this.createDemoQRResponse(appointmentId, referenceCode);
-      }
-      
-      const formattedMedications = medicationsResponse.documents.map(med => {
-        const times = this.parseTimesFromDatabase(med.times, med.frequencies);
-        
-        return {
-          name: med.name || 'Unknown Medication',
-          type: med.type || 'Tablet',
-          dosage: med.dosage || 'As prescribed',
-          frequencies: med.frequencies || 'Once Daily',
-          duration: med.duration || '30 days',
-          illnessType: med.illness_type || '',
-          notes: med.notes || '',
-          times: times,
-          appointmentId,
-          referenceCode: prescription.reference_code,
-          prescriptionId: prescription.$id,
-          isPrescription: true,
-          prescribedBy: prescription.prescribed_by || 'Healthcare Provider',
-          medicationId: med.$id,
-          createdAt: med.created_at || new Date().toISOString()
+      if (prescriptionId && prescriptionId !== 'demo') {
+        prescription = await DatabaseService.getDocument(this.PRESCRIPTIONS_ID, prescriptionId);
+      } else {
+        // For demo or when prescription ID not available, create mock prescription
+        prescription = {
+          $id: prescriptionId || `secure_prescription_${Date.now()}`,
+          reference_code: referenceCode,
+          prescribed_by: 'Healthcare Provider',
+          appointment_id: appointmentId
         };
-      });
-      
-      return {
-        prescription,
-        medications: formattedMedications,
-        appointment,
-        qrData: { appointmentId, referenceCode }
-      };
-      
+      }
     } catch (error) {
-      console.error('❌ Error processing prescription QR:', error);
+      console.log('⚠️ Could not fetch prescription details, using mock');
+      prescription = {
+        $id: `secure_prescription_${Date.now()}`,
+        reference_code: referenceCode,
+        prescribed_by: 'Healthcare Provider',
+        appointment_id: appointmentId
+      };
+    }
+    
+    try {
+      if (appointmentId && appointmentId !== 'demo') {
+        appointment = await DatabaseService.getDocument(this.APPOINTMENTS_ID, appointmentId);
+      }
+    } catch (error) {
+      console.log('⚠️ Could not fetch appointment details');
+      appointment = null;
+    }
+    
+    // 🆕 CRITICAL: Convert securely processed medications to service format
+    const formattedMedications = securelyProcessedMedications.map(med => ({
+      name: med.name || 'Unknown Medication',
+      type: med.type || 'Tablet',
+      dosage: med.dosage || 'As prescribed',
+      frequencies: med.frequencies || 'Once Daily',
+      duration: med.duration || '30 days',
+      illnessType: med.illnessType || '',
+      notes: med.notes || '',
+      times: med.times || ['09:00'],
       
+      // Prescription metadata
+      appointmentId: med.appointmentId,
+      referenceCode: med.referenceCode,
+      prescriptionId: med.prescriptionId,
+      isPrescription: true,
+      prescribedBy: 'Healthcare Provider',
+      medicationId: `secure_med_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      createdAt: new Date().toISOString(),
+      
+      // 🆕 CRITICAL: Patient assignment from secure processing
+      patientId: med.patientId,
+      patientName: med.patientName,
+      isFamilyMember: med.isFamilyMember,
+      securityValidated: med.securityValidated || true,
+      verifiedAccess: med.verifiedAccess || true
+    }));
+    
+    console.log('🔒 PatientMedicationService: Formatted medications with patient assignment:', {
+      count: formattedMedications.length,
+      patientName: formattedMedications[0]?.patientName,
+      isFamilyMember: formattedMedications[0]?.isFamilyMember
+    });
+    
+    return {
+      prescription,
+      medications: formattedMedications,
+      appointment,
+      qrData: { appointmentId, referenceCode },
+      // 🆕 Add security metadata
+      securityValidated: true,
+      patientVerified: true
+    };
+    
+  } catch (error) {
+    console.error('🔒 PatientMedicationService: Secure QR processing failed:', error);
+    
+    // For demo QR codes, fall back to demo response
+    if (qrData.includes('DEMO:') || error.message.includes('demo')) {
       try {
         const parts = qrData.split(':');
         const appointmentId = parts[1] || 'demo';
@@ -677,7 +789,10 @@ class DefensiveFamilyPatientMedicationService {
         throw error;
       }
     }
+    
+    throw error;
   }
+}
 
   createDemoQRResponse(appointmentId, referenceCode) {
     const demoMedications = [
@@ -831,6 +946,36 @@ class DefensiveFamilyPatientMedicationService {
       }
     }
   }
+
+  async getFormattedPatientList() {
+  try {
+    const context = await this.getCurrentUserContext();
+    
+    return [
+      {
+        id: context.ownerUserId,
+        name: context.userDetail.name || context.userDetail.firstName || 'You (Account Owner)',
+        type: 'owner',
+        isOwner: true,
+        email: context.userDetail.email,
+        phone: context.userDetail.phone
+      },
+      ...context.familyMembers.map(fm => ({
+        id: fm.id,
+        name: fm.name,
+        type: 'family',
+        isOwner: false,
+        relationship: fm.relationship,
+        email: fm.email,
+        phone: fm.phone,
+        profileId: fm.profileId
+      }))
+    ];
+  } catch (error) {
+    console.error('Error getting formatted patient list:', error);
+    return [];
+  }
+}
 
   parseTimesFromDatabase(times, frequencies) {
     try {

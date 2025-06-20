@@ -229,92 +229,123 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
 
   // 🚨 FIX: Enhanced medication confirmation with proper data passing
   const showMedicationConfirmation = (medications, originalQrData) => {
-    // Reset loading state but keep processing flag until user decides
-    setLoading(false);
+  setLoading(false);
+  
+  // 🆕 NEW: Extract and display patient assignment clearly
+  const patientInfo = medications[0] ? {
+    patientId: medications[0].patientId,
+    patientName: medications[0].patientName,
+    isFamilyMember: medications[0].isFamilyMember
+  } : null;
+  
+  console.log('🔍 QRScannerModal: Patient assignment preserved:', patientInfo);
+  
+  const medicationList = medications.map((med, index) => 
+    `${index + 1}. ${med.name} - ${med.dosage} (${med.frequencies})`
+  ).join('\n');
+
+  // 🆕 ENHANCED: Show clear patient assignment with reassignment option
+  const patientMessage = patientInfo 
+    ? `📋 Assigned to: ${patientInfo.patientName}${patientInfo.isFamilyMember ? ' (Family Member)' : ' (You)'}\n\n`
+    : '';
+
+  const message = medications.length > 1 
+    ? `Found ${medications.length} medications:\n\n${patientMessage}${medicationList}\n\nPatient assignment was automatically determined from your appointment.`
+    : `Found medication:\n\n${patientMessage}${medicationList}\n\nPatient assignment was automatically determined from your appointment.`;
+
+  const handleUserChoice = (action) => {
+    processingRef.current = false;
     
-    const medicationList = medications.map((med, index) => 
-      `${index + 1}. ${med.name} - ${med.dosage} (${med.frequencies})`
-    ).join('\n');
-
-    const message = medications.length > 1 
-      ? `Found ${medications.length} medications:\n\n${medicationList}\n\nWhat would you like to do?`
-      : `Found medication:\n\n${medicationList}\n\nAdd this medication?`;
-
-    const handleUserChoice = (action) => {
-      // Reset processing state
-      processingRef.current = false;
-      
-      // 🚨 FIX: Pass both the processed medications and the original QR data
-      console.log('QRScannerModal: User chose action:', action);
-      
-      // Check if this was a raw QR scan or processed medications
-      if (typeof originalQrData === 'string' && originalQrData.startsWith('APPT:')) {
-        // For raw QR codes, pass the string for proper processing
-        console.log('QRScannerModal: Passing raw QR string:', originalQrData);
-        onScanSuccess(originalQrData);
-      } else {
-        // For processed medications (like demos), pass the processed object
-        console.log('QRScannerModal: Passing processed medications object');
-        onScanSuccess({
-          medications: medications,
-          totalCount: medications.length,
-          action: action,
-          originalQrData: originalQrData
-        });
-      }
-      
-      onClose();
+    const scanResult = {
+      type: 'prescription_scan',
+      action: action,
+      medications: medications,
+      totalCount: medications.length,
+      patientInfo: patientInfo,
+      originalQrData: originalQrData,
+      timestamp: new Date().toISOString()
     };
-
-    const handleCancel = () => {
-      // Reset scanning state to allow new scans
-      resetScanningState();
-    };
-
-    if (medications.length > 1) {
-      // Multiple medications - show streamlined options
-      Alert.alert(
-        "Multiple Medications Found",
-        message,
-        [
-          {
-            text: "Add All",
-            onPress: () => handleUserChoice('add_all')
-          },
-          {
-            text: "Review & Edit",
-            onPress: () => handleUserChoice('review_edit')
-          },
-          {
-            text: "Cancel",
-            style: "cancel",
-            onPress: handleCancel
-          }
-        ]
-      );
-    } else {
-      // Single medication - show simple confirmation
-      Alert.alert(
-        "Medication Found",
-        message,
-        [
-          {
-            text: "Add Medication",
-            onPress: () => handleUserChoice('add_single')
-          },
-          {
-            text: "Review & Edit",
-            onPress: () => handleUserChoice('review_edit')
-          },
-          {
-            text: "Cancel",
-            style: "cancel",
-            onPress: handleCancel
-          }
-        ]
-      );
-    }
+    
+    console.log('🔍 QRScannerModal: Final scan result:', scanResult);
+    onScanSuccess(scanResult);
+    onClose();
   };
+
+  // 🆕 NEW: Add reassignment option
+  const showReassignmentOptions = () => {
+    // This will trigger the parent component to show patient selector
+    const scanResult = {
+      type: 'prescription_scan',
+      action: 'show_patient_selector',
+      medications: medications,
+      totalCount: medications.length,
+      patientInfo: patientInfo,
+      originalQrData: originalQrData,
+      timestamp: new Date().toISOString()
+    };
+    
+    processingRef.current = false;
+    onScanSuccess(scanResult);
+    onClose();
+  };
+
+  const handleCancel = () => {
+    resetScanningState();
+  };
+
+  if (medications.length > 1) {
+    // Multiple medications - enhanced options
+    Alert.alert(
+      "✅ Prescription Scanned Successfully",
+      message,
+      [
+        {
+          text: "✅ Correct - Add All Medications",
+          onPress: () => handleUserChoice('add_all')
+        },
+        {
+          text: "👤 Reassign to Different Patient",
+          onPress: showReassignmentOptions
+        },
+        {
+          text: "📝 Review & Edit Individual",
+          onPress: () => handleUserChoice('review_edit')
+        },
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: handleCancel
+        }
+      ]
+    );
+  } else {
+    // Single medication - enhanced options
+    Alert.alert(
+      "✅ Medication Found",
+      message,
+      [
+        {
+          text: "✅ Correct - Add Medication",
+          onPress: () => handleUserChoice('add_single')
+        },
+        {
+          text: "👤 Reassign to Different Patient", 
+          onPress: showReassignmentOptions
+        },
+        {
+          text: "📝 Review & Edit",
+          onPress: () => handleUserChoice('review_edit')
+        },
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: handleCancel
+        }
+      ]
+    );
+  }
+};
+
 
   // Process demo QR codes with confirmation
   const handleQuickScan = async (demoType) => {

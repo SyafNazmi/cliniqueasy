@@ -1,4 +1,4 @@
-// service/PrescriptionScanner.js - FIXED VERSION with Security Validation
+// service/PrescriptionScanner.js - FIXED VERSION with Correct Family Member Assignment
 
 import { DatabaseService, Query } from '../configs/AppwriteConfig';
 import { getLocalStorage } from './Storage';
@@ -25,117 +25,6 @@ const generateSecureReferenceCode = () => {
   
   // Create a more secure reference code: RX + last 8 digits of timestamp + 10 random chars
   return `RX${timestamp.slice(-8)}${random1}${random2}`;
-};
-
-/**
- * Add a new prescription with medications
- * @param {string} appointmentId - The appointment ID
- * @param {Array} medications - Array of medication objects
- * @param {string} doctorNotes - Doctor's notes
- * @returns {Promise<Object>} - Created prescription
- */
-export const addPrescription = async (appointmentId, medications, doctorNotes = '') => {
-  try {
-    console.log('Creating prescription for appointment:', appointmentId);
-    
-    // 1. Create the main prescription record with secure reference code
-    const prescriptionData = {
-      appointment_id: appointmentId,
-      doctor_notes: doctorNotes,
-      status: 'Active',
-      issued_date: new Date().toISOString().split('T')[0],
-      reference_code: generateSecureReferenceCode()
-    };
-    
-    const prescription = await DatabaseService.createDocument(
-      COLLECTIONS.PRESCRIPTIONS,
-      prescriptionData
-    );
-    
-    console.log('Created prescription with secure reference:', prescription.reference_code);
-    
-    // 2. Add medications
-    for (let i = 0; i < medications.length; i++) {
-      const medication = medications[i];
-      
-      let timesArray = getTimesForFrequency(medication.frequencies) || ['09:00'];
-      
-      const medicationData = {
-        prescription_id: prescription.$id,
-        name: medication.name,
-        type: medication.type,
-        dosage: medication.dosage,
-        frequencies: medication.frequencies,
-        duration: medication.duration,
-        illness_type: medication.illnessType || '',
-        notes: medication.notes || '',
-        times: timesArray
-      };
-      
-      await DatabaseService.createDocument(
-        COLLECTIONS.PRESCRIPTION_MEDICATIONS,
-        medicationData
-      );
-    }
-    
-    console.log(`Successfully added ${medications.length} medications to prescription`);
-    return prescription;
-    
-  } catch (error) {
-    console.error('Error creating prescription:', error);
-    throw error;
-  }
-};
-
-/**
- * Get prescriptions and medications for an appointment
- * @param {string} appointmentId - The appointment ID
- * @returns {Promise<Object>} - Object containing prescription and medications
- */
-export const getPrescriptions = async (appointmentId) => {
-  try {
-    console.log('Getting prescriptions for appointment:', appointmentId);
-    
-    // 1. Find prescriptions for this appointment
-    const prescriptionsResponse = await DatabaseService.listDocuments(
-      COLLECTIONS.PRESCRIPTIONS,
-      [Query.equal('appointment_id', appointmentId)]
-    );
-    
-    if (!prescriptionsResponse.documents || prescriptionsResponse.documents.length === 0) {
-      console.log('No prescriptions found for appointment:', appointmentId);
-      return {
-        prescription: null,
-        medications: []
-      };
-    }
-    
-    // 2. Get the most recent prescription
-    const prescription = prescriptionsResponse.documents[0];
-    console.log('Found prescription:', prescription.$id);
-    
-    // 3. Get all medications for this prescription
-    const medicationsResponse = await DatabaseService.listDocuments(
-      COLLECTIONS.PRESCRIPTION_MEDICATIONS,
-      [Query.equal('prescription_id', prescription.$id)]
-    );
-    
-    console.log(`Found ${medicationsResponse.total} medications`);
-    
-    // 4. Process medications to ensure times is properly formatted
-    const processedMedications = medicationsResponse.documents.map(med => ({
-      ...med,
-      times: ensureTimesArray(med.times, med.frequencies)
-    }));
-    
-    return {
-      prescription: prescription,
-      medications: processedMedications
-    };
-  } catch (error) {
-    console.error('Error getting prescriptions:', error);
-    throw error;
-  }
 };
 
 /**
@@ -184,7 +73,7 @@ export const processPrescriptionQR = async (qrData) => {
       throw new Error('Appointment not found. Please verify the QR code is valid and not expired.');
     }
     
-    // 5. 🔒 SECURITY CHECKPOINT 4: Verify patient access (most critical check)
+    // 5. 🔒 SECURITY CHECKPOINT 4: Verify patient access (FIXED VERSION)
     const isAuthorized = await verifyPatientAccess(appointment, currentUser);
     if (!isAuthorized) {
       // Log critical security violation
@@ -226,11 +115,57 @@ export const processPrescriptionQR = async (qrData) => {
       throw new Error('No medications found in this prescription.');
     }
     
-    // 8. Log successful secure access
+    // 8. 🆕 FIXED: DETERMINE CORRECT PATIENT ASSIGNMENT
+    let targetPatientId = userId; // Default to current user
+    let targetPatientName = currentUser.name || currentUser.fullName || 'You (Account Owner)';
+    let isFamilyMember = false;
+    
+    // Check if this is a family booking
+    if (appointment.is_family_booking) {
+      // 🔧 CRITICAL FIX: Always use appointment.patient_id for family bookings
+      // The appointment.patient_id IS the actual patient (family member) ID
+      if (appointment.patient_id && appointment.patient_id !== userId) {
+        // This is a family member's prescription
+        targetPatientId = appointment.patient_id; // 🔧 FIX: Use patient_id directly
+        isFamilyMember = true;
+        
+        // Try to get the family member's name
+        try {
+          const patientProfile = await DatabaseService.getDocument(
+            COLLECTIONS.PATIENT_PROFILES,
+            appointment.patient_id
+          );
+          
+          targetPatientName = patientProfile.fullName || patientProfile.name || appointment.patient_name || 'Family Member';
+          console.log('🔒 Family member profile found:', targetPatientName);
+        } catch (error) {
+          // If we can't get the profile, use appointment data as fallback
+          console.log('Could not fetch patient profile, using appointment data');
+          targetPatientName = appointment.patient_name || 'Family Member';
+        }
+        
+        console.log('🔒 Account holder scanning for family member:', targetPatientName);
+      } else if (appointment.patient_id === userId) {
+        // Current user is the patient themselves in a family booking
+        targetPatientId = userId;
+        targetPatientName = currentUser.name || 'You (Account Owner)';
+        isFamilyMember = false;
+        console.log('🔒 User scanning their own prescription in family booking');
+      }
+    } else {
+      // Non-family booking - should be for the current user
+      targetPatientId = userId;
+      targetPatientName = currentUser.name || 'You (Account Owner)';
+      isFamilyMember = false;
+      console.log('🔒 Regular appointment - assigning to current user');
+    }
+    
+    // 9. Log successful secure access
     await logSecurityEvent(userId, appointmentId, 'QR_SCAN_SUCCESS', 'INFO');
     console.log('🔒 SECURITY: All checks passed ✓ Returning medications');
+    console.log('🔒 Target patient:', targetPatientId, '-', targetPatientName);
     
-    // 9. Format and return medications with security metadata
+    // 10. 🆕 Format and return medications with CORRECT PATIENT ASSIGNMENT
     return medications.documents.map(med => ({
       name: med.name || '',
       type: med.type || '',
@@ -240,6 +175,13 @@ export const processPrescriptionQR = async (qrData) => {
       illnessType: med.illness_type || '',
       notes: med.notes || '',
       times: getTimesForFrequency(med.frequencies),
+      
+      // 🆕 CRITICAL: Correct patient assignment
+      patientId: targetPatientId,
+      patientName: targetPatientName,
+      isFamilyMember: isFamilyMember,
+      
+      // Metadata
       appointmentId,
       referenceCode,
       prescriptionId: validPrescription.$id,
@@ -266,32 +208,57 @@ const verifyPatientAccess = async (appointment, currentUser) => {
     
     console.log('🔒 CRITICAL SECURITY CHECK:');
     console.log('🔒 Current user ID:', userId);
-    console.log('🔒 Appointment user_id:', appointment.user_id);
+    console.log('🔒 Appointment user_id (account holder):', appointment.user_id);
+    console.log('🔒 Appointment patient_id (actual patient):', appointment.patient_id);
     console.log('🔒 Is family booking:', appointment.is_family_booking);
-    console.log('🔒 Appointment patient name:', appointment.patient_name);
     
-    // Primary check: Direct appointment owner
+    // CHECK 1: Account holder can always access (manages all family appointments)
     if (appointment.user_id === userId) {
-      console.log('🔒 ✅ AUTHORIZED: Direct appointment owner');
+      console.log('🔒 ✅ AUTHORIZED: Account holder access');
       return true;
     }
     
-    // Secondary check: Family booking account holder
-    if (appointment.is_family_booking && appointment.user_id === userId) {
-      console.log('🔒 ✅ AUTHORIZED: Family booking account holder');
+    // CHECK 2: 🆕 FAMILY MEMBER ACCESS - Check if current user is the actual patient
+    if (appointment.is_family_booking && appointment.patient_id) {
+      // Get the patient profile to find their userId
+      try {
+        const patientProfile = await DatabaseService.getDocument(
+          COLLECTIONS.PATIENT_PROFILES, 
+          appointment.patient_id
+        );
+        
+        console.log('🔒 Found patient profile:', patientProfile);
+        console.log('🔒 Patient profile userId:', patientProfile.userId);
+        console.log('🔒 Patient profile type:', patientProfile.profileType);
+        
+        // Check if current user matches the patient's userId
+        if (patientProfile.userId === userId) {
+          console.log('🔒 ✅ AUTHORIZED: Family member accessing own prescription');
+          return true;
+        }
+      } catch (error) {
+        console.log('🔒 Could not fetch patient profile:', error.message);
+        // Continue to other checks - don't fail here
+      }
+    }
+    
+    // CHECK 3: Direct patient ID match (fallback for different data structures)
+    if (appointment.patient_id === userId) {
+      console.log('🔒 ✅ AUTHORIZED: Direct patient ID match');
       return true;
     }
     
-    // Additional check: If there's a primary_user_id field (some systems use this)
+    // CHECK 4: Legacy primary_user_id field support
     if (appointment.primary_user_id && appointment.primary_user_id === userId) {
       console.log('🔒 ✅ AUTHORIZED: Primary user match');
       return true;
     }
     
-    // Log the failed authorization attempt with details
+    // 🔒 ACCESS DENIED - Log the failed attempt
     console.log('🔒 ❌ UNAUTHORIZED: Access denied');
-    console.log('🔒 Attempted access by user:', userId);
-    console.log('🔒 Appointment belongs to:', appointment.user_id);
+    console.log('🔒 Failed authorization for user:', userId);
+    console.log('🔒 Appointment belongs to account holder:', appointment.user_id);
+    console.log('🔒 Appointment patient_id:', appointment.patient_id);
     
     return false;
     
@@ -342,7 +309,6 @@ const logSecurityEvent = async (userId, appointmentId, event, severity) => {
     // Security logging failure should not break the main flow
   }
 };
-
 
 /**
  * Enhanced demo QR handler that returns multiple medications with correct times
@@ -580,6 +546,205 @@ const ensureTimesArray = (times, frequency = null) => {
   } catch (error) {
     console.error('Error ensuring times array:', error);
     return ['09:00']; // Default fallback
+  }
+};
+
+/**
+ * Add a new prescription with medications
+ * @param {string} appointmentId - The appointment ID
+ * @param {Array} medications - Array of medication objects
+ * @param {string} doctorNotes - Doctor's notes
+ * @returns {Promise<Object>} - Created prescription
+ */
+export const addPrescription = async (appointmentId, medications, doctorNotes = '') => {
+  try {
+    console.log('Creating prescription for appointment:', appointmentId);
+    
+    // 1. Create the main prescription record with secure reference code
+    const prescriptionData = {
+      appointment_id: appointmentId,
+      doctor_notes: doctorNotes,
+      status: 'Active',
+      issued_date: new Date().toISOString().split('T')[0],
+      reference_code: generateSecureReferenceCode()
+    };
+    
+    const prescription = await DatabaseService.createDocument(
+      COLLECTIONS.PRESCRIPTIONS,
+      prescriptionData
+    );
+    
+    console.log('Created prescription with secure reference:', prescription.reference_code);
+    
+    // 2. Add medications
+    for (let i = 0; i < medications.length; i++) {
+      const medication = medications[i];
+      
+      let timesArray = getTimesForFrequency(medication.frequencies) || ['09:00'];
+      
+      const medicationData = {
+        prescription_id: prescription.$id,
+        name: medication.name,
+        type: medication.type,
+        dosage: medication.dosage,
+        frequencies: medication.frequencies,
+        duration: medication.duration,
+        illness_type: medication.illnessType || '',
+        notes: medication.notes || '',
+        times: timesArray
+      };
+      
+      await DatabaseService.createDocument(
+        COLLECTIONS.PRESCRIPTION_MEDICATIONS,
+        medicationData
+      );
+    }
+    
+    console.log(`Successfully added ${medications.length} medications to prescription`);
+    return prescription;
+    
+  } catch (error) {
+    console.error('Error creating prescription:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get prescriptions and medications for an appointment
+ * @param {string} appointmentId - The appointment ID
+ * @returns {Promise<Object>} - Object containing prescription and medications
+ */
+export const getPrescriptions = async (appointmentId) => {
+  try {
+    console.log('Getting prescriptions for appointment:', appointmentId);
+    
+    // 1. Find prescriptions for this appointment
+    const prescriptionsResponse = await DatabaseService.listDocuments(
+      COLLECTIONS.PRESCRIPTIONS,
+      [Query.equal('appointment_id', appointmentId)]
+    );
+    
+    if (!prescriptionsResponse.documents || prescriptionsResponse.documents.length === 0) {
+      console.log('No prescriptions found for appointment:', appointmentId);
+      return {
+        prescription: null,
+        medications: []
+      };
+    }
+    
+    // 2. Get the most recent prescription
+    const prescription = prescriptionsResponse.documents[0];
+    console.log('Found prescription:', prescription.$id);
+    
+    // 3. Get all medications for this prescription
+    const medicationsResponse = await DatabaseService.listDocuments(
+      COLLECTIONS.PRESCRIPTION_MEDICATIONS,
+      [Query.equal('prescription_id', prescription.$id)]
+    );
+    
+    console.log(`Found ${medicationsResponse.total} medications`);
+    
+    // 4. Process medications to ensure times is properly formatted
+    const processedMedications = medicationsResponse.documents.map(med => ({
+      ...med,
+      times: ensureTimesArray(med.times, med.frequencies)
+    }));
+    
+    return {
+      prescription: prescription,
+      medications: processedMedications
+    };
+  } catch (error) {
+    console.error('Error getting prescriptions:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get medications for a specific patient (supports family member filtering)
+ * @param {string} patientId - Patient ID to filter by (optional)
+ * @returns {Promise<Array>} - Array of medications for the patient
+ */
+export const getMedicationsForPatient = async (patientId = null) => {
+  try {
+    const currentUser = await getLocalStorage('userDetail');
+    const currentUserId = currentUser.uid || currentUser.userId || currentUser.$id;
+    
+    // If no specific patient requested, get for current user
+    const targetPatientId = patientId || currentUserId;
+    
+    // Build query filters
+    const queries = [Query.equal('patientId', targetPatientId)];
+    
+    const medicationsResponse = await DatabaseService.listDocuments(
+      COLLECTIONS.PATIENT_MEDICATIONS,
+      queries
+    );
+    
+    const medications = medicationsResponse.documents || [];
+    
+    console.log(`Found ${medications.length} medications for patient: ${targetPatientId}`);
+    
+    return medications;
+    
+  } catch (error) {
+    console.error('Error getting medications for patient:', error);
+    return [];
+  }
+};
+
+/**
+ * Process and add multiple medications from QR scan
+ * @param {Array} scannedMedications - Array of medications from QR scan
+ * @returns {Promise<Array>} - Array of created medication records
+ */
+export const addMultipleMedicationsFromQR = async (scannedMedications) => {
+  try {
+    console.log(`Processing ${scannedMedications.length} medications from QR scan`);
+    
+    const createdMedications = [];
+    
+    for (const scannedMedication of scannedMedications) {
+      try {
+        const createdMedication = await addMedicationFromQR(scannedMedication);
+        createdMedications.push(createdMedication);
+      } catch (error) {
+        console.error(`Failed to add medication ${scannedMedication.name}:`, error);
+        // Continue with other medications even if one fails
+      }
+    }
+    
+    console.log(`✅ Successfully added ${createdMedications.length} out of ${scannedMedications.length} medications`);
+    
+    if (createdMedications.length === 0) {
+      throw new Error('Failed to add any medications from the prescription');
+    }
+    
+    return createdMedications;
+    
+  } catch (error) {
+    console.error('Error adding multiple medications from QR:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update appointment to mark it as having prescription
+ * @param {string} appointmentId - The appointment ID
+ * @returns {Promise<void>}
+ */
+export const markAppointmentWithPrescription = async (appointmentId) => {
+  try {
+    await DatabaseService.updateDocument(
+      COLLECTIONS.APPOINTMENTS,
+      appointmentId,
+      { has_prescription: true }
+    );
+    
+    console.log(`✅ Marked appointment ${appointmentId} as having prescription`);
+  } catch (error) {
+    console.error('Error marking appointment with prescription:', error);
+    // Don't throw - this is not critical for the main flow
   }
 };
 
