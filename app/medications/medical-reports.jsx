@@ -1,5 +1,5 @@
-// app/medications/medical-reports.jsx - Fixed "As Needed" medication handling
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, Dimensions, Alert, Share } from 'react-native';
+// app/medications/medical-reports.jsx - Enhanced with Patient Categories and Better UX
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform, Dimensions, Alert, Share, Modal } from 'react-native';
 import React, { useState, useEffect, useCallback } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,7 +17,17 @@ export default function MedicalReportsScreen() {
     const [doseHistory, setDoseHistory] = useState([]);
     const [reportData, setReportData] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [selectedPeriod, setSelectedPeriod] = useState('30'); // 7, 30, 90 days
+    const [selectedPeriod, setSelectedPeriod] = useState('30');
+    
+    // 🆕 NEW: Patient filtering states
+    const [selectedPatient, setSelectedPatient] = useState('all');
+    const [availablePatients, setAvailablePatients] = useState([]);
+    const [showPatientSelector, setShowPatientSelector] = useState(false);
+    const [currentUser, setCurrentUser] = useState(null);
+    
+    // 🆕 NEW: View mode states
+    const [viewMode, setViewMode] = useState('overview'); // overview, by-patient, by-category
+    const [expandedPatients, setExpandedPatients] = useState({});
 
     const REPORT_PERIODS = [
         { label: '7 Days', value: '7' },
@@ -25,11 +35,66 @@ export default function MedicalReportsScreen() {
         { label: '90 Days', value: '90' }
     ];
 
-    useEffect(() => {
-        loadReportData();
-    }, [selectedPeriod]);
+    const VIEW_MODES = [
+        { label: 'Overview', value: 'overview', icon: 'stats-chart' },
+        { label: 'By Patient', value: 'by-patient', icon: 'people' },
+        { label: 'By Category', value: 'by-category', icon: 'medical' }
+    ];
 
-    // 🚨 FIXED: Helper function to check if medication is "As Needed"
+    useEffect(() => {
+        loadUserAndFamilyData();
+    }, []);
+
+    useEffect(() => {
+        if (availablePatients.length > 0) {
+            loadReportData();
+        }
+    }, [selectedPeriod, selectedPatient, availablePatients]);
+
+    // 🆕 ENHANCED: Load user data and family members
+    const loadUserAndFamilyData = useCallback(async () => {
+        try {
+            const context = await integratedPatientMedicationService.getCurrentUserContext();
+            setCurrentUser(context.userDetail);
+            
+            const patients = [
+                {
+                    id: 'all',
+                    name: 'All Patients',
+                    type: 'all',
+                    icon: 'people-outline',
+                    color: '#1a8e2d'
+                },
+                {
+                    id: context.ownerUserId,
+                    name: context.userDetail.name || context.userDetail.firstName || 'You (Account Owner)',
+                    type: 'owner',
+                    icon: 'person-circle-outline',
+                    color: '#2196F3'
+                }
+            ];
+
+            context.familyMembers.forEach((member) => {
+                patients.push({
+                    id: member.id,
+                    name: member.name,
+                    type: 'family',
+                    icon: 'people-circle-outline',
+                    color: '#FF9800',
+                    relationship: member.relationship,
+                    profileId: member.profileId
+                });
+            });
+
+            setAvailablePatients(patients);
+            console.log('📋 Available patients for reports:', patients);
+            
+        } catch (error) {
+            console.error('❌ Error loading user/family data:', error);
+        }
+    }, []);
+
+    // Helper functions
     const isAsNeeded = (medication) => {
         return medication.frequencies === "As Needed" || 
                medication.frequency === "As Needed" ||
@@ -37,35 +102,52 @@ export default function MedicalReportsScreen() {
                medication.times.length === 0;
     };
 
-    // 🚨 FIXED: Helper function to check if dose is "As Needed" by ID pattern
     const isAsNeededDose = (doseId) => {
         return doseId.includes('as-needed');
     };
 
-    // Load both medications and dose history from Appwrite
+    const getPatientNameForMedication = useCallback((medication) => {
+        if (medication.patientName) {
+            return medication.patientName;
+        }
+        if (medication.patientInfo) {
+            return medication.patientInfo.name;
+        }
+        return medication.patient_name || 
+               medication.forPatient ||
+               medication.assignedTo ||
+               (currentUser?.name || currentUser?.firstName || 'You (Account Owner)');
+    }, [currentUser]);
+
+    // 🆕 ENHANCED: Load report data with patient filtering
     const loadReportData = async () => {
         try {
             setLoading(true);
-            console.log('🔄 Loading medical report data from Appwrite...');
+            console.log('🔄 Loading medical report data for patient:', selectedPatient);
+            
+            // Build filter based on selected patient
+            const filters = {};
+            if (selectedPatient !== 'all') {
+                filters.patientId = selectedPatient;
+            }
             
             const [allMedications, allDoseHistory] = await Promise.all([
-                integratedPatientMedicationService.getPatientMedications(),
+                integratedPatientMedicationService.getPatientMedications(filters),
                 doseTrackingService.getAllDoseHistory()
             ]);
 
-            console.log("📋 Medical report medications from Appwrite:", allMedications);
-            console.log("📊 Medical report dose history from Appwrite:", allDoseHistory);
+            console.log("📋 Medical report medications:", allMedications);
+            console.log("📊 Medical report dose history:", allDoseHistory);
 
             setMedications(allMedications || []);
             setDoseHistory(allDoseHistory || []);
 
-            // Generate report data
-            const report = generateMedicalReport(allMedications || [], allDoseHistory || [], parseInt(selectedPeriod));
+            // Generate enhanced report data
+            const report = generateEnhancedMedicalReport(allMedications || [], allDoseHistory || [], parseInt(selectedPeriod));
             setReportData(report);
         } catch (error) {
             console.error('❌ Error loading report data:', error);
             Alert.alert('Error', 'Failed to load report data. Please check your connection and try again.');
-            // Set empty arrays as fallback
             setMedications([]);
             setDoseHistory([]);
             setReportData(null);
@@ -74,7 +156,6 @@ export default function MedicalReportsScreen() {
         }
     };
 
-    // Helper function to handle date comparison with Appwrite format
     const isSameDay = (date1, date2) => {
         const d1 = new Date(date1);
         const d2 = new Date(date2);
@@ -85,30 +166,95 @@ export default function MedicalReportsScreen() {
         );
     };
 
-    // 🚨 FIXED: Generate medical report with proper "As Needed" handling
-    const generateMedicalReport = (medications, doseHistory, periodDays) => {
+    // 🆕 ENHANCED: Generate medical report with patient categorization
+    const generateEnhancedMedicalReport = (medications, doseHistory, periodDays) => {
         const endDate = new Date();
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - periodDays);
 
-        console.log(`📊 Generating report for ${periodDays} days: ${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}`);
-
-        // Filter dose history for the selected period
         const periodHistory = doseHistory.filter(dose => {
             const doseDate = new Date(dose.timestamp);
             return doseDate >= startDate && doseDate <= endDate;
         });
 
-        console.log(`📈 Found ${periodHistory.length} dose records in period`);
+        // 🆕 NEW: Group medications by patient
+        const medicationsByPatient = {};
+        const patientStats = {};
 
-        // 🚨 FIXED: Separate scheduled and "As Needed" medications for different calculations
+        medications.forEach(medication => {
+            const patientName = getPatientNameForMedication(medication);
+            
+            if (!medicationsByPatient[patientName]) {
+                medicationsByPatient[patientName] = [];
+                patientStats[patientName] = {
+                    total: 0,
+                    scheduled: 0,
+                    asNeeded: 0,
+                    totalDoses: 0,
+                    expectedDoses: 0,
+                    adherenceRate: 0,
+                    color: availablePatients.find(p => p.name === patientName)?.color || '#666'
+                };
+            }
+            
+            medicationsByPatient[patientName].push(medication);
+            patientStats[patientName].total++;
+            
+            if (isAsNeeded(medication)) {
+                patientStats[patientName].asNeeded++;
+            } else {
+                patientStats[patientName].scheduled++;
+            }
+        });
+
+        // Generate reports for each patient
+        const patientReports = {};
+        Object.keys(medicationsByPatient).forEach(patientName => {
+            const patientMedications = medicationsByPatient[patientName];
+            const patientReport = generatePatientReport(patientMedications, periodHistory, periodDays, patientName);
+            patientReports[patientName] = patientReport;
+            
+            // Update patient stats
+            patientStats[patientName].totalDoses = patientReport.totalTaken;
+            patientStats[patientName].expectedDoses = patientReport.totalExpected;
+            patientStats[patientName].adherenceRate = patientReport.overallAdherence;
+        });
+
+        // 🆕 NEW: Category analysis
+        const categoryAnalysis = generateCategoryAnalysis(medications, periodHistory);
+
+        // Overall statistics
+        const totalScheduledMeds = medications.filter(med => !isAsNeeded(med)).length;
+        const totalAsNeededMeds = medications.filter(med => isAsNeeded(med)).length;
+        const totalExpected = Object.values(patientReports).reduce((sum, report) => sum + report.totalExpected, 0);
+        const totalTaken = Object.values(patientReports).reduce((sum, report) => sum + report.totalTaken, 0);
+        const overallAdherence = totalExpected > 0 ? Math.round((totalTaken / totalExpected) * 100) : 0;
+
+        return {
+            period: `${periodDays} Days`,
+            startDate: startDate.toLocaleDateString(),
+            endDate: endDate.toLocaleDateString(),
+            overallAdherence,
+            totalMedications: medications.length,
+            scheduledMedications: totalScheduledMeds,
+            asNeededMedications: totalAsNeededMeds,
+            totalDosesTaken: totalTaken,
+            totalDosesExpected: totalExpected,
+            patientReports,
+            patientStats,
+            categoryAnalysis,
+            generatedAt: new Date().toLocaleString(),
+            selectedPatient: selectedPatient
+        };
+    };
+
+    // 🆕 NEW: Generate individual patient report
+    const generatePatientReport = (medications, periodHistory, periodDays, patientName) => {
         const medicationReports = medications.map(medication => {
             const medicationDoses = periodHistory.filter(dose => dose.medication_id === medication.id);
             const takenDoses = medicationDoses.filter(dose => dose.taken);
             
-            // 🚨 FIXED: Handle "As Needed" medications differently
             if (isAsNeeded(medication)) {
-                // For "As Needed" medications, only track usage, not adherence
                 const lastTakenDose = takenDoses.length > 0 ? 
                     new Date(Math.max(...takenDoses.map(dose => new Date(dose.timestamp)))) : null;
 
@@ -116,45 +262,40 @@ export default function MedicalReportsScreen() {
                     ...medication,
                     isAsNeeded: true,
                     takenDoses: takenDoses.length,
-                    expectedDoses: null, // No expected doses for "As Needed"
-                    adherenceRate: null, // No adherence rate for "As Needed"
-                    missedDoses: null, // No missed doses for "As Needed"
-                    activeDays: periodDays, // Always active for "As Needed"
-                    currentStreak: null, // No streak for "As Needed"
+                    expectedDoses: null,
+                    adherenceRate: null,
+                    missedDoses: null,
+                    activeDays: periodDays,
+                    currentStreak: null,
                     lastTaken: lastTakenDose ? lastTakenDose.toLocaleDateString() : 'Never',
                     status: takenDoses.length > 0 ? 'used' : 'unused',
                     usageFrequency: takenDoses.length > 0 ? (takenDoses.length / periodDays).toFixed(2) : '0'
                 };
             } else {
-                // For scheduled medications, calculate adherence normally
                 const dailyDoses = medication.times ? medication.times.length : 1;
-                
-                // Calculate how many days this medication should have been taken in the period
                 const medStartDate = new Date(medication.startDate);
+                const startDate = new Date();
+                startDate.setDate(startDate.getDate() - periodDays);
                 const effectiveStartDate = medStartDate > startDate ? medStartDate : startDate;
                 
-                // Handle duration
                 let medEndDate;
                 if (medication.duration === 'On going' || medication.duration === 'Ongoing') {
-                    medEndDate = endDate;
+                    medEndDate = new Date();
                 } else {
                     const durationMatch = medication.duration.match(/(\d+)/);
                     const durationDays = durationMatch ? parseInt(durationMatch[1]) : 30;
                     medEndDate = new Date(medStartDate);
                     medEndDate.setDate(medStartDate.getDate() + durationDays);
-                    if (medEndDate > endDate) medEndDate = endDate;
+                    if (medEndDate > new Date()) medEndDate = new Date();
                 }
                 
-                // Calculate actual days the medication should be taken
                 const activeDays = Math.max(0, Math.floor((medEndDate - effectiveStartDate) / (24 * 60 * 60 * 1000)) + 1);
                 const expectedDoses = activeDays * dailyDoses;
-                
                 const adherenceRate = expectedDoses > 0 ? (takenDoses.length / expectedDoses) * 100 : 0;
                 const missedDoses = Math.max(0, expectedDoses - takenDoses.length);
                 const lastTakenDose = takenDoses.length > 0 ? 
                     new Date(Math.max(...takenDoses.map(dose => new Date(dose.timestamp)))) : null;
                 
-                // Calculate current streak for scheduled medications
                 let currentStreak = 0;
                 const today = new Date();
                 for (let i = 0; i < 7; i++) {
@@ -190,54 +331,186 @@ export default function MedicalReportsScreen() {
             }
         });
 
-        // 🚨 FIXED: Calculate overall statistics only for scheduled medications
-        const scheduledMedications = medicationReports.filter(med => !med.isAsNeeded);
-        const asNeededMedications = medicationReports.filter(med => med.isAsNeeded);
+        const scheduledMeds = medicationReports.filter(med => !med.isAsNeeded);
+        const asNeededMeds = medicationReports.filter(med => med.isAsNeeded);
         
-        const totalExpected = scheduledMedications.reduce((sum, med) => sum + (med.expectedDoses || 0), 0);
-        const totalTaken = scheduledMedications.reduce((sum, med) => sum + med.takenDoses, 0);
+        const totalExpected = scheduledMeds.reduce((sum, med) => sum + (med.expectedDoses || 0), 0);
+        const totalTaken = scheduledMeds.reduce((sum, med) => sum + med.takenDoses, 0);
         const overallAdherence = totalExpected > 0 ? Math.round((totalTaken / totalExpected) * 100) : 0;
 
-        // Enhanced insights
-        const excellentMeds = scheduledMedications.filter(med => med.status === 'excellent').length;
-        const needsAttentionMeds = scheduledMedications.filter(med => med.status === 'needs_attention').length;
-        const averageStreak = scheduledMedications.length > 0 ? 
-            Math.round(scheduledMedications.reduce((sum, med) => sum + (med.currentStreak || 0), 0) / scheduledMedications.length) : 0;
-        
-        const asNeededUsed = asNeededMedications.filter(med => med.status === 'used').length;
-        const totalAsNeededDoses = asNeededMedications.reduce((sum, med) => sum + med.takenDoses, 0);
-
         return {
-            period: `${periodDays} Days`,
-            startDate: startDate.toLocaleDateString(),
-            endDate: endDate.toLocaleDateString(),
-            overallAdherence,
+            patientName,
             totalMedications: medications.length,
-            scheduledMedications: scheduledMedications.length,
-            asNeededMedications: asNeededMedications.length,
-            totalDosesTaken: totalTaken,
-            totalDosesExpected: totalExpected,
-            totalAsNeededDoses,
-            excellentMeds,
-            needsAttentionMeds,
-            asNeededUsed,
-            averageStreak,
+            scheduledMedications: scheduledMeds.length,
+            asNeededMedications: asNeededMeds.length,
+            totalExpected,
+            totalTaken,
+            overallAdherence,
             medicationReports: medicationReports.sort((a, b) => {
-                // Sort: scheduled medications first (by adherence), then "As Needed" (by usage)
                 if (a.isAsNeeded && !b.isAsNeeded) return 1;
                 if (!a.isAsNeeded && b.isAsNeeded) return -1;
                 if (a.isAsNeeded && b.isAsNeeded) return b.takenDoses - a.takenDoses;
                 return (b.adherenceRate || 0) - (a.adherenceRate || 0);
             }),
-            generatedAt: new Date().toLocaleString()
+            excellentMeds: scheduledMeds.filter(med => med.status === 'excellent').length,
+            needsAttentionMeds: scheduledMeds.filter(med => med.status === 'needs_attention').length,
+            asNeededUsed: asNeededMeds.filter(med => med.status === 'used').length,
         };
     };
 
+    // 🆕 NEW: Generate category analysis
+    const generateCategoryAnalysis = (medications, periodHistory) => {
+        const categories = {};
+        
+        medications.forEach(medication => {
+            const category = medication.illnessType || 'Other';
+            if (!categories[category]) {
+                categories[category] = {
+                    name: category,
+                    medications: [],
+                    totalMeds: 0,
+                    scheduledMeds: 0,
+                    asNeededMeds: 0,
+                    totalDoses: 0,
+                    expectedDoses: 0,
+                    adherenceRate: 0
+                };
+            }
+            
+            categories[category].medications.push(medication);
+            categories[category].totalMeds++;
+            
+            if (isAsNeeded(medication)) {
+                categories[category].asNeededMeds++;
+            } else {
+                categories[category].scheduledMeds++;
+            }
+        });
+
+        // Calculate stats for each category
+        Object.values(categories).forEach(category => {
+            const scheduledMeds = category.medications.filter(med => !isAsNeeded(med));
+            
+            let totalExpected = 0;
+            let totalTaken = 0;
+            
+            scheduledMeds.forEach(medication => {
+                const medicationDoses = periodHistory.filter(dose => dose.medication_id === medication.id);
+                const takenDoses = medicationDoses.filter(dose => dose.taken);
+                
+                const dailyDoses = medication.times ? medication.times.length : 1;
+                const periodDays = 30; // Use selected period here if needed
+                const expectedDoses = periodDays * dailyDoses;
+                
+                totalExpected += expectedDoses;
+                totalTaken += takenDoses.length;
+            });
+            
+            category.totalDoses = totalTaken;
+            category.expectedDoses = totalExpected;
+            category.adherenceRate = totalExpected > 0 ? Math.round((totalTaken / totalExpected) * 100) : 0;
+        });
+
+        return Object.values(categories).sort((a, b) => b.totalMeds - a.totalMeds);
+    };
+
+    // 🆕 NEW: Patient selector modal
+    const renderPatientSelectorModal = () => (
+        <Modal
+            visible={showPatientSelector}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setShowPatientSelector(false)}
+        >
+            <View style={styles.modalOverlay}>
+                <View style={styles.patientModalContent}>
+                    <View style={styles.modalHeader}>
+                        <Text style={styles.modalTitle}>Select Patient</Text>
+                        <TouchableOpacity
+                            style={styles.closeButton}
+                            onPress={() => setShowPatientSelector(false)}
+                        >
+                            <Ionicons name="close" size={24} color="#333" />
+                        </TouchableOpacity>
+                    </View>
+                    
+                    <ScrollView style={styles.patientList}>
+                        {availablePatients.map((patient) => (
+                            <TouchableOpacity
+                                key={patient.id}
+                                style={[
+                                    styles.patientOption,
+                                    selectedPatient === patient.id && styles.selectedPatientOption
+                                ]}
+                                onPress={() => {
+                                    setSelectedPatient(patient.id);
+                                    setShowPatientSelector(false);
+                                }}
+                            >
+                                <View style={[styles.patientOptionIcon, { backgroundColor: `${patient.color}20` }]}>
+                                    <Ionicons name={patient.icon} size={24} color={patient.color} />
+                                </View>
+                                <View style={styles.patientOptionContent}>
+                                    <Text style={[
+                                        styles.patientOptionName,
+                                        selectedPatient === patient.id && styles.selectedPatientText
+                                    ]}>
+                                        {patient.name}
+                                    </Text>
+                                    <Text style={styles.patientOptionType}>
+                                        {patient.type === 'owner' ? 'Account Owner' : 
+                                         patient.type === 'family' ? `Family Member${patient.relationship ? ` (${patient.relationship})` : ''}` : 
+                                         'All Patients'}
+                                    </Text>
+                                </View>
+                                {selectedPatient === patient.id && (
+                                    <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
+                                )}
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+            </View>
+        </Modal>
+    );
+
+    // 🆕 NEW: Patient selector component
+    const renderPatientSelector = () => {
+        if (availablePatients.length <= 2) return null;
+        
+        const selectedPatientData = availablePatients.find(p => p.id === selectedPatient);
+        
+        return (
+            <View style={styles.patientSelectorContainer}>
+                <Text style={styles.patientSelectorLabel}>Report for:</Text>
+                <TouchableOpacity 
+                    style={styles.patientSelectorButton}
+                    onPress={() => setShowPatientSelector(true)}
+                >
+                    <View style={styles.patientSelectorContent}>
+                        <View style={[styles.patientSelectorIcon, { backgroundColor: `${selectedPatientData?.color}20` }]}>
+                            <Ionicons 
+                                name={selectedPatientData?.icon || 'person-outline'} 
+                                size={20} 
+                                color={selectedPatientData?.color || '#1a8e2d'} 
+                            />
+                        </View>
+                        <Text style={styles.patientSelectorText}>
+                            {selectedPatientData?.name || 'Select Patient'}
+                        </Text>
+                        <Ionicons name="chevron-down" size={20} color="#666" />
+                    </View>
+                </TouchableOpacity>
+            </View>
+        );
+    };
+
+    // Enhanced export functionality
     const exportReport = async () => {
         if (!reportData) return;
 
         try {
-            const reportText = generateReportText(reportData);
+            const reportText = generateEnhancedReportText(reportData);
             await Share.share({
                 message: reportText,
                 title: `Medical Report - ${reportData.period}`,
@@ -249,32 +522,60 @@ export default function MedicalReportsScreen() {
         }
     };
 
-    // 🚨 FIXED: Enhanced report text generation with proper "As Needed" handling
-    const generateReportText = (data) => {
-        let report = `📋 MEDICAL ADHERENCE REPORT\n`;
+    // Enhanced report text generation
+    const generateEnhancedReportText = (data) => {
+        let report = `📋 COMPREHENSIVE MEDICAL REPORT\n`;
         report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
         report += `Generated: ${data.generatedAt}\n`;
-        report += `Period: ${data.startDate} to ${data.endDate}\n\n`;
+        report += `Period: ${data.startDate} to ${data.endDate}\n`;
+        report += `Patient(s): ${selectedPatient === 'all' ? 'All Patients' : availablePatients.find(p => p.id === selectedPatient)?.name}\n\n`;
         
+        // Executive Summary
         report += `📊 EXECUTIVE SUMMARY\n`;
         report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        report += `Overall Adherence Rate: ${data.overallAdherence}% (scheduled medications only)\n`;
+        report += `Overall Adherence Rate: ${data.overallAdherence}%\n`;
         report += `Total Active Medications: ${data.totalMedications}\n`;
         report += `  • Scheduled: ${data.scheduledMedications}\n`;
         report += `  • As Needed: ${data.asNeededMedications}\n`;
-        report += `Scheduled Doses Taken: ${data.totalDosesTaken}/${data.totalDosesExpected}\n`;
-        report += `As Needed Doses Taken: ${data.totalAsNeededDoses}\n`;
-        report += `Average Consecutive Days: ${data.averageStreak}\n`;
-        report += `Excellent Adherence (≥90%): ${data.excellentMeds} medications\n`;
-        report += `Needs Attention (<50%): ${data.needsAttentionMeds} medications\n`;
-        report += `As Needed Medications Used: ${data.asNeededUsed}/${data.asNeededMedications}\n\n`;
+        report += `Total Doses Taken: ${data.totalDosesTaken}/${data.totalDosesExpected}\n\n`;
 
-        report += `💊 MEDICATION BREAKDOWN\n`;
+        // Patient-specific reports
+        if (Object.keys(data.patientReports).length > 1) {
+            report += `👥 PATIENT BREAKDOWN\n`;
+            report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            Object.values(data.patientReports).forEach(patientReport => {
+                report += `${patientReport.patientName}:\n`;
+                report += `  Medications: ${patientReport.totalMedications} (${patientReport.scheduledMedications} scheduled, ${patientReport.asNeededMedications} as needed)\n`;
+                report += `  Adherence: ${patientReport.overallAdherence}%\n`;
+                report += `  Doses: ${patientReport.totalTaken}/${patientReport.totalExpected}\n\n`;
+            });
+        }
+
+        // Category Analysis
+        if (data.categoryAnalysis.length > 0) {
+            report += `🏥 CONDITION CATEGORIES\n`;
+            report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            data.categoryAnalysis.forEach(category => {
+                report += `${category.name}:\n`;
+                report += `  Medications: ${category.totalMeds}\n`;
+                report += `  Adherence: ${category.adherenceRate}%\n`;
+                report += `  Doses: ${category.totalDoses}/${category.expectedDoses}\n\n`;
+            });
+        }
+
+        // 🆕 RESTORED: Detailed medication breakdown (from original)
+        report += `💊 DETAILED MEDICATION BREAKDOWN\n`;
         report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
         
-        // Scheduled medications first
-        const scheduledMeds = data.medicationReports.filter(med => !med.isAsNeeded);
-        const asNeededMeds = data.medicationReports.filter(med => med.isAsNeeded);
+        // Get all medications from all patient reports
+        const allMedicationReports = [];
+        Object.values(data.patientReports).forEach(patientReport => {
+            allMedicationReports.push(...patientReport.medicationReports);
+        });
+
+        // Separate scheduled and as needed medications
+        const scheduledMeds = allMedicationReports.filter(med => !med.isAsNeeded);
+        const asNeededMeds = allMedicationReports.filter(med => med.isAsNeeded);
         
         if (scheduledMeds.length > 0) {
             report += `📅 SCHEDULED MEDICATIONS:\n`;
@@ -284,6 +585,9 @@ export default function MedicalReportsScreen() {
                                   med.status === 'fair' ? '🟠' : '🔴';
                 
                 report += `${index + 1}. ${statusEmoji} ${med.name}\n`;
+                if (selectedPatient === 'all') {
+                    report += `   Patient: ${getPatientNameForMedication(med)}\n`;
+                }
                 report += `   Condition: ${med.illnessType || 'Not specified'}\n`;
                 report += `   Dosage: ${med.dosage} ${med.type ? `(${med.type})` : ''}\n`;
                 report += `   Schedule: ${med.times ? med.times.join(', ') : 'Not specified'}\n`;
@@ -303,6 +607,9 @@ export default function MedicalReportsScreen() {
                 const statusEmoji = med.status === 'used' ? '✅' : '⚪';
                 
                 report += `${index + 1}. ${statusEmoji} ${med.name}\n`;
+                if (selectedPatient === 'all') {
+                    report += `   Patient: ${getPatientNameForMedication(med)}\n`;
+                }
                 report += `   Condition: ${med.illnessType || 'Not specified'}\n`;
                 report += `   Dosage: ${med.dosage} ${med.type ? `(${med.type})` : ''}\n`;
                 report += `   Usage: ${med.takenDoses} doses taken\n`;
@@ -312,7 +619,7 @@ export default function MedicalReportsScreen() {
             });
         }
 
-        // Recommendations section
+        // Enhanced recommendations section
         report += `💡 RECOMMENDATIONS\n`;
         report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
         
@@ -329,21 +636,25 @@ export default function MedicalReportsScreen() {
             }
         }
 
-        if (data.needsAttentionMeds > 0) {
+        // Medication-specific recommendations
+        const needsAttentionMeds = allMedicationReports.filter(med => !med.isAsNeeded && med.status === 'needs_attention');
+        if (needsAttentionMeds.length > 0) {
             report += `\n🔍 Scheduled medications needing attention:\n`;
-            const lowAdherenceMeds = data.medicationReports.filter(med => !med.isAsNeeded && med.status === 'needs_attention');
-            lowAdherenceMeds.forEach(med => {
-                report += `   • ${med.name}: ${med.adherenceRate}% adherence\n`;
+            needsAttentionMeds.forEach(med => {
+                report += `   • ${med.name}: ${med.adherenceRate}% adherence (${med.missedDoses} missed doses)\n`;
             });
         }
 
         if (data.asNeededMedications > 0) {
+            const asNeededUsed = asNeededMeds.filter(med => med.status === 'used').length;
+            const totalAsNeededDoses = asNeededMeds.reduce((sum, med) => sum + med.takenDoses, 0);
+            
             report += `\n💊 As Needed Medication Usage:\n`;
-            if (data.asNeededUsed === 0) {
+            if (asNeededUsed === 0) {
                 report += `   ✅ No as needed medications were required during this period.\n`;
             } else {
-                report += `   📊 ${data.asNeededUsed} out of ${data.asNeededMedications} as needed medications were used.\n`;
-                report += `   📈 Total as needed doses: ${data.totalAsNeededDoses}\n`;
+                report += `   📊 ${asNeededUsed} out of ${data.asNeededMedications} as needed medications were used.\n`;
+                report += `   📈 Total as needed doses: ${totalAsNeededDoses}\n`;
             }
         }
 
@@ -353,6 +664,7 @@ export default function MedicalReportsScreen() {
         return report;
     };
 
+    // Utility functions
     const getAdherenceColor = (rate) => {
         if (rate >= 90) return '#4CAF50';
         if (rate >= 70) return '#FF9800';
@@ -386,7 +698,189 @@ export default function MedicalReportsScreen() {
         }
     };
 
-    // 🚨 FIXED: Enhanced medication card with proper "As Needed" display
+    // 🆕 NEW: Render overview mode
+    const renderOverviewMode = () => (
+        <View style={styles.overviewContainer}>
+            {/* Summary Cards */}
+            <View style={styles.summaryGrid}>
+                <View style={[styles.summaryCard, { borderLeftColor: '#4CAF50' }]}>
+                    <Text style={[styles.summaryValue, { color: '#4CAF50' }]}>
+                        {reportData.overallAdherence}%
+                    </Text>
+                    <Text style={styles.summaryLabel}>Overall Adherence</Text>
+                </View>
+                <View style={[styles.summaryCard, { borderLeftColor: '#2196F3' }]}>
+                    <Text style={[styles.summaryValue, { color: '#2196F3' }]}>
+                        {reportData.totalMedications}
+                    </Text>
+                    <Text style={styles.summaryLabel}>Total Medications</Text>
+                </View>
+            </View>
+
+            <View style={styles.summaryGrid}>
+                <View style={[styles.summaryCard, { borderLeftColor: '#FF9800' }]}>
+                    <Text style={[styles.summaryValue, { color: '#FF9800' }]}>
+                        {reportData.scheduledMedications}
+                    </Text>
+                    <Text style={styles.summaryLabel}>Scheduled</Text>
+                </View>
+                <View style={[styles.summaryCard, { borderLeftColor: '#9C27B0' }]}>
+                    <Text style={[styles.summaryValue, { color: '#9C27B0' }]}>
+                        {reportData.asNeededMedications}
+                    </Text>
+                    <Text style={styles.summaryLabel}>As Needed</Text>
+                </View>
+            </View>
+
+            {/* Patient Stats */}
+            {Object.keys(reportData.patientStats).length > 1 && (
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Patient Overview</Text>
+                    {Object.entries(reportData.patientStats).map(([patientName, stats]) => (
+                        <View key={patientName} style={styles.patientStatsCard}>
+                            <View style={styles.patientStatsHeader}>
+                                <View style={[styles.patientStatsIcon, { backgroundColor: `${stats.color}20` }]}>
+                                    <Ionicons name="person" size={20} color={stats.color} />
+                                </View>
+                                <Text style={styles.patientStatsName}>{patientName}</Text>
+                                <Text style={[styles.patientStatsAdherence, { color: getAdherenceColor(stats.adherenceRate) }]}>
+                                    {stats.adherenceRate}%
+                                </Text>
+                            </View>
+                            <View style={styles.patientStatsDetails}>
+                                <Text style={styles.patientStatsText}>
+                                    {stats.total} medications • {stats.totalDoses}/{stats.expectedDoses} doses
+                                </Text>
+                            </View>
+                        </View>
+                    ))}
+                </View>
+            )}
+
+            {/* Category Analysis */}
+            {reportData.categoryAnalysis.length > 0 && (
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>By Condition</Text>
+                    {reportData.categoryAnalysis.map((category, index) => (
+                        <View key={index} style={styles.categoryCard}>
+                            <View style={styles.categoryHeader}>
+                                <Text style={styles.categoryName}>{category.name}</Text>
+                                <Text style={[styles.categoryAdherence, { color: getAdherenceColor(category.adherenceRate) }]}>
+                                    {category.adherenceRate}%
+                                </Text>
+                            </View>
+                            <Text style={styles.categoryDetails}>
+                                {category.totalMeds} medications • {category.totalDoses}/{category.expectedDoses} doses
+                            </Text>
+                        </View>
+                    ))}
+                </View>
+            )}
+        </View>
+    );
+
+    // 🆕 NEW: Render by-patient mode
+    const renderByPatientMode = () => (
+        <View style={styles.byPatientContainer}>
+            {Object.entries(reportData.patientReports).map(([patientName, patientReport]) => (
+                <View key={patientName} style={styles.patientReportCard}>
+                    <TouchableOpacity
+                        style={styles.patientReportHeader}
+                        onPress={() => setExpandedPatients(prev => ({
+                            ...prev,
+                            [patientName]: !prev[patientName]
+                        }))}
+                    >
+                        <View style={styles.patientReportHeaderLeft}>
+                            <View style={[styles.patientReportIcon, { backgroundColor: `${reportData.patientStats[patientName]?.color || '#666'}20` }]}>
+                                <Ionicons name="person" size={24} color={reportData.patientStats[patientName]?.color || '#666'} />
+                            </View>
+                            <View>
+                                <Text style={styles.patientReportName}>{patientName}</Text>
+                                <Text style={styles.patientReportSubtitle}>
+                                    {patientReport.totalMedications} medications • {patientReport.overallAdherence}% adherence
+                                </Text>
+                            </View>
+                        </View>
+                        <Ionicons 
+                            name={expandedPatients[patientName] ? "chevron-down" : "chevron-forward"} 
+                            size={20} 
+                            color="#666" 
+                        />
+                    </TouchableOpacity>
+
+                    {expandedPatients[patientName] && (
+                        <View style={styles.patientReportContent}>
+                            <View style={styles.patientStatsRow}>
+                                <View style={styles.patientStatItem}>
+                                    <Text style={styles.patientStatValue}>{patientReport.totalTaken}</Text>
+                                    <Text style={styles.patientStatLabel}>Taken</Text>
+                                </View>
+                                <View style={styles.patientStatItem}>
+                                    <Text style={styles.patientStatValue}>{patientReport.totalExpected}</Text>
+                                    <Text style={styles.patientStatLabel}>Expected</Text>
+                                </View>
+                                <View style={styles.patientStatItem}>
+                                    <Text style={styles.patientStatValue}>{patientReport.excellentMeds}</Text>
+                                    <Text style={styles.patientStatLabel}>Excellent</Text>
+                                </View>
+                                <View style={styles.patientStatItem}>
+                                    <Text style={[styles.patientStatValue, { color: patientReport.needsAttentionMeds > 0 ? '#F44336' : '#333' }]}>
+                                        {patientReport.needsAttentionMeds}
+                                    </Text>
+                                    <Text style={styles.patientStatLabel}>Needs Attention</Text>
+                                </View>
+                            </View>
+                        </View>
+                    )}
+                </View>
+            ))}
+        </View>
+    );
+
+    // 🆕 NEW: Render by-category mode
+    const renderByCategoryMode = () => (
+        <View style={styles.byCategoryContainer}>
+            {reportData.categoryAnalysis.map((category, index) => (
+                <View key={index} style={styles.categoryDetailCard}>
+                    <View style={styles.categoryDetailHeader}>
+                        <Text style={styles.categoryDetailName}>{category.name}</Text>
+                        <Text style={[styles.categoryDetailAdherence, { color: getAdherenceColor(category.adherenceRate) }]}>
+                            {category.adherenceRate}%
+                        </Text>
+                    </View>
+                    <View style={styles.categoryDetailStats}>
+                        <View style={styles.categoryStatItem}>
+                            <Text style={styles.categoryStatValue}>{category.totalMeds}</Text>
+                            <Text style={styles.categoryStatLabel}>Medications</Text>
+                        </View>
+                        <View style={styles.categoryStatItem}>
+                            <Text style={styles.categoryStatValue}>{category.totalDoses}</Text>
+                            <Text style={styles.categoryStatLabel}>Taken</Text>
+                        </View>
+                        <View style={styles.categoryStatItem}>
+                            <Text style={styles.categoryStatValue}>{category.expectedDoses}</Text>
+                            <Text style={styles.categoryStatLabel}>Expected</Text>
+                        </View>
+                    </View>
+                    <View style={styles.categoryMedicationsList}>
+                        {category.medications.slice(0, 3).map((med, idx) => (
+                            <Text key={idx} style={styles.categoryMedicationItem}>
+                                • {med.name} ({med.dosage})
+                            </Text>
+                        ))}
+                        {category.medications.length > 3 && (
+                            <Text style={styles.categoryMedicationMore}>
+                                +{category.medications.length - 3} more...
+                            </Text>
+                        )}
+                    </View>
+                </View>
+            ))}
+        </View>
+    );
+
+    // 🆕 RESTORED: Detailed medication card from original (enhanced with patient info)
     const renderMedicationCard = (medication) => (
         <View key={medication.id} style={styles.medicationCard}>
             <View style={styles.medicationHeader}>
@@ -404,6 +898,12 @@ export default function MedicalReportsScreen() {
                     <Text style={styles.medicationSchedule}>
                         {medication.isAsNeeded ? 'Take as needed' : (medication.times ? medication.times.join(', ') : 'Not specified')}
                     </Text>
+                    {/* 🆕 NEW: Patient info for multi-patient reports */}
+                    {selectedPatient === 'all' && (
+                        <Text style={styles.medicationPatient}>
+                            Patient: {getPatientNameForMedication(medication)}
+                        </Text>
+                    )}
                 </View>
                 <View style={styles.statusContainer}>
                     {!medication.isAsNeeded ? (
@@ -479,6 +979,42 @@ export default function MedicalReportsScreen() {
         </View>
     );
 
+    // 🆕 NEW: Render detailed medications list (from original)
+    const renderDetailedMedicationsList = () => {
+        if (!reportData) return null;
+
+        // Get all medications from all patient reports
+        const allMedicationReports = [];
+        Object.values(reportData.patientReports).forEach(patientReport => {
+            allMedicationReports.push(...patientReport.medicationReports);
+        });
+
+        if (allMedicationReports.length === 0) {
+            return (
+                <View style={styles.emptyMedicationsState}>
+                    <Ionicons name="medical-outline" size={48} color="#ccc" />
+                    <Text style={styles.emptyMedicationsText}>No medications found</Text>
+                    <Text style={styles.emptyMedicationsSubText}>
+                        Add medications to start tracking your adherence
+                    </Text>
+                </View>
+            );
+        }
+
+        return (
+            <View style={styles.medicationsSection}>
+                <View style={styles.medicationsSectionHeader}>
+                    <Text style={styles.sectionTitle}>Medication Performance</Text>
+                    <Text style={styles.medicationCount}>
+                        {allMedicationReports.length} medication{allMedicationReports.length !== 1 ? 's' : ''}
+                    </Text>
+                </View>
+                {allMedicationReports.map(renderMedicationCard)}
+            </View>
+        );
+    };
+
+    // Main render logic
     if (loading) {
         return (
             <View style={styles.container}>
@@ -521,115 +1057,77 @@ export default function MedicalReportsScreen() {
                         <Ionicons name="chevron-back" size={28} color="#E91E63" />
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>Medical Reports</Text>
+                    <TouchableOpacity 
+                        style={styles.exportHeaderButton}
+                        onPress={exportReport}
+                    >
+                        <Ionicons name="share-outline" size={24} color="#E91E63" />
+                    </TouchableOpacity>
                 </View>
 
                 <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-                    {/* Period Selection */}
-                    <View style={styles.periodSelector}>
-                        {REPORT_PERIODS.map((period) => (
-                            <TouchableOpacity
-                                key={period.value}
-                                style={[
-                                    styles.periodButton,
-                                    selectedPeriod === period.value && styles.selectedPeriodButton
-                                ]}
-                                onPress={() => setSelectedPeriod(period.value)}
-                            >
-                                <Text style={[
-                                    styles.periodButtonText,
-                                    selectedPeriod === period.value && styles.selectedPeriodButtonText
-                                ]}>
-                                    {period.label}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
+                    {/* Controls Section */}
+                    <View style={styles.controlsSection}>
+                        {/* Patient Selector */}
+                        {renderPatientSelector()}
+                        
+                        {/* Period Selection */}
+                        <View style={styles.periodSelector}>
+                            {REPORT_PERIODS.map((period) => (
+                                <TouchableOpacity
+                                    key={period.value}
+                                    style={[
+                                        styles.periodButton,
+                                        selectedPeriod === period.value && styles.selectedPeriodButton
+                                    ]}
+                                    onPress={() => setSelectedPeriod(period.value)}
+                                >
+                                    <Text style={[
+                                        styles.periodButtonText,
+                                        selectedPeriod === period.value && styles.selectedPeriodButtonText
+                                    ]}>
+                                        {period.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+
+                        {/* View Mode Selection */}
+                        <View style={styles.viewModeSelector}>
+                            {VIEW_MODES.map((mode) => (
+                                <TouchableOpacity
+                                    key={mode.value}
+                                    style={[
+                                        styles.viewModeButton,
+                                        viewMode === mode.value && styles.selectedViewModeButton
+                                    ]}
+                                    onPress={() => setViewMode(mode.value)}
+                                >
+                                    <Ionicons 
+                                        name={mode.icon} 
+                                        size={16} 
+                                        color={viewMode === mode.value ? 'white' : '#666'} 
+                                    />
+                                    <Text style={[
+                                        styles.viewModeButtonText,
+                                        viewMode === mode.value && styles.selectedViewModeButtonText
+                                    ]}>
+                                        {mode.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
                     </View>
 
                     {reportData ? (
                         <>
-                            {/* 🚨 FIXED: Summary Card with separate scheduled and as needed stats */}
-                            <View style={styles.summaryCard}>
-                                <View style={styles.summaryHeader}>
-                                    <Text style={styles.summaryTitle}>Health Overview</Text>
-                                    <TouchableOpacity 
-                                        style={styles.exportButton}
-                                        onPress={exportReport}
-                                    >
-                                        <Ionicons name="share-outline" size={20} color="#E91E63" />
-                                    </TouchableOpacity>
-                                </View>
-                                
-                                <View style={styles.summaryStats}>
-                                    <View style={styles.summaryStatItem}>
-                                        <Text style={[styles.summaryStatValue, { color: getAdherenceColor(reportData.overallAdherence) }]}>
-                                            {reportData.scheduledMedications > 0 ? `${reportData.overallAdherence}%` : 'N/A'}
-                                        </Text>
-                                        <Text style={styles.summaryStatLabel}>Scheduled Adherence</Text>
-                                    </View>
-                                    <View style={styles.summaryStatItem}>
-                                        <Text style={styles.summaryStatValue}>{reportData.totalMedications}</Text>
-                                        <Text style={styles.summaryStatLabel}>Total Medications</Text>
-                                    </View>
-                                    <View style={styles.summaryStatItem}>
-                                        <Text style={styles.summaryStatValue}>
-                                            {reportData.totalDosesTaken + reportData.totalAsNeededDoses}
-                                        </Text>
-                                        <Text style={styles.summaryStatLabel}>Total Doses Taken</Text>
-                                    </View>
-                                </View>
+                            {/* Render based on selected view mode */}
+                            {viewMode === 'overview' && renderOverviewMode()}
+                            {viewMode === 'by-patient' && renderByPatientMode()}
+                            {viewMode === 'by-category' && renderByCategoryMode()}
 
-                                {/* 🚨 FIXED: Updated insights for both medication types */}
-                                <View style={styles.insightsContainer}>
-                                    {reportData.scheduledMedications > 0 && (
-                                        <>
-                                            <View style={styles.insightItem}>
-                                                <Ionicons name="trending-up" size={16} color="#4CAF50" />
-                                                <Text style={styles.insightText}>{reportData.excellentMeds} excellent scheduled</Text>
-                                            </View>
-                                            <View style={styles.insightItem}>
-                                                <Ionicons name="flame" size={16} color="#FF9800" />
-                                                <Text style={styles.insightText}>{reportData.averageStreak} day avg streak</Text>
-                                            </View>
-                                            {reportData.needsAttentionMeds > 0 && (
-                                                <View style={styles.insightItem}>
-                                                    <Ionicons name="warning" size={16} color="#F44336" />
-                                                    <Text style={[styles.insightText, { color: '#F44336' }]}>
-                                                        {reportData.needsAttentionMeds} need attention
-                                                    </Text>
-                                                </View>
-                                            )}
-                                        </>
-                                    )}
-                                    {reportData.asNeededMedications > 0 && (
-                                        <View style={styles.insightItem}>
-                                            <Ionicons name="medical" size={16} color="#2196F3" />
-                                            <Text style={styles.insightText}>
-                                                {reportData.asNeededUsed}/{reportData.asNeededMedications} as needed used
-                                            </Text>
-                                        </View>
-                                    )}
-                                </View>
-
-                                <Text style={styles.reportPeriod}>
-                                    Report Period: {reportData.startDate} - {reportData.endDate}
-                                </Text>
-                            </View>
-
-                            {/* Medications List */}
-                            <View style={styles.medicationsSection}>
-                                <Text style={styles.sectionTitle}>Medication Performance</Text>
-                                {reportData.medicationReports.length > 0 ? (
-                                    reportData.medicationReports.map(renderMedicationCard)
-                                ) : (
-                                    <View style={styles.emptyState}>
-                                        <Ionicons name="medical-outline" size={48} color="#ccc" />
-                                        <Text style={styles.emptyStateText}>No medications found</Text>
-                                        <Text style={styles.emptyStateSubText}>
-                                            Add medications to start tracking your adherence
-                                        </Text>
-                                    </View>
-                                )}
-                            </View>
+                            {/* 🆕 RESTORED: Detailed Medications List (from original) */}
+                            {renderDetailedMedicationsList()}
 
                             {/* Export Section */}
                             <View style={styles.exportSection}>
@@ -662,10 +1160,14 @@ export default function MedicalReportsScreen() {
                     )}
                 </ScrollView>
             </View>
+
+            {/* Patient Selector Modal */}
+            {renderPatientSelectorModal()}
         </View>
     );
 }
 
+// Enhanced styles
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -685,6 +1187,7 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'space-between',
         paddingHorizontal: 20,
         marginBottom: 20,
     },
@@ -705,7 +1208,22 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: 'bold',
         color: 'white',
-        marginLeft: 15,
+        flex: 1,
+        textAlign: 'center',
+        marginHorizontal: 10,
+    },
+    exportHeaderButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: "white",
+        justifyContent: "center",
+        alignItems: "center",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
     },
     scrollView: {
         flex: 1,
@@ -722,12 +1240,56 @@ const styles = StyleSheet.create({
         color: '#666',
         textAlign: 'center',
     },
+    controlsSection: {
+        marginBottom: 20,
+    },
+    // Patient selector styles
+    patientSelectorContainer: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 3,
+    },
+    patientSelectorLabel: {
+        fontSize: 14,
+        color: '#666',
+        marginBottom: 8,
+    },
+    patientSelectorButton: {
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        borderRadius: 8,
+        padding: 12,
+    },
+    patientSelectorContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    patientSelectorIcon: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    patientSelectorText: {
+        flex: 1,
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#333',
+    },
     periodSelector: {
         flexDirection: 'row',
         backgroundColor: 'white',
         borderRadius: 12,
         padding: 4,
-        marginBottom: 20,
+        marginBottom: 12,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.05,
@@ -751,99 +1313,374 @@ const styles = StyleSheet.create({
     selectedPeriodButtonText: {
         color: 'white',
     },
-    summaryCard: {
+    viewModeSelector: {
+        flexDirection: 'row',
         backgroundColor: 'white',
-        borderRadius: 16,
-        padding: 20,
-        marginBottom: 20,
+        borderRadius: 12,
+        padding: 4,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-        elevation: 3,
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
     },
-    summaryHeader: {
+    viewModeButton: {
+        flex: 1,
         flexDirection: 'row',
-        justifyContent: 'space-between',
         alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 8,
+        borderRadius: 8,
+        gap: 4,
+    },
+    selectedViewModeButton: {
+        backgroundColor: '#E91E63',
+    },
+    viewModeButtonText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#666',
+    },
+    selectedViewModeButtonText: {
+        color: 'white',
+    },
+    // Overview mode styles
+    overviewContainer: {
         marginBottom: 20,
     },
-    summaryTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#333',
-    },
-    exportButton: {
-        padding: 8,
-        backgroundColor: '#E91E6320',
-        borderRadius: 8,
-    },
-    summaryStats: {
+    summaryGrid: {
         flexDirection: 'row',
-        justifyContent: 'space-around',
-        marginBottom: 15,
+        gap: 12,
+        marginBottom: 12,
     },
-    summaryStatItem: {
-        alignItems: 'center',
+    summaryCard: {
+        flex: 1,
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 16,
+        borderLeftWidth: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
     },
-    summaryStatValue: {
+    summaryValue: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: '#333',
+        marginBottom: 4,
     },
-    summaryStatLabel: {
-        fontSize: 12,
-        color: '#666',
-        marginTop: 4,
-        textAlign: 'center',
-    },
-    insightsContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 10,
-        marginBottom: 15,
-    },
-    insightItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#f5f5f5',
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 8,
-    },
-    insightText: {
+    summaryLabel: {
         fontSize: 12,
         color: '#666',
         fontWeight: '500',
-        marginLeft: 5,
     },
-    reportPeriod: {
-        fontSize: 12,
-        color: '#999',
-        textAlign: 'center',
-        marginTop: 10,
-        fontStyle: 'italic',
-    },
-    medicationsSection: {
-        marginBottom: 20,
+    section: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
     },
     sectionTitle: {
         fontSize: 18,
         fontWeight: 'bold',
         color: '#333',
-        marginBottom: 15,
-        paddingLeft: 5,
+        marginBottom: 12,
     },
-    medicationCard: {
-        backgroundColor: 'white',
+    patientStatsCard: {
+        borderBottomWidth: 1,
+        borderBottomColor: '#f0f0f0',
+        paddingBottom: 12,
+        marginBottom: 12,
+    },
+    patientStatsHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    patientStatsIcon: {
+        width: 32,
+        height: 32,
         borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    patientStatsName: {
+        flex: 1,
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#333',
+    },
+    patientStatsAdherence: {
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    patientStatsDetails: {
+        marginLeft: 44,
+    },
+    patientStatsText: {
+        fontSize: 14,
+        color: '#666',
+    },
+    categoryCard: {
+        borderBottomWidth: 1,
+        borderBottomColor: '#f0f0f0',
+        paddingBottom: 12,
+        marginBottom: 12,
+    },
+    categoryHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+    categoryName: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#333',
+    },
+    categoryAdherence: {
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    categoryDetails: {
+        fontSize: 14,
+        color: '#666',
+    },
+    // By-patient mode styles
+    byPatientContainer: {
+        marginBottom: 20,
+    },
+    patientReportCard: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        marginBottom: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    patientReportHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 16,
+    },
+    patientReportHeaderLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    patientReportIcon: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    patientReportName: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#333',
+        marginBottom: 2,
+    },
+    patientReportSubtitle: {
+        fontSize: 14,
+        color: '#666',
+    },
+    patientReportContent: {
+        borderTopWidth: 1,
+        borderTopColor: '#f0f0f0',
+        padding: 16,
+    },
+    patientStatsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+    },
+    patientStatItem: {
+        alignItems: 'center',
+    },
+    patientStatValue: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#333',
+    },
+    patientStatLabel: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 2,
+    },
+    // By-category mode styles
+    byCategoryContainer: {
+        marginBottom: 20,
+    },
+    categoryDetailCard: {
+        backgroundColor: 'white',
+        borderRadius: 12,
         padding: 16,
         marginBottom: 12,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 6,
-        elevation: 3,
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    categoryDetailHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    categoryDetailName: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#333',
+    },
+    categoryDetailAdherence: {
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    categoryDetailStats: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+        marginBottom: 12,
+    },
+    categoryStatItem: {
+        alignItems: 'center',
+    },
+    categoryStatValue: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#333',
+    },
+    categoryStatLabel: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 2,
+    },
+    categoryMedicationsList: {
+        borderTopWidth: 1,
+        borderTopColor: '#f0f0f0',
+        paddingTop: 12,
+    },
+    categoryMedicationItem: {
+        fontSize: 14,
+        color: '#666',
+        marginBottom: 4,
+    },
+    categoryMedicationMore: {
+        fontSize: 14,
+        color: '#999',
+        fontStyle: 'italic',
+        marginTop: 4,
+    },
+    // Modal styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+        justifyContent: "flex-end",
+    },
+    patientModalContent: {
+        backgroundColor: "white",
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        padding: 20,
+        maxHeight: "60%",
+    },
+    modalHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 20,
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: "bold",
+        color: "#333",
+    },
+    closeButton: {
+        padding: 5,
+    },
+    patientList: {
+        maxHeight: 300,
+    },
+    patientOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        borderRadius: 12,
+        marginBottom: 8,
+        backgroundColor: '#f8f9fa',
+    },
+    selectedPatientOption: {
+        backgroundColor: '#e6f7e9',
+        borderWidth: 2,
+        borderColor: '#4CAF50',
+    },
+    patientOptionIcon: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 15,
+    },
+    patientOptionContent: {
+        flex: 1,
+    },
+    patientOptionName: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#333',
+        marginBottom: 2,
+    },
+    selectedPatientText: {
+        color: '#4CAF50',
+    },
+    patientOptionType: {
+        fontSize: 14,
+        color: '#666',
+    },
+    // 🆕 RESTORED: Detailed medications section styles (from original)
+    medicationsSection: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 20,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    medicationsSectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 15,
+    },
+    medicationCount: {
+        fontSize: 14,
+        color: '#666',
+        backgroundColor: '#f5f5f5',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 12,
+        fontWeight: '500',
+    },
+    medicationCard: {
+        backgroundColor: '#f8f9fa',
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 12,
         borderLeftWidth: 4,
         borderLeftColor: '#E91E63',
     },
@@ -885,6 +1722,17 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#999',
         fontStyle: 'italic',
+        marginBottom: 4,
+    },
+    medicationPatient: {
+        fontSize: 12,
+        color: '#1a8e2d',
+        fontWeight: '500',
+        backgroundColor: '#e6f7e9',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 8,
+        alignSelf: 'flex-start',
     },
     statusContainer: {
         alignItems: 'flex-end',
@@ -943,6 +1791,28 @@ const styles = StyleSheet.create({
         color: '#666',
         fontStyle: 'italic',
     },
+    emptyMedicationsState: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 40,
+        paddingHorizontal: 20,
+    },
+    emptyMedicationsText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#999',
+        marginTop: 15,
+        marginBottom: 8,
+        textAlign: 'center',
+    },
+    emptyMedicationsSubText: {
+        fontSize: 14,
+        color: '#bbb',
+        textAlign: 'center',
+        lineHeight: 20,
+        maxWidth: 280,
+    },
+    // Export section styles
     exportSection: {
         marginBottom: 30,
         paddingBottom: 20,

@@ -1,5 +1,4 @@
 // components/QRScannerModal.jsx - Fixed Version with Debouncing
-// Fixed QRScannerModal.jsx - Corrected data flow
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
@@ -86,8 +85,8 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
     }
   };
 
-  // Enhanced barcode scanning with debouncing and duplicate prevention
-  const handleBarCodeScanned = ({ type, data }) => {
+    // Enhanced barcode scanning with debouncing and duplicate prevention
+    const handleBarCodeScanned = ({ type, data }) => {
     const currentTime = Date.now();
     
     // Prevent multiple processing
@@ -151,129 +150,202 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
   
   // Process QR code and handle multiple medications with user confirmation
   const processQRCode = async (qrData) => {
-    try {
-      console.log('QRScannerModal: Processing QR code:', qrData);
-      
-      // Double-check we're not already processing
-      if (!processingRef.current) {
-        console.log("Process QR code called but processing flag is false. Aborting.");
-        return;
-      }
-      
-      const prescriptionMeds = await processPrescriptionQR(qrData);
-      
-      if (prescriptionMeds && prescriptionMeds.length > 0) {
-        console.log(`QRScannerModal: Found ${prescriptionMeds.length} medications`);
-        
-        // Show confirmation dialog with medication details
-        showMedicationConfirmation(prescriptionMeds, qrData);
-        
-      } else {
-        throw new Error('No medication data found');
-      }
-    } catch (error) {
-      console.error('QRScannerModal: QR scan error:', error);
-      Alert.alert(
-        'Error',
-        'Unable to process prescription data. Please try again.',
-        [{ 
-          text: 'OK', 
+  try {
+    console.log('QRScannerModal: Processing QR code:', qrData);
+    
+    // Double-check we're not already processing
+    if (!processingRef.current) {
+      console.log("Process QR code called but processing flag is false. Aborting.");
+      return;
+    }
+    
+    // 🔒 Use secure scanner (this will handle all security checks)
+    const prescriptionMeds = await processPrescriptionQR(qrData);
+    
+    if (prescriptionMeds && prescriptionMeds.length > 0) {
+      console.log(`QRScannerModal: Found ${prescriptionMeds.length} medications`);
+      showMedicationConfirmation(prescriptionMeds, qrData);
+    } else {
+      throw new Error('No medication data found');
+    }
+  } catch (error) {
+    console.error('QRScannerModal: QR scan error:', error);
+    
+    // 🔒 Enhanced error handling for security issues
+    let errorTitle = 'Scan Failed';
+    let errorMessage = error.message;
+    let errorIcon = 'alert-circle-outline';
+    
+    // Categorize errors for better user experience
+    if (error.message.includes('Access denied') || error.message.includes('another patient')) {
+      errorTitle = '🚫 Access Denied';
+      errorIcon = 'shield-outline';
+      errorMessage = 'This prescription belongs to another patient. You can only scan your own prescriptions.';
+    } else if (error.message.includes('Invalid prescription code') || error.message.includes('Invalid QR code format')) {
+      errorTitle = '❌ Invalid Code';
+      errorIcon = 'scan-outline';
+      errorMessage = 'The QR code appears to be invalid or damaged. Please ask your doctor for a new prescription QR code.';
+    } else if (error.message.includes('log in') || error.message.includes('not authenticated')) {
+      errorTitle = '🔐 Login Required';
+      errorIcon = 'log-in-outline';
+      errorMessage = 'Please log in to scan prescriptions.';
+    } else if (error.message.includes('Appointment not found')) {
+      errorTitle = '📅 Appointment Not Found';
+      errorIcon = 'calendar-outline';
+      errorMessage = 'The appointment associated with this prescription could not be found.';
+    } else if (error.message.includes('No prescription found')) {
+      errorTitle = '💊 No Prescription';
+      errorIcon = 'medical-outline';
+      errorMessage = 'No prescription was found for this appointment.';
+    }
+    
+    Alert.alert(
+      errorTitle,
+      errorMessage,
+      [
+        { 
+          text: 'Try Again', 
+          onPress: () => resetScanningState()
+        },
+        {
+          text: 'Use Manual Entry',
           onPress: () => {
             resetScanningState();
+            setShowManualEntry(true);
+            }
           }
-        }]
+        ]
       );
     }
   };
+
+  // Also add this helper function to show security status in the modal:
+  const renderSecurityBadge = () => (
+    <View style={styles.securityBadge}>
+      <Ionicons name="shield-checkmark" size={16} color="#1a8e2d" />
+      <Text style={styles.securityText}>Secure Prescription Scanner</Text>
+    </View>
+  );
 
   // 🚨 FIX: Enhanced medication confirmation with proper data passing
   const showMedicationConfirmation = (medications, originalQrData) => {
-    // Reset loading state but keep processing flag until user decides
-    setLoading(false);
+  setLoading(false);
+  
+  // 🆕 NEW: Extract and display patient assignment clearly
+  const patientInfo = medications[0] ? {
+    patientId: medications[0].patientId,
+    patientName: medications[0].patientName,
+    isFamilyMember: medications[0].isFamilyMember
+  } : null;
+  
+  console.log('🔍 QRScannerModal: Patient assignment preserved:', patientInfo);
+  
+  const medicationList = medications.map((med, index) => 
+    `${index + 1}. ${med.name} - ${med.dosage} (${med.frequencies})`
+  ).join('\n');
+
+  // 🆕 ENHANCED: Show clear patient assignment with reassignment option
+  const patientMessage = patientInfo 
+    ? `📋 Assigned to: ${patientInfo.patientName}${patientInfo.isFamilyMember ? ' (Family Member)' : ' (You)'}\n\n`
+    : '';
+
+  const message = medications.length > 1 
+    ? `Found ${medications.length} medications:\n\n${patientMessage}${medicationList}\n\nPatient assignment was automatically determined from your appointment.`
+    : `Found medication:\n\n${patientMessage}${medicationList}\n\nPatient assignment was automatically determined from your appointment.`;
+
+  const handleUserChoice = (action) => {
+    processingRef.current = false;
     
-    const medicationList = medications.map((med, index) => 
-      `${index + 1}. ${med.name} - ${med.dosage} (${med.frequencies})`
-    ).join('\n');
-
-    const message = medications.length > 1 
-      ? `Found ${medications.length} medications:\n\n${medicationList}\n\nWhat would you like to do?`
-      : `Found medication:\n\n${medicationList}\n\nAdd this medication?`;
-
-    const handleUserChoice = (action) => {
-      // Reset processing state
-      processingRef.current = false;
-      
-      // 🚨 FIX: Pass both the processed medications and the original QR data
-      console.log('QRScannerModal: User chose action:', action);
-      
-      // Check if this was a raw QR scan or processed medications
-      if (typeof originalQrData === 'string' && originalQrData.startsWith('APPT:')) {
-        // For raw QR codes, pass the string for proper processing
-        console.log('QRScannerModal: Passing raw QR string:', originalQrData);
-        onScanSuccess(originalQrData);
-      } else {
-        // For processed medications (like demos), pass the processed object
-        console.log('QRScannerModal: Passing processed medications object');
-        onScanSuccess({
-          medications: medications,
-          totalCount: medications.length,
-          action: action,
-          originalQrData: originalQrData
-        });
-      }
-      
-      onClose();
+    const scanResult = {
+      type: 'prescription_scan',
+      action: action,
+      medications: medications,
+      totalCount: medications.length,
+      patientInfo: patientInfo,
+      originalQrData: originalQrData,
+      timestamp: new Date().toISOString()
     };
-
-    const handleCancel = () => {
-      // Reset scanning state to allow new scans
-      resetScanningState();
-    };
-
-    if (medications.length > 1) {
-      // Multiple medications - show streamlined options
-      Alert.alert(
-        "Multiple Medications Found",
-        message,
-        [
-          {
-            text: "Add All",
-            onPress: () => handleUserChoice('add_all')
-          },
-          {
-            text: "Review & Edit",
-            onPress: () => handleUserChoice('review_edit')
-          },
-          {
-            text: "Cancel",
-            style: "cancel",
-            onPress: handleCancel
-          }
-        ]
-      );
-    } else {
-      // Single medication - show simple confirmation
-      Alert.alert(
-        "Medication Found",
-        message,
-        [
-          {
-            text: "Add Medication",
-            onPress: () => handleUserChoice('add_single')
-          },
-          {
-            text: "Review & Edit",
-            onPress: () => handleUserChoice('review_edit')
-          },
-          {
-            text: "Cancel",
-            style: "cancel",
-            onPress: handleCancel
-          }
-        ]
-      );
-    }
+    
+    console.log('🔍 QRScannerModal: Final scan result:', scanResult);
+    onScanSuccess(scanResult);
+    onClose();
   };
+
+  // 🆕 NEW: Add reassignment option
+  const showReassignmentOptions = () => {
+    // This will trigger the parent component to show patient selector
+    const scanResult = {
+      type: 'prescription_scan',
+      action: 'show_patient_selector',
+      medications: medications,
+      totalCount: medications.length,
+      patientInfo: patientInfo,
+      originalQrData: originalQrData,
+      timestamp: new Date().toISOString()
+    };
+    
+    processingRef.current = false;
+    onScanSuccess(scanResult);
+    onClose();
+  };
+
+  const handleCancel = () => {
+    resetScanningState();
+  };
+
+  if (medications.length > 1) {
+    // Multiple medications - enhanced options
+    Alert.alert(
+      "✅ Prescription Scanned Successfully",
+      message,
+      [
+        {
+          text: "✅ Correct - Add All Medications",
+          onPress: () => handleUserChoice('add_all')
+        },
+        {
+          text: "👤 Reassign to Different Patient",
+          onPress: showReassignmentOptions
+        },
+        {
+          text: "📝 Review & Edit Individual",
+          onPress: () => handleUserChoice('review_edit')
+        },
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: handleCancel
+        }
+      ]
+    );
+  } else {
+    // Single medication - enhanced options
+    Alert.alert(
+      "✅ Medication Found",
+      message,
+      [
+        {
+          text: "✅ Correct - Add Medication",
+          onPress: () => handleUserChoice('add_single')
+        },
+        {
+          text: "👤 Reassign to Different Patient", 
+          onPress: showReassignmentOptions
+        },
+        {
+          text: "📝 Review & Edit",
+          onPress: () => handleUserChoice('review_edit')
+        },
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: handleCancel
+        }
+      ]
+    );
+  }
+};
+
 
   // Process demo QR codes with confirmation
   const handleQuickScan = async (demoType) => {
@@ -404,7 +476,10 @@ const QRScannerModal = ({ visible, onClose, onScanSuccess }) => {
       <View style={styles.modalOverlay}>
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Scan Prescription QR</Text>
+            <View>
+               <Text style={styles.modalTitle}>Scan Prescription QR</Text>
+               {renderSecurityBadge()}
+            </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <Ionicons name="close" size={24} color="#333" />
             </TouchableOpacity>
@@ -561,10 +636,27 @@ const styles = StyleSheet.create({
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     padding: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#e5e5e5',
+  },
+   // Security badge styles
+  securityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e6f7e9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 4,
+    alignSelf: 'flex-start',
+  },
+  securityText: {
+    fontSize: 12,
+    color: '#1a8e2d',
+    fontWeight: '500',
+    marginLeft: 4,
   },
   modalTitle: {
     fontSize: 18,
