@@ -58,11 +58,31 @@ export default function EnhancedDoctorPrescriptions() {
   }, []);
 
   // Focus effect to refresh data when returning to screen
-  useFocusEffect(
-    useCallback(() => {
+ useFocusEffect(
+  useCallback(() => {
+    console.log('🔄 Prescription Management: Screen focused, refreshing data...');
+    
+    // Force refresh immediately when screen comes into focus
+    loadData(false);
+    
+    // Also refresh after a short delay to catch any delayed database updates
+    const refreshTimeout = setTimeout(() => {
+      console.log('🔄 Delayed refresh after screen focus...');
       loadData(false);
-    }, [])
-  );
+    }, 1500);
+    
+    // Additional refresh for real-time updates that might be delayed
+    const secondRefreshTimeout = setTimeout(() => {
+      console.log('🔄 Second delayed refresh...');
+      loadData(false);
+    }, 3000);
+    
+    return () => {
+      clearTimeout(refreshTimeout);
+      clearTimeout(secondRefreshTimeout);
+    };
+  }, [])
+);
 
   // Set up real-time subscription for appointments/prescriptions
   useEffect(() => {

@@ -9,6 +9,7 @@ import PageHeader from '../../../components/PageHeader';
 import { DatabaseService, Query } from '../../../configs/AppwriteConfig';
 import { addPrescription } from '../../../service/PrescriptionScanner';
 import { getLocalStorage } from '../../../service/Storage';
+import { COLLECTIONS } from '../../../constants';
 
 // 🚨 UPDATED: Import shared constants for consistency
 import {
@@ -237,94 +238,107 @@ export default function CreatePrescriptionScreen() {
   
   // UPDATED: Submit function using your existing addPrescription function
   const handleSubmit = async () => {
-    try {
-      // Validate required fields
-      const invalidMeds = medications.filter(med => 
-        !med.name || !med.dosage || !med.type || !med.frequencies || !med.duration
-      );
+  try {
+    // Validate required fields
+    const invalidMeds = medications.filter(med => 
+      !med.name || !med.dosage || !med.type || !med.frequencies || !med.duration
+    );
+    
+    if (invalidMeds.length > 0) {
+      Alert.alert('Missing Information', 'Please fill in all required fields for all medications');
+      return;
+    }
+    
+    setSubmitting(true);
+    
+    // Format medications with proper times array and illness types
+    const formattedMedications = medications.map(med => {
+      const formattedMed = {...med};
       
-      if (invalidMeds.length > 0) {
-        Alert.alert('Missing Information', 'Please fill in all required fields for all medications');
-        return;
-      }
-      
-      setSubmitting(true);
-      
-      // 🚨 UPDATED: Format medications with proper times array and illness types
-      const formattedMedications = medications.map(med => {
-        const formattedMed = {...med};
-        
-        // Ensure times is an array (your system expects this)
-        if (!Array.isArray(formattedMed.times)) {
-          if (typeof formattedMed.times === 'string') {
-            try {
-              if (formattedMed.times.startsWith('[') && formattedMed.times.endsWith(']')) {
-                formattedMed.times = JSON.parse(formattedMed.times);
-              } else {
-                formattedMed.times = [formattedMed.times];
-              }
-            } catch (e) {
+      // Ensure times is an array (your system expects this)
+      if (!Array.isArray(formattedMed.times)) {
+        if (typeof formattedMed.times === 'string') {
+          try {
+            if (formattedMed.times.startsWith('[') && formattedMed.times.endsWith(']')) {
+              formattedMed.times = JSON.parse(formattedMed.times);
+            } else {
               formattedMed.times = [formattedMed.times];
             }
-          } else if (!formattedMed.times) {
-            // Use shared constants to get default times for frequency
-            const frequencyData = FREQUENCIES.find(freq => freq.label === med.frequencies);
-            formattedMed.times = frequencyData ? frequencyData.times : ['09:00'];
-          } else {
-            formattedMed.times = [String(formattedMed.times)];
+          } catch (e) {
+            formattedMed.times = [formattedMed.times];
           }
+        } else if (!formattedMed.times) {
+          // Use shared constants to get default times for frequency
+          const frequencyData = FREQUENCIES.find(freq => freq.label === med.frequencies);
+          formattedMed.times = frequencyData ? frequencyData.times : ['09:00'];
+        } else {
+          formattedMed.times = [String(formattedMed.times)];
         }
-        
-        // Ensure all times are strings
-        formattedMed.times = formattedMed.times.map(time => String(time));
-        
-        // 🚨 SYNCHRONIZED: Ensure illness_type field uses correct naming
-        formattedMed.illness_type = formattedMed.illnessType || '';
-        
-        return formattedMed;
-      });
+      }
       
-      console.log("Creating prescription with formatted medications:", formattedMedications);
+      // Ensure all times are strings
+      formattedMed.times = formattedMed.times.map(time => String(time));
       
-      // Use existing addPrescription function
-      const prescription = await addPrescription(
+      // Ensure illness_type field uses correct naming
+      formattedMed.illness_type = formattedMed.illnessType || '';
+      
+      return formattedMed;
+    });
+    
+    console.log("Creating prescription with formatted medications:", formattedMedications);
+    
+    // Use existing addPrescription function
+    const prescription = await addPrescription(
+      appointmentId,
+      formattedMedications,
+      doctorNotes
+    );
+    
+    console.log("Prescription created successfully:", prescription);
+    
+    // 🚨 FIX: Update the appointment to mark it as having a prescription
+    try {
+      await DatabaseService.updateDocument(
+        COLLECTIONS.APPOINTMENTS, // Use your appointments collection ID
         appointmentId,
-        formattedMedications,
-        doctorNotes
+        { has_prescription: true }
       );
-      
-      console.log("Prescription created successfully:", prescription);
-      
-      // Generate QR code content using the format your system expects
-      const qrContent = `APPT:${appointmentId}:${prescription.reference_code}`;
-      
-      Alert.alert(
-        'Success',
-        `Prescription created successfully!\n\nReference Code: ${prescription.reference_code}\n\nThe patient can scan the QR code: ${qrContent}\n\nThis will add all ${formattedMedications.length} medications to their tracker with synchronized illness types.`,
-        [
-          { 
-            text: 'View Prescription', 
-            onPress: () => router.replace({
-              pathname: '/doctor/prescriptions/view',
-              params: { 
-                appointmentId,
-                new: 'true' // Flag to show success modal
-              }
-            })
-          }
-        ]
-      );
-      
-    } catch (error) {
-      console.error('Error creating prescription:', error);
-      Alert.alert(
-        'Error', 
-        `Failed to create prescription: ${error.message}\n\nPlease try again.`
-      );
-    } finally {
-      setSubmitting(false);
+      console.log("✅ Appointment marked as having prescription");
+    } catch (updateError) {
+      console.error("⚠️ Failed to update appointment flag:", updateError);
+      // Don't fail the whole operation for this
     }
-  };
+    
+    // Generate QR code content using the format your system expects
+    const qrContent = `APPT:${appointmentId}:${prescription.reference_code}`;
+    
+    Alert.alert(
+      'Success',
+      `Prescription created successfully!\n\nReference Code: ${prescription.reference_code}\n\nThe patient can scan the QR code: ${qrContent}\n\nThis will add all ${formattedMedications.length} medications to their tracker with synchronized illness types.`,
+      [
+        { 
+          text: 'View Prescription', 
+          onPress: () => router.replace({
+            pathname: '/doctor/prescriptions/view',
+            params: { 
+              appointmentId,
+              new: 'true' // Flag to show success modal
+            }
+          })
+        }
+      ]
+    );
+    
+  } catch (error) {
+    console.error('Error creating prescription:', error);
+    Alert.alert(
+      'Error', 
+      `Failed to create prescription: ${error.message}\n\nPlease try again.`
+    );
+  } finally {
+    setSubmitting(false);
+  }
+};
   
   // Render dropdown modal
   const renderDropdownModal = () => (
